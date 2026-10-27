@@ -20,6 +20,14 @@ export const WALL_TYPES: { id: WallType; label: string; short: string; desc: str
   { id: 'gabion', label: 'Muro de gaviones', short: 'Gaviones', desc: 'Cuerpos de canastas de malla rellenas de piedra, apilados en escalones.' },
 ];
 
+export type BlockType = '6' | '8' | '12';
+export const BLOCKS: { id: BlockType; label: string; t: number }[] = [
+  { id: '6', label: 'Bloque de 6″ (15 cm)', t: 0.15 },
+  { id: '8', label: 'Bloque de 8″ (20 cm)', t: 0.2 },
+  { id: '12', label: 'Bloque de 12″ (30 cm)', t: 0.3 },
+];
+export const blockThickness = (b: BlockType) => BLOCKS.find((x) => x.id === b)?.t ?? 0.2;
+
 export interface GabionInput {
   /** número de cuerpos (hiladas) y altura de cada uno */
   n: number;
@@ -67,6 +75,8 @@ export interface WallInput {
   key: { enabled: boolean; x: number; b: number; d: number };
   cf: { s: number; t: number; proj: number; projTop: number };
   gab: GabionInput;
+  /** bloque de mampostería reforzada: 6", 8" o 12" */
+  block: BlockType;
   /** altura del terreno al frente sobre la cara inferior de la zapata */
   Df: number;
   // --- suelos ---
@@ -96,6 +106,11 @@ export interface WallInput {
     barHeel: string;
     barToe: string;
     barKey: string;
+    /** barras longitudinales de la zapata (paralelas al muro) */
+    footLong: boolean;
+    barLong: string;
+    /** acero transversal también en la cara opuesta de pie y talón */
+    footOpp: boolean;
     code: ShearCode;
     // mampostería
     fm: number; // MPa
@@ -137,6 +152,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     key: { enabled: false, x: 1.2, b: 0.4, d: 0.5 },
     cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0 },
     gab: { n: 4, hc: 1.0, b0: 2.5, step: 0.5, side: 'front', gammaStone: 26, porosity: 0.3, sigmaAllow: 300, muG: 0.6, cG: 0, fsSlide: 1.5, eFrac: 1 / 3 },
+    block: '8',
     Df: 1.0,
     fill: { gamma: 18, gammaSat: 20, phi: 32, beta: 0, q: 10 },
     hw: 0,
@@ -160,6 +176,9 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       barHeel: '#5',
       barToe: '#5',
       barKey: '#5',
+      footLong: true,
+      barLong: '#4',
+      footOpp: false,
       code: 'ACI318_14',
       fm: 10,
       gammaM: 20,
@@ -191,7 +210,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       Object.assign(base, { theory: 'coulomb', Df: 0.5, Lt: 0, Lh: 0, hb: 0, hbTip: 0 });
       break;
     case 'masonryReinforced':
-      Object.assign(base, { H: 3.0, tTop: 0.2, tBot: 0.3, Lt: 0.7, Lh: 1.6, hb: 0.4, hbTip: 0.4 });
+      Object.assign(base, { H: 2.4, tTop: 0.2, tBot: 0.2, Lt: 0.6, Lh: 1.5, hb: 0.4, hbTip: 0.4, block: '8' });
       base.mat.barStem = '#5';
       break;
     default:
@@ -207,6 +226,10 @@ export const isGabion = (t: WallType) => t === 'gabion';
 
 /** Para gaviones, deriva la geometría general (altura, anchos, sin zapata) a partir de los cuerpos. */
 export function normalizeWall(w: WallInput): WallInput {
+  if (w.type === 'masonryReinforced') {
+    const t = blockThickness(w.block);
+    return { ...w, tTop: t, tBot: t, stemFace: 'front', fb: 0 };
+  }
   if (w.type !== 'gabion') return w;
   const g = w.gab;
   const n = Math.max(1, Math.round(g.n));

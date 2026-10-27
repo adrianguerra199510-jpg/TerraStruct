@@ -406,9 +406,11 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     if (!des.stem.masonry) rows.push(['Pantalla: vertical (cara frontal)', des.stem.frontVertDet.text, f(des.stem.frontVertDet.asProv, 2), 'Acero mínimo']);
   }
   if (des.toe) rows.push([`Pie (cara ${des.toe.face}) — transversal`, des.toe.det.text, f(des.toe.det.asProv, 2), 'Perpendicular al muro']);
+  if (des.toe?.opp) rows.push([`Pie (cara ${des.toe.opp.face}) — transversal`, des.toe.opp.det.text, f(des.toe.opp.det.asProv, 2), `Cara opuesta; Mu = ${u('lmoment', des.toe.opp.Mu, 1)}`]);
   if (des.heel) rows.push([`Talón (cara ${des.heel.face}) — transversal`, des.heel.det.text, f(des.heel.det.asProv, 2), 'Perpendicular al muro']);
+  if (des.heel?.opp) rows.push([`Talón (cara ${des.heel.opp.face}) — transversal`, des.heel.opp.det.text, f(des.heel.opp.det.asProv, 2), `Cara opuesta; Mu = ${u('lmoment', des.heel.opp.Mu, 1)}`]);
   const shrinkS = des.toe ?? des.heel;
-  if (shrinkS) rows.push(['Zapata: barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, f(shrinkS.shrinkDet.asProv, 2), `Cara superior e inferior; As total = ${f(shrinkS.shrinkAs, 2)} cm²/m (0.0018·h), mitad por cara`]);
+  if (shrinkS) rows.push(['Zapata: barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, f(shrinkS.shrinkDet.asProv, 2), inp.mat.footLong ? `Cara superior e inferior; As total = ${f(shrinkS.shrinkAs, 2)} cm²/m (0.0018·h), mitad por cara` : 'Sin acero longitudinal: verificar retracción y temperatura']);
   if (des.key) rows.push(['Llave de corte (vertical)', des.key.slab.det.text, f(des.key.slab.det.asProv, 2), 'Anclada en la zapata']);
   if (des.counterfort) {
     const c = des.counterfort;

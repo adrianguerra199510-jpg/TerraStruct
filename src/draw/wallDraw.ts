@@ -181,6 +181,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     if (g.hb > 0.05) {
       const shr = (res.design.toe ?? res.design.heel)?.shrinkDet;
       const spL = Math.max(shr?.spacing ?? 0.3, 0.1);
+      const OPP = '#d9822b';
       const dists = (yy: number) => {
         let k = '';
         for (let x = covF + 0.05; x < g.B - covF - 0.02; x += spL) k += dot(x, yy, DIST);
@@ -190,18 +191,28 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
         const t = res.design.toe;
         const yt = t.face === 'inferior' ? covF : g.hb - covF;
         s += polyline([pt(covF, yt), pt(Math.min(g.xBb + t.ldReq, g.B - covF), yt)], MAIN, 3.2);
+        if (t.opp) {
+          const yo = t.opp.face === 'inferior' ? covF : g.hb - covF;
+          s += polyline([pt(covF, yo), pt(Math.max(g.xFb, covF + 0.1), yo)], OPP, 2.6);
+          s += text(X(g.xFb / 2), Y(0) + 15, `Pie, cara opuesta ${t.opp.det.text}`, { size: 10, fill: OPP, weight: 700, anchor: 'middle', halo });
+        }
         s += text(X(g.xFb / 2), Y(g.hb) - 9, `Pie ${t.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
       }
       if (res.design.heel && g.B - g.xBb > 0.05) {
         const h = res.design.heel;
         const yh = h.face === 'superior' ? g.hb - covF : covF;
         s += polyline([pt(Math.max(covF, g.xFb - h.ldReq), yh), pt(g.B - covF, yh)], MAIN, 3.2);
+        if (h.opp) {
+          const yo = h.opp.face === 'inferior' ? covF : g.hb - covF;
+          s += polyline([pt(g.xBb, yo), pt(g.B - covF, yo)], OPP, 2.6);
+          s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(0) + 15, `Talón, cara opuesta ${h.opp.det.text}`, { size: 10, fill: OPP, weight: 700, anchor: 'middle', halo });
+        }
         s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(g.hb) - 9, `Talón ${h.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
       }
-      if (res.design.toe || res.design.heel) {
+      if ((res.design.toe || res.design.heel) && inp.mat.footLong) {
         s += dists(covF + 0.06);
         s += dists(g.hb - covF - 0.06);
-        s += text(X(g.B / 2), Y(0) + 15, `Barras longitudinales de la zapata: ${shr?.text ?? ''} (arriba y abajo)`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
+        s += text(X(g.B / 2) + 40, Y(0) + 30, `Barras longitudinales de la zapata: ${shr?.text ?? ''} (arriba y abajo)`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
       }
     }
     if (res.design.key && g.keyPoly) {
@@ -218,7 +229,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
 
   // Cotas
   if (o.showDims !== false) {
-    const ybd = yb0 + pressH + 22 + (o.showRebar ? 14 : 0);
+    const ybd = yb0 + pressH + 22 + (o.showRebar ? 22 : 0);
     // Línea inferior: Lt | tBot | Lh
     if (g.hb > 0) {
       s += dimLine(X(0), ybd, X(g.xFb), ybd, fx(inp.Lt), th.dim, 0, 11);
@@ -227,7 +238,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     } else {
       s += dimLine(X(0), ybd, X(g.xBb), ybd, `B = ${fx(g.xBb)}`, th.dim, 0, 11);
     }
-    if (g.hb > 0) s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
+    if (g.hb > 0 && !o.showRebar) s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
     // Altura de la pantalla
     const xh = g.xFt - 0.0;
     if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);

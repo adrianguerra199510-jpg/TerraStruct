@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Settings2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
 } from 'lucide-react';
-import { gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
@@ -85,10 +85,18 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             <>
           <div className="grid2">
             <Num label="Altura de la pantalla H" q="len" value={data.H} onChange={(v) => set({ H: v })} min={0.5} hint="De la cara superior de la zapata a la corona" />
-            <Num label="Espesor en la corona" q="len" value={data.tTop} onChange={(v) => set({ tTop: v })} min={0.1} />
-            <Num label="Espesor en la base" q="len" value={data.tBot} onChange={(v) => set({ tBot: v })} min={0.1} />
-            <Sel label="Cara que se mantiene vertical" value={data.stemFace} onChange={(v) => set({ stemFace: v })} options={[{ id: 'front', label: 'Frontal (talud en el dorso)' }, { id: 'back', label: 'Posterior (talud al frente)' }, { id: 'free', label: 'Ninguna (libre)' }]} />
-            {data.stemFace === 'free' && <Num label="Desplazamiento de la cara frontal" q="len" value={data.fb} onChange={(v) => set({ fb: v })} hint="+ hacia el relleno" />}
+ {t === 'masonryReinforced' ? (
+              <>
+                <Sel label="Tipo de bloque" value={data.block} onChange={(v) => set({ block: v })} options={BLOCKS.map((b) => ({ id: b.id, label: b.label }))} hint="El espesor de la pantalla es el del bloque" />
+              </>
+            ) : (
+              <>
+                <Num label="Espesor en la corona" q="len" value={data.tTop} onChange={(v) => set({ tTop: v })} min={0.1} />
+                <Num label="Espesor en la base" q="len" value={data.tBot} onChange={(v) => set({ tBot: v })} min={0.1} />
+              </>
+            )}
+            {t !== 'masonryReinforced' && <Sel label="Cara que se mantiene vertical" value={data.stemFace} onChange={(v) => set({ stemFace: v })} options={[{ id: 'front', label: 'Frontal (talud en el dorso)' }, { id: 'back', label: 'Posterior (talud al frente)' }, { id: 'free', label: 'Ninguna (libre)' }]} />}
+            {t !== 'masonryReinforced' && data.stemFace === 'free' && <Num label="Desplazamiento de la cara frontal" q="len" value={data.fb} onChange={(v) => set({ fb: v })} hint="+ hacia el relleno" />}
             <Num label="Altura de terreno al frente Df" q="len" value={data.Df} onChange={(v) => set({ Df: v })} min={0} hint="Sobre la cara inferior de la zapata" />
           </div>
           <div className="grid2">
@@ -178,7 +186,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             ) : null}
             <Num label="Peso unit. concreto" q="uw" value={data.mat.gammaC} onChange={(v) => setMat({ gammaC: v })} />
             <Sel label="Norma de cortante" value={data.mat.code} onChange={(v) => setMat({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19' }]} />
-            <Num label={isMasonry(t) ? 'Recubrimiento al eje de la barra (pantalla)' : 'Recubrimiento pantalla'} q="lencm" value={data.mat.cover} onChange={(v) => setMat({ cover: v })} min={0.02} />
+            {t !== 'masonryReinforced' && <Num label="Recubrimiento pantalla" q="lencm" value={data.mat.cover} onChange={(v) => setMat({ cover: v })} min={0.02} />}
             <Num label="Recubrimiento zapata" q="lencm" value={data.mat.coverFound} onChange={(v) => setMat({ coverFound: v })} min={0.04} />
           </div>
           {isMasonry(t) && (
@@ -204,6 +212,12 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                 <Sel label="Talón" value={data.mat.barHeel} onChange={(v) => setMat({ barHeel: v })} options={bars} />
                 <Sel label="Pie" value={data.mat.barToe} onChange={(v) => setMat({ barToe: v })} options={bars} />
                 {data.key.enabled && <Sel label="Llave" value={data.mat.barKey} onChange={(v) => setMat({ barKey: v })} options={bars} />}
+              </div>
+              <div className="hint"><b>Armado de la zapata</b></div>
+              <Check label="Acero transversal también en la cara opuesta (pie y talón)" value={data.mat.footOpp} onChange={(v) => setMat({ footOpp: v })} hint="Sin él solo se arma la cara en tracción" />
+              <Check label="Acero longitudinal (paralelo al muro)" value={data.mat.footLong} onChange={(v) => setMat({ footLong: v })} hint="Reparto y retracción, mitad por cara" />
+              <div className="grid3">
+                {data.mat.footLong && <Sel label="Barras longitudinales" value={data.mat.barLong} onChange={(v) => setMat({ barLong: v })} options={bars} />}
               </div>
             </>
           )}
@@ -497,9 +511,11 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
   }
   if (d.toe) rows.push([`Pie (cara ${d.toe.face}) — transversal`, d.toe.det.text, d.toe.det.asProv.toFixed(2), 'Perpendicular al muro']);
+  if (d.toe?.opp) rows.push([`Pie (cara ${d.toe.opp.face}) — transversal`, d.toe.opp.det.text, d.toe.opp.det.asProv.toFixed(2), `Cara opuesta; Mu = ${d.toe.opp.Mu.toFixed(1)} kN·m/m`]);
   if (d.heel) rows.push([`Talón (cara ${d.heel.face}) — transversal`, d.heel.det.text, d.heel.det.asProv.toFixed(2), 'Perpendicular al muro']);
+  if (d.heel?.opp) rows.push([`Talón (cara ${d.heel.opp.face}) — transversal`, d.heel.opp.det.text, d.heel.opp.det.asProv.toFixed(2), `Cara opuesta; Mu = ${d.heel.opp.Mu.toFixed(1)} kN·m/m`]);
   const shrinkS = d.toe ?? d.heel;
-  if (shrinkS) rows.push(['Zapata — barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, shrinkS.shrinkDet.asProv.toFixed(2), `Cara superior e inferior; As total = ${shrinkS.shrinkAs.toFixed(2)} cm²/m (0.0018·h), mitad por cara`]);
+  if (shrinkS) rows.push(['Zapata — barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, shrinkS.shrinkDet.asProv.toFixed(2), res.inp.mat.footLong ? `Cara superior e inferior; As total = ${shrinkS.shrinkAs.toFixed(2)} cm²/m (0.0018·h), mitad por cara` : 'Sin acero longitudinal: verificar retracción y temperatura']);
   if (d.key) rows.push(['Llave de corte', d.key.slab.det.text, d.key.slab.det.asProv.toFixed(2), 'Barras verticales ancladas en la zapata']);
   if (d.counterfort) {
     const c = d.counterfort;

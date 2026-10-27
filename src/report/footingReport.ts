@@ -243,6 +243,23 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
     );
   }
 
+  if (inp.topSteel) {
+    d.h2('Acero superior (momentos negativos)');
+    for (const dir of ['x', 'y'] as const) {
+      const fx = dir === 'x' ? res.flexTopX : res.flexTopY;
+      if (!fx) continue;
+      d.eq(
+        [
+          `Dirección ${dir.toUpperCase()}: Mu(−) = ${u('moment', fx.Mu, 2)} (combinación ${fx.comboName}); d = ${f(fx.d * 1000, 1)} mm; b = ${f(fx.chord, 3)} m`,
+          `As,req = ${f(fx.AsReq, 2)} cm²/m ;  As,mín = ${f(fx.AsMin, 2)} cm²/m ;  armado: ${fx.det.text} → As,prov = ${f(fx.det.asProv, 2)} cm²/m ;  φMn = ${u('moment', fx.phiMn, 2)} (relación ${f(fx.ratio, 2)})`,
+        ],
+        `Acero superior ${dir.toUpperCase()}`,
+      );
+    }
+  } else if (res.hogging.length) {
+    d.h2('Momentos negativos sin acero superior');
+    d.eq(res.hogging.map((h) => `Dirección ${h.dir.toUpperCase()}: Mu(−) = ${u('moment', h.Mu, 2)} frente a φMn,simple = φ·0.42·λ·√f′c·S = ${u('moment', h.capPlain, 2)} (${h.comboName}) → relación ${f(h.Mu / Math.max(h.capPlain, 1e-9), 2)}`), 'Concreto simple');
+  }
   d.h2('Cortante en una dirección');
   d.eq(
     [
@@ -310,11 +327,18 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
           fx ? (fx.hookNeeded ? `Gancho estándar, ldh ≥ ${f(fx.hookLen, 2)} m` : `Desarrollo recto (ld = ${f(fx.ldReq, 2)} m)`) : '',
         ];
       }),
+      ...(inp.topSteel
+        ? (['x', 'y'] as const).map((dir) => {
+            const fx = dir === 'x' ? res.flexTopX : res.flexTopY;
+            return [`Barras superiores en ${dir.toUpperCase()}`, fx?.det.text ?? '—', fx ? f(fx.det.asProv, 2) : '—', fx ? f(fx.AsReq, 2) : '—', fx ? (fx.Mu > 0 ? `Momento negativo Mu = ${u('moment', fx.Mu, 1)}` : 'Acero mínimo') : ''];
+          })
+        : [['Acero superior', 'No se coloca', '—', '—', 'Se verifica el concreto simple a tracción por flexión']]),
       ...res.punching.map((p) => [`Barras de espera ${p.col.name}`, 'Según columna', '—', '—', `As ≥ ${f(p.dowelAs, 1)} cm²; anclar con gancho en la zapata`]),
     ],
     { align: ['l', 'l', 'r', 'r', 'l'], caption: 'Tabla 8. Cuadro de armado' },
   );
   d.img(footingRebarPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt }), 'Figura. Planta de armado inferior.');
+  if (inp.topSteel) d.img(footingRebarPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt, layer: 'top' }), 'Figura. Planta de armado superior.');
   d.img(footingSectionSvg(inp, res, { W: 800, H: 360, theme: th, fmt, dir: 'x' }), 'Figura. Sección a lo largo de X.', 0.92);
   d.img(footingSectionSvg(inp, res, { W: 800, H: 360, theme: th, fmt, dir: 'y' }), 'Figura. Sección a lo largo de Y.', 0.92);
   d.kv(

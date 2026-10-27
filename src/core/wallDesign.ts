@@ -154,6 +154,8 @@ export interface SlabDesign {
   hook: boolean;
   shrinkAs: number;
   shrinkDet: Detailing;
+  /** acero transversal de la cara opuesta (si se activa) */
+  opp?: SlabDesign | null;
   sectionOk: boolean;
   note?: string;
 }
@@ -391,7 +393,7 @@ function slabDesign(
   return {
     name, caseLabel: label, face, Mu: M, d, b: 1, AsReq: asReq, AsMin: Math.max(asMinF, asMinS), AsDes: asDes, det, bar, phiMn, Vu: V, phiVc,
     ratioM: phiMn > 0 ? M / phiMn : 0, ratioV: phiVc > 0 ? V / phiVc : 0, ldReq, ldAvail, hook: ldAvail < ldReq,
-    shrinkAs: shrink, shrinkDet: chooseSpacing(shrink / 2, findBar(m.barStemH), 0.45),
+    shrinkAs: shrink, shrinkDet: m.footLong ? chooseSpacing(shrink / 2, findBar(m.barLong), 0.45) : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true },
     sectionOk: fr.ok && M <= phiMn + 1e-9 && V <= phiVc + 1e-9,
     note: fr.ok ? undefined : 'Sección insuficiente: aumentar el espesor.',
   };
@@ -521,7 +523,7 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     const y = (inp.H * k) / N;
     const L = sectionLoad(g, lat, y);
     const t = g.stemT(y);
-    const d = t - m.cover - bar.db / 2000;
+    const d = t / 2; // barra centrada en la celda del bloque
     const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur;
     const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0;
     const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur;
@@ -936,11 +938,19 @@ export function designWall(g: WallGeom): WallDesign {
       const isBot = env.toeBot.M >= env.toeTop.M;
       const e = isBot ? env.toeBot : env.toeTop;
       out.toe = slabDesign(g, 'Pie', e.label, isBot ? 'inferior' : 'superior', toeM, e.V, g.hb, barToe, g.xFb - m.coverFound);
+      if (m.footOpp) {
+        const eo = isBot ? env.toeTop : env.toeBot;
+        out.toe.opp = slabDesign(g, 'Pie (cara opuesta)', eo.label, isBot ? 'superior' : 'inferior', eo.M, eo.V, g.hb, barToe, g.xFb - m.coverFound);
+      }
     }
     if (inp.Lh > 1e-6 && inp.type !== 'counterfortInt') {
       const isTop = env.heelTop.M >= env.heelBot.M;
       const e = isTop ? env.heelTop : env.heelBot;
       out.heel = slabDesign(g, 'Talón', e.label, isTop ? 'superior' : 'inferior', Math.max(env.heelTop.M, env.heelBot.M), e.V, g.hb, barHeel, inp.Lh - m.coverFound);
+      if (m.footOpp) {
+        const eo = isTop ? env.heelBot : env.heelTop;
+        out.heel.opp = slabDesign(g, 'Talón (cara opuesta)', eo.label, isTop ? 'inferior' : 'superior', eo.M, eo.V, g.hb, barHeel, inp.Lh - m.coverFound);
+      }
     }
     if (inp.type === 'masonryReinforced') out.stem = stemDesignMasonry(g);
     else if (isCounterfort(inp.type)) {

@@ -244,13 +244,33 @@ export function footingSectionSvg(inp: FootingInput, res: FootingResults | null,
     const cx = X(lo) + cover * sc + ((span - 2 * cover) * sc * i) / Math.max(nDots, 1);
     s += `<circle cx="${cx.toFixed(1)}" cy="${otherY.toFixed(1)}" r="${Math.max(2.4, (dbOther * sc) / 2).toFixed(1)}" fill="${th.rebar}" opacity=".85"/>`;
   }
+  if (inp.topSteel) {
+    const tf = o.dir === 'x' ? res?.flexTopX : res?.flexTopY;
+    const to = o.dir === 'x' ? res?.flexTopY : res?.flexTopX;
+    const dbT = (tf?.bar.db ?? 16) / 1000, dbO = (to?.bar.db ?? 16) / 1000;
+    const outerThis = inp.lowerLayer === (o.dir === 'x' ? 'x' : 'y');
+    const dOuter = outerThis ? dbT : dbO, dInner = outerThis ? dbO : dbT;
+    const yOuter = Y(topF + cover + dOuter / 2), yInner = Y(topF + cover + dOuter + dInner / 2);
+    const yThisT = outerThis ? yOuter : yInner, yOtherT = outerThis ? yInner : yOuter;
+    s += line(X(lo) + cover * sc, yThisT, X(hi) - cover * sc, yThisT, '#1d63c7', Math.max(2, dbT * sc));
+    const spT = to?.det.spacing ?? 0.25;
+    const nT = Math.min(Math.floor(span / spT), 60);
+    for (let i = 0; i <= nT; i++) {
+      const cx = X(lo) + cover * sc + ((span - 2 * cover) * sc * i) / Math.max(nT, 1);
+      s += `<circle cx="${cx.toFixed(1)}" cy="${yOtherT.toFixed(1)}" r="${Math.max(2.4, (dbO * sc) / 2).toFixed(1)}" fill="#1d63c7" opacity=".85"/>`;
+    }
+  }
   // cotas
   s += dimLine(X(lo), Y(inp.Df) + 2, X(hi), Y(inp.Df) + 2, o.fmt.u('len', span, 2), th.dim, 26, 11.5, 1);
   s += dimLine(X(hi), Y(topF), X(hi), Y(inp.Df), o.fmt.u('len', inp.h, 2), th.dim, 30, 11.5, -1);
   s += dimLine(x0 - 4, groundY, x0 - 4, Y(inp.Df), `Df = ${o.fmt.u('len', inp.Df, 2)}`, th.muted, 26, 11, 1);
   s += text(X(lo) + 6, Y(topF) - 6, 'Nivel de terreno ↑', { size: 10.5, fill: th.muted });
   if (flex) {
-    s += text(W / 2, H - 12, `Barras ${o.dir === 'x' ? 'X' : 'Y'} (línea): ${flex.det.text}${other ? `   ·   Barras ${o.dir === 'x' ? 'Y' : 'X'} (puntos): ${other.det.text}` : ''}`, { size: 12, fill: th.rebar, anchor: 'middle', weight: 600 });
+    s += text(W / 2, H - 12, `Inferior — barras ${o.dir === 'x' ? 'X' : 'Y'} (línea): ${flex.det.text}${other ? `   ·   barras ${o.dir === 'x' ? 'Y' : 'X'} (puntos): ${other.det.text}` : ''}`, { size: 12, fill: th.rebar, anchor: 'middle', weight: 600 });
+    if (inp.topSteel && res) {
+      const tf = o.dir === 'x' ? res.flexTopX : res.flexTopY, to = o.dir === 'x' ? res.flexTopY : res.flexTopX;
+      s += text(W / 2, H - 28, `Superior — barras ${o.dir === 'x' ? 'X' : 'Y'}: ${tf?.det.text ?? '—'}   ·   barras ${o.dir === 'x' ? 'Y' : 'X'}: ${to?.det.text ?? '—'}`, { size: 12, fill: '#1d63c7', anchor: 'middle', weight: 600 });
+    } else s += text(W / 2, H - 28, 'Sin acero superior', { size: 11, fill: th.muted, anchor: 'middle' });
   }
   s += text(14, 22, `Sección a lo largo de ${o.dir === 'x' ? 'X' : 'Y'} (por ${col.name})`, { size: 12.5, fill: th.ink, weight: 600 });
   return svgWrap(W, H, s, th.bg);
@@ -259,7 +279,8 @@ export function footingSectionSvg(inp: FootingInput, res: FootingResults | null,
 // ---------------------------------------------------------------------------
 // Planta de armado
 // ---------------------------------------------------------------------------
-export function footingRebarPlanSvg(inp: FootingInput, res: FootingResults | null, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+export function footingRebarPlanSvg(inp: FootingInput, res: FootingResults | null, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt; layer?: 'bottom' | 'top' }): string {
+  const top = o.layer === 'top';
   const W = o.W ?? 760, H = o.H ?? 540;
   const th = o.theme ?? LIGHT;
   const view = makePlanView(planPoints(inp), W, H, 60);
@@ -267,8 +288,9 @@ export function footingRebarPlanSvg(inp: FootingInput, res: FootingResults | nul
   const bb = bbox(foot);
   const P = (p: Pt) => view.toSvg(p.x, p.y);
   let s = poly(foot.map(P), th.concrete, th.concreteStroke, 2.2, 'fill-opacity=".55"');
-  const spX = res?.flexX?.det.spacing ?? 0.25;
-  const spY = res?.flexY?.det.spacing ?? 0.25;
+  const fX = top ? res?.flexTopX : res?.flexX, fY = top ? res?.flexTopY : res?.flexY;
+  const spX = fX?.det.spacing ?? 0.25;
+  const spY = fY?.det.spacing ?? 0.25;
   const cov = inp.cover;
   const clip = (a: number, b: number) => [a + cov, b - cov] as [number, number];
   // Barras X (horizontales) en azul, barras Y (verticales) en rojo
@@ -300,9 +322,9 @@ export function footingRebarPlanSvg(inp: FootingInput, res: FootingResults | nul
     const pts = columnPoly(c.geom, c.x, c.y).map(P);
     s += poly(pts, th.col, th.ink, 1.2, 'fill-opacity=".9"');
   }
-  s += text(16, 24, 'Planta de armado inferior', { size: 13, fill: th.ink, weight: 600 });
-  s += line(16, 42, 40, 42, '#1d63c7', 2.4) + text(46, 46, `Barras en X: ${res?.flexX?.det.text ?? '—'}`, { size: 11.5, fill: th.ink });
-  s += line(16, 60, 40, 60, th.rebar, 2.4) + text(46, 64, `Barras en Y: ${res?.flexY?.det.text ?? '—'}`, { size: 11.5, fill: th.ink });
+  s += text(16, 24, top ? 'Planta de armado superior' : 'Planta de armado inferior', { size: 13, fill: th.ink, weight: 600 });
+  s += line(16, 42, 40, 42, '#1d63c7', 2.4) + text(46, 46, `Barras en X: ${fX?.det.text ?? '—'}`, { size: 11.5, fill: th.ink });
+  s += line(16, 60, 40, 60, th.rebar, 2.4) + text(46, 64, `Barras en Y: ${fY?.det.text ?? '—'}`, { size: 11.5, fill: th.ink });
   const bl = view.toSvg(bb.xmin, bb.ymin), br = view.toSvg(bb.xmax, bb.ymin), tl = view.toSvg(bb.xmin, bb.ymax);
   s += dimLine(bl.x, bl.y, br.x, br.y, o.fmt.u('len', bb.xmax - bb.xmin, 2), th.dim, 24, 11.5, 1);
   s += dimLine(bl.x, bl.y, tl.x, tl.y, o.fmt.u('len', bb.ymax - bb.ymin, 2), th.dim, 24, 11.5, -1);

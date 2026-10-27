@@ -65,6 +65,10 @@ export interface FootingInput {
   barY: string;
   /** barras de la capa inferior */
   lowerLayer: 'x' | 'y';
+  /** parrilla superior opcional */
+  topSteel: boolean;
+  barTopX: string;
+  barTopY: string;
   fc: number; // MPa
   fy: number; // MPa
   lambda: number;
@@ -134,6 +138,9 @@ export function defaultFooting(): FootingInput {
     barX: '#6',
     barY: '#6',
     lowerLayer: 'x',
+    topSteel: false,
+    barTopX: '#5',
+    barTopY: '#5',
     fc: 28,
     fy: 420,
     lambda: 1,
@@ -298,6 +305,11 @@ export interface FootingResults {
   ultimate: UltimateResult[];
   flexX: FlexureDir | null;
   flexY: FlexureDir | null;
+  /** acero superior (solo si se activa la parrilla superior) */
+  flexTopX: FlexureDir | null;
+  flexTopY: FlexureDir | null;
+  /** mayor momento negativo por dirección y su relación con la resistencia del concreto simple (si no hay acero superior) */
+  hogging: { dir: 'x' | 'y'; Mu: number; capPlain: number; comboName: string }[];
   shearX: ShearDir | null;
   shearY: ShearDir | null;
   punching: PunchingResult[];
@@ -351,6 +363,15 @@ export function effectiveDepths(inp: FootingInput): { dx: number; dy: number; ba
   if (inp.lowerLayer === 'x') {
     return { dx: inp.h - inp.cover - dbx / 2, dy: inp.h - inp.cover - dbx - dby / 2, barX: bx, barY: by };
   }
+  return { dy: inp.h - inp.cover - dby / 2, dx: inp.h - inp.cover - dby - dbx / 2, barX: bx, barY: by };
+}
+
+export function effectiveDepthsTop(inp: FootingInput): { dx: number; dy: number; barX: Bar; barY: Bar } {
+  const bx = findBar(inp.barTopX);
+  const by = findBar(inp.barTopY);
+  const dbx = barDiameterM(bx);
+  const dby = barDiameterM(by);
+  if (inp.lowerLayer === 'x') return { dx: inp.h - inp.cover - dbx / 2, dy: inp.h - inp.cover - dbx - dby / 2, barX: bx, barY: by };
   return { dy: inp.h - inp.cover - dby / 2, dx: inp.h - inp.cover - dby - dbx / 2, barX: bx, barY: by };
 }
 
@@ -592,6 +613,7 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
   const pp = polyProps(poly);
   const bb = bbox(poly);
   const { dx, dy, barX, barY } = effectiveDepths(inp);
+  const top = effectiveDepthsTop(inp);
   const dAvg = (dx + dy) / 2;
   const warnings: string[] = [];
 
@@ -623,6 +645,8 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
   const N = 240;
 
   const flex: Record<'x' | 'y', FlexureDir | null> = { x: null, y: null };
+  const flexTop: Record<'x' | 'y', FlexureDir | null> = { x: null, y: null };
+  const hogging: FootingResults['hogging'] = [];
   const shear: Record<'x' | 'y', ShearDir | null> = { x: null, y: null };
 
   const dirInfo = (dir: 'x' | 'y') => ({
@@ -661,17 +685,19 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
     }
     for (const [a, b] of info.intervals) shearPos.push(a - dd, b + dd);
 
-    let bestFlex: { asPm: number; u: UltimateResult; pos: number; sf: SectionForce; Mu: number } | null = null;
+    type Best = { asPm: number; u: UltimateResult; pos: number; sf: SectionForce; Mu: number };
+    let bestSag: Best | null = null;
+    let bestHog: Best | null = null;
     let bestShear: { ratioKey: number; u: UltimateResult; pos: number; sf: SectionForce; Vu: number } | null = null;
-    // para el diagrama: combinación que gobierna el momento máximo
     const mAbsByCombo: { u: UltimateResult; peak: number }[] = [];
+    const ddT = dir === 'x' ? top.dx : top.dy;
+    const barT = dir === 'x' ? top.barX : top.barY;
 
     for (const u of usableU) {
       let peak = 0;
       for (const p of flexPos) {
         const ch = chordLength(poly, dir, p);
         if (ch < 0.05 * maxChord[dir]) continue;
-        // lado sin columnas si existe; si no, izquierda
         let sf = sectionForce(poly, u.sol.plane, u.cols, dir, p, 'izq', inp.Df);
         if (sf.hasColumns) {
           const alt = sectionForce(poly, u.sol.plane, u.cols, dir, p, 'der', inp.Df);
@@ -679,51 +705,59 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
         }
         const Mu = Math.abs(sf.M);
         peak = Math.max(peak, Mu / ch);
-        const fr = flexureAs(Mu, ch, dd, inp.fc, inp.fy);
+        const hog = sf.M < 0;
+        const fr = flexureAs(Mu, ch, hog ? ddT : dd, inp.fc, inp.fy);
         const asPm = isFinite(fr.As) ? fr.As / ch : 1e9;
-        if (!bestFlex || asPm > bestFlex.asPm + 1e-12 || (Math.abs(asPm - bestFlex.asPm) < 1e-12 && Mu > bestFlex.Mu)) {
-          bestFlex = { asPm, u, pos: p, sf, Mu };
+        const cur = hog ? bestHog : bestSag;
+        if (!cur || asPm > cur.asPm + 1e-12 || (Math.abs(asPm - cur.asPm) < 1e-12 && Mu > cur.Mu)) {
+          const nb = { asPm, u, pos: p, sf, Mu };
+          if (hog) bestHog = nb;
+          else bestSag = nb;
         }
       }
       mAbsByCombo.push({ u, peak });
     }
 
-    // ---- diseño de la dirección
-    if (bestFlex) {
-      const bf = bestFlex;
-      const ch = bf.sf.chord;
-      const fr = flexureAs(bf.Mu, ch, dd, inp.fc, inp.fy);
+    // diagrama de momentos de la combinación más severa en esta dirección
+    const peakU = [...mAbsByCombo].sort((p, q) => q.peak - p.peak)[0]?.u ?? usableU[0];
+    const diagram = { pos: [] as number[], M: [] as number[], V: [] as number[], chord: [] as number[] };
+    if (peakU) {
+      for (let i = 0; i <= 120; i++) {
+        const p = info.lo + ((info.hi - info.lo) * i) / 120;
+        const sfa = sectionForce(poly, peakU.sol.plane, peakU.cols, dir, p, 'izq', inp.Df);
+        diagram.pos.push(p);
+        diagram.M.push(sfa.M);
+        diagram.V.push(sfa.V);
+        diagram.chord.push(sfa.chord);
+      }
+    }
+    const designDir = (bf: Best | null, bar: Bar, dUse: number, face: 'inferior' | 'superior'): FlexureDir | null => {
+      if (!peakU) return null;
+      const b0: Best = bf ?? { asPm: 0, u: peakU, pos: (info.lo + info.hi) / 2, sf: { M: 0, V: 0, chord: maxChord[dir], partMin: info.lo, side: 'izq', hasColumns: true }, Mu: 0 };
+      const ch = b0.sf.chord;
+      const fr = flexureAs(b0.Mu, ch, dUse, inp.fc, inp.fy);
       const asMin = rhoMinSlab(inp.fy) * 1 * inp.h * 1e4; // cm²/m
       const asReq = isFinite(fr.As) ? fr.As / ch : Infinity;
       const asDes = Math.max(isFinite(asReq) ? asReq : 0, asMin);
-      const det = chooseSpacing(asDes, info.bar, Math.min(3 * inp.h, 0.45));
-      const phiMn = flexureCapacity(det.asProv * ch, ch, dd, inp.fc, inp.fy);
-      const side = bf.sf.hasColumns ? 'int' : bf.sf.side;
-      const ldReq = developmentLength(info.bar.db, inp.fy, inp.fc, { lambda: inp.lambda });
-      const posFace = bf.pos;
-      const ldAvail = side === 'int' ? Infinity : Math.abs(posFace - bf.sf.partMin) - inp.cover;
-      // diagrama de momentos para la combinación más severa en esta dirección
-      const peakCombo = [...mAbsByCombo].sort((p, q) => q.peak - p.peak)[0]?.u ?? bf.u;
-      const dgPos: number[] = [];
-      const dgM: number[] = [];
-      const dgV: number[] = [];
-      const dgC: number[] = [];
-      for (let i = 0; i <= 120; i++) {
-        const p = info.lo + ((info.hi - info.lo) * i) / 120;
-        const sfa = sectionForce(poly, peakCombo.sol.plane, peakCombo.cols, dir, p, 'izq', inp.Df);
-        dgPos.push(p);
-        dgM.push(sfa.M);
-        dgV.push(sfa.V);
-        dgC.push(sfa.chord);
-      }
-      flex[dir] = {
-        dir, d: dd, bar: info.bar, comboName: bf.u.combo.name, pos: bf.pos, side, Mu: bf.Mu, face: bf.sf.M >= 0 ? 'inferior' : 'superior', chord: ch,
+      const det = chooseSpacing(asDes, bar, Math.min(3 * inp.h, 0.45));
+      const phiMn = flexureCapacity(det.asProv * ch, ch, dUse, inp.fc, inp.fy);
+      const side = b0.sf.hasColumns ? 'int' : b0.sf.side;
+      const ldReq = developmentLength(bar.db, inp.fy, inp.fc, { lambda: inp.lambda });
+      const ldAvail = side === 'int' ? Infinity : Math.abs(b0.pos - b0.sf.partMin) - inp.cover;
+      return {
+        dir, d: dUse, bar, comboName: b0.u.combo.name, pos: b0.pos, side, Mu: b0.Mu, face, chord: ch,
         AsReq: asReq, AsMin: asMin, AsDesign: asDes, det, phiMn, rho: fr.rho, cOverD: fr.cOverD, sectionOk: fr.ok && isFinite(fr.As),
-        ratio: phiMn > 0 ? bf.Mu / phiMn : Infinity,
-        ldReq, ldAvail, hookNeeded: ldAvail < ldReq, hookLen: hookDevelopment(info.bar.db, inp.fy, inp.fc, inp.lambda),
-        diagram: { pos: dgPos, M: dgM, V: dgV, chord: dgC },
-        steelVolume: (det.asProv * 1e-4) * pp.A, // m³ por esta dirección
+        ratio: phiMn > 0 ? b0.Mu / phiMn : Infinity,
+        ldReq, ldAvail, hookNeeded: ldAvail < ldReq, hookLen: hookDevelopment(bar.db, inp.fy, inp.fc, inp.lambda),
+        diagram, steelVolume: det.asProv * 1e-4 * pp.A,
       };
+    };
+    flex[dir] = designDir(bestSag, info.bar, dd, 'inferior');
+    if (inp.topSteel) flexTop[dir] = designDir(bestHog, barT, ddT, 'superior');
+    else if (bestHog) {
+      const hg: Best = bestHog;
+      const capPlain = 0.6 * 0.42 * inp.lambda * Math.sqrt(inp.fc) * ((hg.sf.chord * inp.h * inp.h) / 6) * 1000;
+      hogging.push({ dir, Mu: hg.Mu, capPlain, comboName: hg.u.combo.name });
     }
 
     // ---- cortante en una dirección (usa As provista)
@@ -785,6 +819,14 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
     const s = shear[dir];
     if (s) checks.push({ name: `Cortante en una dirección (${dir.toUpperCase()})`, ratio: s.ratio, ok: s.ok, detail: s.comboName });
   }
+  for (const dir of ['x', 'y'] as const) {
+    const t = dir === 'x' ? flexTop.x : flexTop.y;
+    if (t && t.Mu > 0) checks.push({ name: `Flexión superior dirección ${dir.toUpperCase()}`, ratio: t.ratio, ok: t.sectionOk && t.ratio <= 1 + 1e-9, detail: t.comboName });
+  }
+  for (const h of hogging) {
+    const ratio = h.Mu / Math.max(h.capPlain, 1e-9);
+    if (ratio > 0.02) checks.push({ name: `Momento negativo ${h.dir.toUpperCase()} sin acero superior`, ratio, ok: ratio <= 1, detail: `Mu = ${h.Mu.toFixed(1)} kN·m (${h.comboName}); activar la parrilla superior` });
+  }
   for (const p of punching) {
     if (p.applicable) checks.push({ name: `Punzonamiento ${p.col.name}`, ratio: p.ratio, ok: p.ok, detail: p.comboName });
     if (p.applicable && !p.bearingOk) warnings.push(`${p.col.name}: aplastamiento columna-zapata supera φ·0.85·f′c·A₁; verificar con pedestal o A₂/A₁.`);
@@ -799,10 +841,10 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
   if (!service.length) warnings.push('No hay combinaciones de servicio definidas.');
   if (!ultimate.length) warnings.push('No hay combinaciones últimas definidas: no se puede diseñar el refuerzo.');
 
-  const steelKg = 7850 * ((flex.x?.steelVolume ?? 0) + (flex.y?.steelVolume ?? 0));
+  const steelKg = 7850 * ((flex.x?.steelVolume ?? 0) + (flex.y?.steelVolume ?? 0) + (flexTop.x?.steelVolume ?? 0) + (flexTop.y?.steelVolume ?? 0));
   return {
     area: pp.A, centroid: { x: pp.cx, y: pp.cy }, Ix: pp.Ix, Iy: pp.Iy, Ixy: pp.Ixy, bbox: bb, dx, dy, dAvg, service, ultimate,
-    flexX: flex.x, flexY: flex.y, shearX: shear.x, shearY: shear.y, punching, govService: govPressure, govPressure,
+    flexX: flex.x, flexY: flex.y, flexTopX: flexTop.x, flexTopY: flexTop.y, hogging, shearX: shear.x, shearY: shear.y, punching, govService: govPressure, govPressure,
     concreteVolume: pp.A * inp.h, steelKg, warnings, checks, ok: checks.every((c) => c.ok) && thicknessOk, thicknessOk,
   };
 }

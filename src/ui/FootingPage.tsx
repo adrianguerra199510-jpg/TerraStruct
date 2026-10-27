@@ -57,8 +57,17 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
             <Sel label="Barras" value={data.barSystem} onChange={(v) => set({ barSystem: v, barX: barList(v)[3].id, barY: barList(v)[3].id })} options={[{ id: 'astm', label: 'ASTM (#)' }, { id: 'metric', label: 'Métricas (mm)' }]} />
             <Sel label="Barras dirección X" value={data.barX} onChange={(v) => set({ barX: v })} options={barList(data.barSystem).map((b) => ({ id: b.id, label: b.label }))} />
             <Sel label="Barras dirección Y" value={data.barY} onChange={(v) => set({ barY: v })} options={barList(data.barSystem).map((b) => ({ id: b.id, label: b.label }))} />
-            <Sel label="Capa inferior" value={data.lowerLayer} onChange={(v) => set({ lowerLayer: v })} options={[{ id: 'x', label: 'Barras en X abajo' }, { id: 'y', label: 'Barras en Y abajo' }]} />
+            <Sel label="Capa exterior (abajo y arriba)" value={data.lowerLayer} onChange={(v) => set({ lowerLayer: v })} options={[{ id: 'x', label: 'Barras en X abajo' }, { id: 'y', label: 'Barras en Y abajo' }]} />
             <Sel label="Norma de cortante" value={data.code} onChange={(v) => set({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19 (efecto tamaño)' }]} />
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Check label="Con acero superior (parrilla superior)" value={data.topSteel} onChange={(v) => set({ topSteel: v })} hint="Se diseña con los momentos negativos; sin ella se verifica el concreto simple" />
+            </div>
+            {data.topSteel && (
+              <>
+                <Sel label="Barras superiores en X" value={data.barTopX} onChange={(v) => set({ barTopX: v })} options={barList(data.barSystem).map((b) => ({ id: b.id, label: b.label }))} />
+                <Sel label="Barras superiores en Y" value={data.barTopY} onChange={(v) => set({ barTopY: v })} options={barList(data.barSystem).map((b) => ({ id: b.id, label: b.label }))} />
+              </>
+            )}
             <Num label="f′c" q="stress" value={data.fc} onChange={(v) => set({ fc: v })} min={14} />
             <Num label="fy" q="stress" value={data.fy} onChange={(v) => set({ fy: v })} min={240} />
           </div>
@@ -581,6 +590,7 @@ function FootingArmado({ data, res, theme }: { data: FootingInput; res: FootingR
   return (
     <>
       <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingRebarPlanSvg(data, res, { fmt, theme, W: 820, H: 520 }) }} /></div>
+      {data.topSteel && <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingRebarPlanSvg(data, res, { fmt, theme, W: 820, H: 520, layer: 'top' }) }} /></div>}
       <div className="grid2">
         <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingSectionSvg(data, res, { fmt, theme, dir: 'x', W: 600, H: 320 }) }} /></div>
         <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingSectionSvg(data, res, { fmt, theme, dir: 'y', W: 600, H: 320 }) }} /></div>
@@ -597,6 +607,12 @@ function FootingArmado({ data, res, theme }: { data: FootingInput; res: FootingR
                 f ? (f.hookNeeded ? `Usar gancho estándar (ldh ≥ ${f.hookLen.toFixed(2)} m)` : `Desarrollo recto ld = ${f.ldReq.toFixed(2)} m ≤ disponible ${isFinite(f.ldAvail) ? f.ldAvail.toFixed(2) : '—'} m`) : '',
               ];
             }),
+            ...(data.topSteel
+              ? (['x', 'y'] as const).map((d) => {
+                  const f = d === 'x' ? res.flexTopX : res.flexTopY;
+                  return [`Barras superiores en ${d.toUpperCase()}`, f?.det.text ?? '—', f ? f.det.asProv.toFixed(2) : '—', f ? f.AsReq.toFixed(2) : '—', f ? (f.Mu > 0 ? `Momento negativo Mu = ${fmt.u('moment', f.Mu, 1)}` : 'Acero mínimo (sin momento negativo)') : ''];
+                })
+              : [['Acero superior', 'No se coloca', '—', '—', 'Concreto simple en tracción superior']]),
             ...res.punching.map((p) => [`Barras de espera de ${p.col.name}`, '—', '—', '—', `As ≥ 0.005·Ag = ${p.dowelAs.toFixed(1)} cm² (ACI 16.3.4.1)`]),
           ]}
         />
