@@ -1,0 +1,174 @@
+// Utilidades para generar SVG como texto (se usan en pantalla y en las memorias PDF/Word).
+
+export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+export interface Theme {
+  bg: string;
+  ink: string;
+  muted: string;
+  line: string;
+  grid: string;
+  concrete: string;
+  concreteStroke: string;
+  col: string;
+  soil: string;
+  soilStroke: string;
+  dim: string;
+  accent: string;
+  rebar: string;
+  water: string;
+  ok: string;
+  bad: string;
+}
+
+export const LIGHT: Theme = {
+  bg: '#ffffff', ink: '#12233d', muted: '#5a6b85', line: '#cbd5e4', grid: '#e8eef6', concrete: '#d9e3f0', concreteStroke: '#12335e', col: '#34445e',
+  soil: '#e9c58f', soilStroke: '#b5894a', dim: '#c0392b', accent: '#d9822b', rebar: '#d62839', water: '#4da3ff', ok: '#138a48', bad: '#c62a2f',
+};
+export const DARK: Theme = {
+  bg: '#0f1b31', ink: '#e6eefb', muted: '#93a6c4', line: '#33466a', grid: '#1a2a47', concrete: '#324a73', concreteStroke: '#a9c4ee', col: '#8fa7cf', soil: '#6b5330',
+  soilStroke: '#b58a4a', dim: '#ff8a7a', accent: '#f0a050', rebar: '#ff6b7a', water: '#4da3ff', ok: '#4bd08a', bad: '#ff7b80',
+};
+
+export const FONT = "font-family=\"Segoe UI, Arial, Helvetica, sans-serif\"";
+
+export function text(x: number, y: number, s: string, opts: { size?: number; fill?: string; anchor?: 'start' | 'middle' | 'end'; weight?: string | number; rotate?: number; italic?: boolean; baseline?: string } = {}): string {
+  const { size = 12, fill = '#000', anchor = 'start', weight = 400, rotate, italic, baseline } = opts;
+  const tr = rotate ? ` transform="rotate(${rotate} ${x.toFixed(2)} ${y.toFixed(2)})"` : '';
+  return `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" ${FONT} font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-weight="${weight}"${italic ? ' font-style="italic"' : ''}${baseline ? ` dominant-baseline="${baseline}"` : ''}${tr}>${esc(s)}</text>`;
+}
+
+export function line(x1: number, y1: number, x2: number, y2: number, stroke: string, w = 1, dash?: string): string {
+  return `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="${stroke}" stroke-width="${w}"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`;
+}
+
+export function poly(pts: { x: number; y: number }[], fill: string, stroke: string, w = 1, extra = ''): string {
+  return `<polygon points="${pts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="${fill}" stroke="${stroke}" stroke-width="${w}" stroke-linejoin="round" ${extra}/>`;
+}
+
+export function arrowHead(x: number, y: number, ang: number, size: number, fill: string): string {
+  const a = Math.PI / 7;
+  const p1 = { x: x - size * Math.cos(ang - a), y: y - size * Math.sin(ang - a) };
+  const p2 = { x: x - size * Math.cos(ang + a), y: y - size * Math.sin(ang + a) };
+  return `<polygon points="${x.toFixed(2)},${y.toFixed(2)} ${p1.x.toFixed(2)},${p1.y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}" fill="${fill}"/>`;
+}
+
+export function arrow(x1: number, y1: number, x2: number, y2: number, stroke: string, w = 1.4, head = 7): string {
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  return line(x1, y1, x2 - Math.cos(ang) * head * 0.6, y2 - Math.sin(ang) * head * 0.6, stroke, w) + arrowHead(x2, y2, ang, head, stroke);
+}
+
+/** Cota lineal con flechas en ambos extremos y texto centrado. */
+export function dimLine(x1: number, y1: number, x2: number, y2: number, label: string, color: string, offset = 0, size = 11, side: 1 | -1 = 1): string {
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  const nx = -Math.sin(ang) * offset * side;
+  const ny = Math.cos(ang) * offset * side;
+  const ax = x1 + nx, ay = y1 + ny, bx = x2 + nx, by = y2 + ny;
+  const ext = (px: number, py: number, qx: number, qy: number) => line(px, py, qx + (qx - px) * 0.08, qy + (qy - py) * 0.08, color, 0.6, '2 2');
+  let s = '';
+  if (offset !== 0) s += ext(x1, y1, ax, ay) + ext(x2, y2, bx, by);
+  s += line(ax, ay, bx, by, color, 0.9);
+  s += arrowHead(ax, ay, ang + Math.PI, 5.5, color) + arrowHead(bx, by, ang, 5.5, color);
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  let rot = (ang * 180) / Math.PI;
+  if (rot > 90 || rot < -90) rot += 180;
+  s += `<g>${text(mx, my - 3, label, { size, fill: color, anchor: 'middle', rotate: rot, weight: 500 })}</g>`;
+  return s;
+}
+
+export function svgWrap(w: number, h: number, body: string, bg?: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" ${FONT}>${bg ? `<rect width="${w}" height="${h}" fill="${bg}"/>` : ''}${body}</svg>`;
+}
+
+/** Escala de colores secuencial (azul claro → naranja intenso) para presiones. */
+export function heat(t: number): string {
+  const c = Math.min(Math.max(t, 0), 1);
+  const stops = [
+    [0, [214, 234, 255]],
+    [0.35, [150, 210, 225]],
+    [0.6, [250, 224, 140]],
+    [0.8, [244, 160, 80]],
+    [1, [205, 70, 50]],
+  ] as [number, number[]][];
+  for (let i = 1; i < stops.length; i++) {
+    if (c <= stops[i][0]) {
+      const [t0, a] = stops[i - 1];
+      const [t1, b] = stops[i];
+      const k = (c - t0) / (t1 - t0);
+      const r = Math.round(a[0] + (b[0] - a[0]) * k);
+      const g = Math.round(a[1] + (b[1] - a[1]) * k);
+      const bl = Math.round(a[2] + (b[2] - a[2]) * k);
+      return `rgb(${r},${g},${bl})`;
+    }
+  }
+  return 'rgb(205,70,50)';
+}
+
+/** Paso "bonito" para rejillas. */
+export function niceStep(range: number, target = 8): number {
+  const raw = range / target;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  const step = n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10;
+  return step * mag;
+}
+
+export interface Series {
+  name: string;
+  xs: number[];
+  ys: number[];
+  color: string;
+  dash?: string;
+}
+
+/** Gráfico de líneas simple con ejes y cuadrícula. */
+export function lineChart(opts: {
+  w: number; h: number; theme: Theme; series: Series[]; xLabel: string; yLabel: string; title?: string; zeroLine?: boolean; fillArea?: boolean; invertY?: boolean;
+  xFmt?: (v: number) => string; yFmt?: (v: number) => string;
+}): string {
+  const { w, h, theme, series, xLabel, yLabel } = opts;
+  const m = { l: 56, r: 16, t: opts.title ? 34 : 14, b: 42 };
+  const allX = series.flatMap((s) => s.xs), allY = series.flatMap((s) => s.ys);
+  let xmin = Math.min(...allX), xmax = Math.max(...allX);
+  let ymin = Math.min(0, ...allY), ymax = Math.max(0, ...allY);
+  if (xmax - xmin < 1e-9) xmax = xmin + 1;
+  if (ymax - ymin < 1e-9) ymax = ymin + 1;
+  const pad = (ymax - ymin) * 0.06;
+  ymax += pad;
+  if (ymin < 0) ymin -= pad;
+  const X = (x: number) => m.l + ((x - xmin) / (xmax - xmin)) * (w - m.l - m.r);
+  const Y = (y: number) => (opts.invertY ? m.t + ((y - ymin) / (ymax - ymin)) * (h - m.t - m.b) : h - m.b - ((y - ymin) / (ymax - ymin)) * (h - m.t - m.b));
+  let s = '';
+  const sx = niceStep(xmax - xmin, 6), sy = niceStep(ymax - ymin, 5);
+  const xf = opts.xFmt ?? ((v: number) => String(+v.toFixed(2)));
+  const yf = opts.yFmt ?? ((v: number) => String(+v.toFixed(1)));
+  for (let v = Math.ceil(xmin / sx) * sx; v <= xmax + 1e-9; v += sx) {
+    s += line(X(v), m.t, X(v), h - m.b, theme.grid, 1);
+    s += text(X(v), h - m.b + 15, xf(v), { size: 10.5, fill: theme.muted, anchor: 'middle' });
+  }
+  for (let v = Math.ceil(ymin / sy) * sy; v <= ymax + 1e-9; v += sy) {
+    s += line(m.l, Y(v), w - m.r, Y(v), theme.grid, 1);
+    s += text(m.l - 6, Y(v) + 3.5, yf(v), { size: 10.5, fill: theme.muted, anchor: 'end' });
+  }
+  s += line(m.l, m.t, m.l, h - m.b, theme.line, 1.2) + line(m.l, h - m.b, w - m.r, h - m.b, theme.line, 1.2);
+  if (opts.zeroLine !== false && ymin < 0) s += line(m.l, Y(0), w - m.r, Y(0), theme.muted, 1, '4 3');
+  for (const se of series) {
+    const pts = se.xs.map((x, i) => `${X(x).toFixed(1)},${Y(se.ys[i]).toFixed(1)}`);
+    if (opts.fillArea) {
+      s += `<polygon points="${X(se.xs[0]).toFixed(1)},${Y(0).toFixed(1)} ${pts.join(' ')} ${X(se.xs[se.xs.length - 1]).toFixed(1)},${Y(0).toFixed(1)}" fill="${se.color}" opacity="0.14"/>`;
+    }
+    s += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="2" stroke-linejoin="round"${se.dash ? ` stroke-dasharray="${se.dash}"` : ''}/>`;
+  }
+  s += text((m.l + w - m.r) / 2, h - 6, xLabel, { size: 11, fill: theme.muted, anchor: 'middle' });
+  s += text(13, (m.t + h - m.b) / 2, yLabel, { size: 11, fill: theme.muted, anchor: 'middle', rotate: -90 });
+  if (opts.title) s += text(m.l, 20, opts.title, { size: 12.5, fill: theme.ink, weight: 600 });
+  if (series.length > 1) {
+    let lx = w - m.r - 4;
+    for (const se of [...series].reverse()) {
+      const tw = se.name.length * 6 + 26;
+      lx -= tw;
+      s += line(lx, 16, lx + 16, 16, se.color, 2.4, se.dash) + text(lx + 20, 20, se.name, { size: 10.5, fill: theme.muted });
+    }
+  }
+  return svgWrap(w, h, s, theme.bg);
+}

@@ -1,0 +1,502 @@
+import React, { useMemo, useState } from 'react';
+import {
+  Settings2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
+} from 'lucide-react';
+import { WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { analyzeWall, WallResults } from '../core/wall';
+import { barList } from '../core/materials';
+import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
+import { wallPlanSvg, wallSectionSvg, wallTypeIcon } from '../draw/wallDraw';
+import { DARK, LIGHT, lineChart } from '../draw/svg';
+import { ReportButtons } from './ReportButtons';
+import { ProjectInfo } from '../state';
+import { CaseResult } from '../core/wallStability';
+
+type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'armado' | 'memoria';
+
+export function WallPage({ data, onChange, theme, info }: { data: WallInput; onChange: (w: WallInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
+  const [tab, setTab] = useState<Tab>('seccion');
+  const res = useMemo(() => {
+    try {
+      return analyzeWall(data);
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }, [data]);
+  const set = (patch: Partial<WallInput>) => onChange({ ...data, ...patch });
+  const th = theme === 'dark' ? DARK : LIGHT;
+  const t = data.type;
+  const bars = barList(data.mat.barSystem).map((b) => ({ id: b.id, label: b.label }));
+  const setMat = (p: Partial<WallInput['mat']>) => set({ mat: { ...data.mat, ...p } });
+  const setFill = (p: Partial<WallInput['fill']>) => set({ fill: { ...data.fill, ...p } });
+  const setFound = (p: Partial<WallInput['found']>) => set({ found: { ...data.found, ...p } });
+  const setFac = (p: Partial<WallInput['factors']>) => set({ factors: { ...data.factors, ...p } });
+
+  return (
+    <div className="split">
+      <div className="left stack">
+        <Acc title="Tipología del muro" icon={<BrickWall size={18} />} open>
+          <div className="type-grid">
+            {WALL_TYPES.map((w) => (
+              <button
+                key={w.id}
+                className={'type-card' + (t === w.id ? ' on' : '')}
+                onClick={() => {
+                  const d = defaultWall(w.id);
+                  // se conservan nombre, suelos, sismo y materiales; se cambia la geometría
+                  onChange({ ...d, name: data.name, fill: data.fill, found: data.found, hw: data.hw, seismic: data.seismic, passive: data.passive, mat: { ...d.mat, fc: data.mat.fc, fy: data.mat.fy, barSystem: data.mat.barSystem, code: data.mat.code } });
+                }}
+              >
+                <div dangerouslySetInnerHTML={{ __html: wallTypeIcon(w.id) }} />
+                <b>{w.short}</b>
+                <span>{w.desc}</span>
+              </button>
+            ))}
+          </div>
+          <Txt label="Nombre del muro" value={data.name} onChange={(v) => set({ name: v })} />
+        </Acc>
+
+        <Acc title="Geometría" icon={<Ruler size={18} />} open>
+          <div className="grid2">
+            <Num label="Altura de la pantalla H" q="len" value={data.H} onChange={(v) => set({ H: v })} min={0.5} hint="De la cara superior de la zapata a la corona" />
+            <Num label="Espesor en la corona" q="len" value={data.tTop} onChange={(v) => set({ tTop: v })} min={0.1} />
+            <Num label="Espesor en la base" q="len" value={data.tBot} onChange={(v) => set({ tBot: v })} min={0.1} />
+            <Sel label="Cara que se mantiene vertical" value={data.stemFace} onChange={(v) => set({ stemFace: v })} options={[{ id: 'front', label: 'Frontal (talud en el dorso)' }, { id: 'back', label: 'Posterior (talud al frente)' }, { id: 'free', label: 'Ninguna (libre)' }]} />
+            {data.stemFace === 'free' && <Num label="Desplazamiento de la cara frontal" q="len" value={data.fb} onChange={(v) => set({ fb: v })} hint="+ hacia el relleno" />}
+            <Num label="Altura de terreno al frente Df" q="len" value={data.Df} onChange={(v) => set({ Df: v })} min={0} hint="Sobre la cara inferior de la zapata" />
+          </div>
+          <div className="grid2">
+            <Num label={isGravity(t) ? 'Pie (0 = sin zapata)' : 'Longitud del pie'} q="len" value={data.Lt} onChange={(v) => set({ Lt: v })} min={0} />
+            <Num label="Longitud del talón" q="len" value={data.Lh} onChange={(v) => set({ Lh: v })} min={0} />
+            <Num label={isGravity(t) ? 'Espesor de zapata (0 = sin zapata)' : 'Espesor de la zapata'} q="len" value={data.hb} onChange={(v) => set({ hb: v, hbTip: Math.min(data.hbTip || v, v) || v })} min={0} />
+            <Num label="Espesor en la punta del pie" q="len" value={data.hbTip} onChange={(v) => set({ hbTip: v })} min={0} hint="Menor o igual al de la zapata" />
+          </div>
+          {isCounterfort(t) && (
+            <>
+              <div className="hint"><b>{t === 'counterfortInt' ? 'Contrafuertes internos (en el relleno)' : 'Contrafuertes externos (cara visible)'}</b></div>
+              <div className="grid2">
+                <Num label="Separación entre ejes s" q="len" value={data.cf.s} onChange={(v) => set({ cf: { ...data.cf, s: v } })} min={1} />
+                <Num label="Espesor del contrafuerte" q="len" value={data.cf.t} onChange={(v) => set({ cf: { ...data.cf, t: v } })} min={0.15} />
+                <Num label="Proyección en la base" q="len" value={data.cf.proj} onChange={(v) => set({ cf: { ...data.cf, proj: v } })} min={0.3} />
+                <Num label="Proyección en la corona" q="len" value={data.cf.projTop} onChange={(v) => set({ cf: { ...data.cf, projTop: v } })} min={0} />
+              </div>
+            </>
+          )}
+          <Check label="Llave de corte bajo la zapata" value={data.key.enabled} onChange={(v) => set({ key: { ...data.key, enabled: v } })} />
+          {data.key.enabled && (
+            <div className="grid3">
+              <Num label="Posición x (desde la punta)" q="len" value={data.key.x} onChange={(v) => set({ key: { ...data.key, x: v } })} min={0} />
+              <Num label="Ancho" q="len" value={data.key.b} onChange={(v) => set({ key: { ...data.key, b: v } })} min={0.2} />
+              <Num label="Profundidad" q="len" value={data.key.d} onChange={(v) => set({ key: { ...data.key, d: v } })} min={0.2} />
+            </div>
+          )}
+        </Acc>
+
+        <Acc title="Suelos, agua y empuje" icon={<Mountain size={18} />} open>
+          <div className="hint"><b>Relleno detrás del muro</b></div>
+          <div className="grid3">
+            <Num label="Peso unitario γ" q="uw" value={data.fill.gamma} onChange={(v) => setFill({ gamma: v })} />
+            <Num label="γ saturado" q="uw" value={data.fill.gammaSat} onChange={(v) => setFill({ gammaSat: v })} />
+            <Num label="Ángulo de fricción φ" unit="°" value={data.fill.phi} onChange={(v) => setFill({ phi: v })} min={10} max={45} />
+            <Num label="Talud del relleno β" unit="°" value={data.fill.beta} onChange={(v) => setFill({ beta: v })} min={0} max={data.fill.phi - 1} />
+            <Num label="Sobrecarga q" q="press" value={data.fill.q} onChange={(v) => setFill({ q: v })} min={0} />
+            <Num label="Nivel freático" q="len" value={data.hw} onChange={(v) => set({ hw: v })} min={0} hint="Altura sobre la base del muro (0 = sin agua)" />
+          </div>
+          <div className="hint"><b>Suelo de cimentación y suelo frontal</b></div>
+          <div className="grid3">
+            <Num label="Peso unitario γ" q="uw" value={data.found.gamma} onChange={(v) => setFound({ gamma: v })} />
+            <Num label="Fricción φ" unit="°" value={data.found.phi} onChange={(v) => setFound({ phi: v })} min={0} max={45} />
+            <Num label="Cohesión c" q="press" value={data.found.c} onChange={(v) => setFound({ c: v })} min={0} />
+            <Sel label="Capacidad portante" value={data.found.bearingMode} onChange={(v) => setFound({ bearingMode: v })} options={[{ id: 'qa', label: 'Dato: q admisible' }, { id: 'calc', label: 'Calcular (Meyerhof/Vesic)' }]} />
+            {data.found.bearingMode === 'qa' ? <Num label="q admisible" q="press" value={data.found.qa} onChange={(v) => setFound({ qa: v })} min={10} /> : <Num label="FS capacidad portante" value={data.found.fsBearing} onChange={(v) => setFound({ fsBearing: v })} min={1.5} />}
+            <Num label="Fricción base μ" value={data.found.mu} onChange={(v) => setFound({ mu: v })} min={0} max={1.2} hint="tan δ de la base" />
+            <Num label="Adhesión base" q="press" value={data.found.ca} onChange={(v) => setFound({ ca: v })} min={0} />
+          </div>
+          {data.key.enabled && <Check label="Con llave: usar fricción suelo–suelo (tan φ, c)" value={data.found.useSoilFriction} onChange={(v) => setFound({ useSoilFriction: v })} />}
+          <Check label="Considerar empuje pasivo frontal" value={data.passive.use} onChange={(v) => set({ passive: { ...data.passive, use: v } })} />
+          {data.passive.use && (
+            <div className="grid2">
+              <Num label="Factor de reducción del pasivo" value={data.passive.factor} onChange={(v) => set({ passive: { ...data.passive, factor: v } })} min={0} max={1} />
+              <Num label="Profundidad ignorada" q="len" value={data.passive.ignoreTop} onChange={(v) => set({ passive: { ...data.passive, ignoreTop: v } })} min={0} hint="Suelo superficial no confiable" />
+            </div>
+          )}
+          {isGravity(t) && (
+            <div className="grid2">
+              <Sel label="Teoría de empuje" value={data.theory} onChange={(v) => set({ theory: v })} options={[{ id: 'coulomb', label: 'Coulomb (cara real)' }, { id: 'rankine', label: 'Rankine (plano virtual)' }]} />
+              {data.theory === 'coulomb' && <Num label="Fricción muro–suelo δ" unit="°" value={data.delta} onChange={(v) => set({ delta: v })} min={0} max={data.fill.phi} />}
+            </div>
+          )}
+          <Check label="Ignorar el peso de la sobrecarga en volcamiento y deslizamiento" value={data.ignoreSurchargeWeight} onChange={(v) => set({ ignoreSurchargeWeight: v })} hint="Criterio conservador usual" />
+          <Check label="Incluir el suelo sobre el pie" value={data.includeToeSoil} onChange={(v) => set({ includeToeSoil: v })} />
+        </Acc>
+
+        <Acc title="Sismo (Mononobe–Okabe)" icon={<Activity size={18} />}>
+          <Check label="Verificar con sismo" value={data.seismic.on} onChange={(v) => set({ seismic: { ...data.seismic, on: v } })} />
+          {data.seismic.on && (
+            <div className="grid2">
+              <Num label="kh" value={data.seismic.kh} onChange={(v) => set({ seismic: { ...data.seismic, kh: v } })} min={0} max={0.6} hint="Coeficiente sísmico horizontal" />
+              <Num label="kv" value={data.seismic.kv} onChange={(v) => set({ seismic: { ...data.seismic, kv: v } })} min={0} max={0.4} hint="Coeficiente vertical (0 = ignorar)" />
+            </div>
+          )}
+        </Acc>
+
+        <Acc title="Materiales y armado" icon={<Boxes size={18} />}>
+          <div className="grid2">
+            {!isMasonry(t) || t === 'masonryReinforced' ? (
+              <>
+                <Num label="f′c del concreto" q="stress" value={data.mat.fc} onChange={(v) => setMat({ fc: v })} min={10} />
+                <Num label="fy del acero" q="stress" value={data.mat.fy} onChange={(v) => setMat({ fy: v })} min={240} />
+              </>
+            ) : null}
+            <Num label="Peso unit. concreto" q="uw" value={data.mat.gammaC} onChange={(v) => setMat({ gammaC: v })} />
+            <Sel label="Norma de cortante" value={data.mat.code} onChange={(v) => setMat({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19' }]} />
+            <Num label={isMasonry(t) ? 'Recubrimiento al eje de la barra (pantalla)' : 'Recubrimiento pantalla'} q="lencm" value={data.mat.cover} onChange={(v) => setMat({ cover: v })} min={0.02} />
+            <Num label="Recubrimiento zapata" q="lencm" value={data.mat.coverFound} onChange={(v) => setMat({ coverFound: v })} min={0.04} />
+          </div>
+          {isMasonry(t) && (
+            <div className="grid2">
+              <Num label="f′m de la mampostería" q="stress" value={data.mat.fm} onChange={(v) => setMat({ fm: v })} min={1} />
+              <Num label="Peso unit. mampostería" q="uw" value={data.mat.gammaM} onChange={(v) => setMat({ gammaM: v })} />
+              {t === 'gravityMasonry' && (
+                <>
+                  <Num label="Compresión admisible / f′m" value={data.mat.fcAllowRatio} onChange={(v) => setMat({ fcAllowRatio: v })} min={0.05} max={0.5} />
+                  <Num label="Tracción admisible en juntas" q="stress" value={data.mat.ftAllow} onChange={(v) => setMat({ ftAllow: v })} min={0} />
+                  <Num label="Cohesión de juntas" q="stress" value={data.mat.cJ} onChange={(v) => setMat({ cJ: v })} min={0} />
+                  <Num label="Fricción de juntas μ" value={data.mat.muJ} onChange={(v) => setMat({ muJ: v })} min={0} />
+                </>
+              )}
+            </div>
+          )}
+          {t !== 'gravityConcrete' && t !== 'gravityMasonry' && (
+            <>
+              <Sel label="Sistema de barras" value={data.mat.barSystem} onChange={(v) => setMat({ barSystem: v, barStem: barList(v)[2].id, barStemH: barList(v)[1].id, barHeel: barList(v)[2].id, barToe: barList(v)[2].id, barKey: barList(v)[2].id })} options={[{ id: 'astm', label: 'ASTM (#)' }, { id: 'metric', label: 'Métricas (mm)' }]} />
+              <div className="grid3">
+                <Sel label="Pantalla (vertical)" value={data.mat.barStem} onChange={(v) => setMat({ barStem: v })} options={bars} />
+                <Sel label="Horizontal / amarres" value={data.mat.barStemH} onChange={(v) => setMat({ barStemH: v })} options={bars} />
+                <Sel label="Talón" value={data.mat.barHeel} onChange={(v) => setMat({ barHeel: v })} options={bars} />
+                <Sel label="Pie" value={data.mat.barToe} onChange={(v) => setMat({ barToe: v })} options={bars} />
+                {data.key.enabled && <Sel label="Llave" value={data.mat.barKey} onChange={(v) => setMat({ barKey: v })} options={bars} />}
+              </div>
+            </>
+          )}
+        </Acc>
+
+        <Acc title="Factores de seguridad y de carga" icon={<Scale size={18} />}>
+          <div className="grid2">
+            <Num label="FS volcamiento (estático)" value={data.factors.fsOT} onChange={(v) => setFac({ fsOT: v })} min={1} />
+            <Num label="FS deslizamiento (estático)" value={data.factors.fsSL} onChange={(v) => setFac({ fsSL: v })} min={1} />
+            <Num label="FS volcamiento (sismo)" value={data.factors.fsOTe} onChange={(v) => setFac({ fsOTe: v })} min={1} />
+            <Num label="FS deslizamiento (sismo)" value={data.factors.fsSLe} onChange={(v) => setFac({ fsSLe: v })} min={1} />
+            <Num label="Aumento de qa con sismo" value={data.factors.qaIncE} onChange={(v) => setFac({ qaIncE: v })} min={1} />
+            <Num label="Factor de carga muerta" value={data.factors.dead} onChange={(v) => setFac({ dead: v })} min={1} />
+            <Num label="Carga muerta (mínima)" value={data.factors.deadMin} onChange={(v) => setFac({ deadMin: v })} min={0.5} />
+            <Num label="Factor sobrecarga" value={data.factors.live} onChange={(v) => setFac({ live: v })} min={1} />
+            <Num label="Factor empuje de tierra H" value={data.factors.lateral} onChange={(v) => setFac({ lateral: v })} min={1} />
+            <Num label="Factor de sismo E" value={data.factors.eq} onChange={(v) => setFac({ eq: v })} min={0.5} />
+          </div>
+        </Acc>
+      </div>
+
+      <div className="stack" style={{ minWidth: 0 }}>
+        <Tabs<Tab>
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: 'seccion', label: 'Sección', icon: <Eye size={16} /> },
+            { id: 'estabilidad', label: 'Estabilidad', icon: <Scale size={16} /> },
+            { id: 'diseno', label: 'Diseño estructural', icon: <Layers size={16} /> },
+            { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
+            { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
+          ]}
+        />
+        {!res && <Alert>No fue posible calcular con los datos actuales.</Alert>}
+        {res && tab === 'seccion' && <WallSection res={res} theme={th} />}
+        {res && tab === 'estabilidad' && <WallStability res={res} />}
+        {res && tab === 'diseno' && <WallDesignView res={res} theme={th} />}
+        {res && tab === 'armado' && <WallArmado res={res} theme={th} />}
+        {res && tab === 'memoria' && <ReportButtons kind="wall" wall={data} info={info} />}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function Summary({ res }: { res: WallResults }) {
+  const { fmt } = useUnits();
+  const c = res.staticCase;
+  return (
+    <>
+      <div className={'banner ' + (res.ok ? 'ok' : 'bad')}>
+        {res.ok ? <CheckCircle2 /> : <XCircle />}
+        {res.ok ? 'El muro cumple todas las verificaciones.' : 'El muro NO cumple alguna verificación: ajuste la geometría.'}
+      </div>
+      {res.warnings.length > 0 && <div className="stack" style={{ gap: 8 }}>{res.warnings.map((w, i) => <Alert key={i}>{w}</Alert>)}</div>}
+      <div className="kpis">
+        <Kpi label="FS volcamiento" value={isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} sub={`mín. ${c.fsOTreq}`} />
+        <Kpi label="FS deslizamiento" value={isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'} sub={`mín. ${c.fsSLreq}`} />
+        <Kpi label="Presión máxima" value={isFinite(c.qmax) ? fmt.u('press', c.qmax, 1) : '—'} sub={`adm. ${fmt.u('press', c.qaAllow, 1)}`} />
+        <Kpi label="Base B" value={fmt.u('len', res.geom.B, 2)} sub={`e = ${c.e.toFixed(2)} m`} />
+        <Kpi label="Concreto" value={`${res.concreteVolume.toFixed(2)} m³/m`} sub={`Peso ${fmt.u('lforce', res.weightWall, 1)}`} />
+      </div>
+    </>
+  );
+}
+
+function WallSection({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const [seis, setSeis] = useState(false);
+  const useSeis = seis && !!res.seismicCase;
+  return (
+    <>
+      <Summary res={res} />
+      <div className="draw">
+        <div className="draw-tools">
+          {res.seismicCase && <Check label="Mostrar caso sísmico" value={seis} onChange={setSeis} />}
+          <span className="spacer" />
+          <span className="hint">Presión de contacto, empujes y cotas por metro de muro</span>
+        </div>
+        <div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, seismic: useSeis }) }} />
+      </div>
+      {(res.inp.type === 'counterfortInt' || res.inp.type === 'counterfortExt') && (
+        <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>
+      )}
+      <Card title="Verificaciones" icon={<ListChecks size={18} />}>
+        <div className="checks">
+          {res.checks.map((c, i) => (
+            <CheckCard key={i} name={c.name} ratio={c.ratio} ok={c.ok} advisory={c.advisory} detail={c.detail} />
+          ))}
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function ForcesTable({ c }: { c: CaseResult }) {
+  const { fmt } = useUnits();
+  return (
+    <div className="grid2">
+      <Tbl
+        head={['Fuerza vertical', `V (${fmt.l('lforce')})`, 'x (m)', `M (${fmt.l('lmoment')})`]}
+        align={['l', 'r', 'r', 'r']}
+        rows={[
+          ...c.v.map((f) => [f.name, fmt.n('lforce', f.V, 2), f.x.toFixed(3), fmt.n('lmoment', f.M, 2)]),
+          [<b key="s">Σ</b>, <b key="a">{fmt.n('lforce', c.SumV, 2)}</b>, '', <b key="m">{fmt.n('lmoment', c.Mres, 2)}</b>],
+        ]}
+      />
+      <Tbl
+        head={['Fuerza horizontal', `H (${fmt.l('lforce')})`, 'y (m)', `M (${fmt.l('lmoment')})`]}
+        align={['l', 'r', 'r', 'r']}
+        rows={[
+          ...c.h.map((f) => [f.name, fmt.n('lforce', f.H, 2), f.y.toFixed(3), fmt.n('lmoment', f.M, 2)]),
+          [<b key="s">Σ</b>, <b key="a">{fmt.n('lforce', c.SumH, 2)}</b>, '', <b key="m">{fmt.n('lmoment', c.Mot, 2)}</b>],
+        ]}
+      />
+    </div>
+  );
+}
+
+function WallStability({ res }: { res: WallResults }) {
+  const { fmt } = useUnits();
+  const cases = [res.staticCase, ...(res.seismicCase ? [res.seismicCase] : [])];
+  return (
+    <>
+      <Summary res={res} />
+      <Card title="Coeficientes de empuje" icon={<Mountain size={18} />}>
+        <div className="kpis">
+          <Kpi label="Teoría" value={res.earth.mode === 'virtual' ? 'Rankine' : 'Coulomb'} sub={res.earth.theoryLabel} />
+          <Kpi label="Ka" value={res.earth.Ka.toFixed(4)} />
+          {res.earth.Kae !== null && res.earthSeismic && <Kpi label="Kae (M–O)" value={(res.earthSeismic.Kae ?? NaN).toFixed(4)} />}
+          <Kpi label="Kp (frente)" value={res.earth.kpFront.toFixed(3)} />
+          <Kpi label="Altura del plano de empuje" value={fmt.u('len', res.earth.Hv, 2)} />
+        </div>
+      </Card>
+      {cases.map((c) => (
+        <Card key={c.label} title={c.label} icon={<Scale size={18} />}>
+          <div className="stack">
+            <ForcesTable c={c} />
+            {c.passive && (
+              <div className="formula">
+                Empuje pasivo (Kp = {c.passive.Kp.toFixed(2)}): Pp = {fmt.u('lforce', c.passive.Fall, 1)} × factor {res.inp.passive.factor} = {fmt.u('lforce', c.passive.F, 1)} (solo en deslizamiento)
+              </div>
+            )}
+            <div className="checks">
+              <CheckCard name="Volcamiento" ratio={c.fsOTreq / c.FSot} ok={c.ok.ot} detail={`FS = ${isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} = ΣMr / ΣMo = ${fmt.n('lmoment', c.Mres, 1)} / ${fmt.n('lmoment', c.Mot, 1)} (mín. ${c.fsOTreq})`} />
+              <CheckCard name="Deslizamiento" ratio={c.fsSLreq / c.FSsl} ok={c.ok.sl} detail={`FS = (μΣV + c·B + Pp) / ΣH = (${fmt.n('lforce', c.Rfric, 1)} + ${fmt.n('lforce', c.Rcoh, 1)} + ${fmt.n('lforce', c.Rpass, 1)}) / ${fmt.n('lforce', c.SumH, 1)} = ${isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'}`} />
+              <CheckCard name="Presión sobre el suelo" ratio={c.qmax / c.qaAllow} ok={c.ok.q} detail={`x̄ = ${c.xbar.toFixed(3)} m, e = ${c.e.toFixed(3)} m; qmax = ${isFinite(c.qmax) ? fmt.u('press', c.qmax, 1) : '∞'}, qmin = ${fmt.u('press', c.qmin, 1)}`} />
+            </div>
+            {c.bearing && (
+              <div className="formula">
+                Capacidad portante (Meyerhof–Vesic): B′ = {c.bearing.Bp.toFixed(2)} m; Nq = {c.bearing.Nq.toFixed(2)}, Nc = {c.bearing.Nc.toFixed(2)}, Nγ = {c.bearing.Ng.toFixed(2)}; qult = {fmt.u('press', c.bearing.qult, 1)} → qa = qult/FS = {fmt.u('press', c.bearing.qa, 1)}
+              </div>
+            )}
+          </div>
+        </Card>
+      ))}
+    </>
+  );
+}
+
+function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const d = res.design;
+  const th = theme;
+  const conv = (m: number) => (fmt.sys === 'SI' ? m : m / 9.80665);
+  return (
+    <>
+      <Summary res={res} />
+      {d.stem && (
+        <Card title={d.stem.masonry ? 'Pantalla de mampostería reforzada' : 'Pantalla'} icon={<Layers size={18} />}>
+          <div className="stack">
+            <div className="kpis">
+              <Kpi label="Armado vertical (cara del relleno)" value={d.stem.base.text} sub={`As = ${d.stem.base.asProv.toFixed(2)} cm²/m`} />
+              <Kpi label="Horizontal" value={d.stem.horizontalDet.text} sub={`Total ${d.stem.AsH.toFixed(2)} cm²/m (⅔ cara frontal)`} />
+              {!d.stem.masonry && <Kpi label="Vertical cara frontal" value={d.stem.frontVertDet.text} />}
+              <Kpi label="Cortante crítico" value={`${(d.stem.critical.ratio * 100).toFixed(0)} %`} sub={`Vu ${fmt.n('lforce', d.stem.critical.Vu, 1)} / φVc ${fmt.n('lforce', d.stem.critical.phiVc, 1)}`} />
+            </div>
+            <div className="hint">{d.stem.cutNote}</div>
+            <Tbl
+              head={['y (m)', 't (m)', 'd (m)', `Mu (${fmt.l('lmoment')})`, `Vu (${fmt.l('lforce')})`, 'As req (cm²/m)', 'As mín', 'As diseño', `φMn (${fmt.l('lmoment')})`]}
+              align={['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r']}
+              rows={d.stem.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.t.toFixed(3), s.d.toFixed(3), fmt.n('lmoment', s.Mu, 1), fmt.n('lforce', s.Vu, 1), s.AsReq.toFixed(2), s.AsMin.toFixed(2), s.AsDes.toFixed(2), fmt.n('lmoment', s.phiMn, 1)])}
+            />
+            <div className="draw">
+              <div dangerouslySetInnerHTML={{
+                __html: lineChart({
+                  w: 640, h: 260, theme: th, xLabel: 'Altura sobre la base de la pantalla y (m)', yLabel: `Momento (${fmt.l('lmoment')})`, title: 'Momento último vs. capacidad con el armado de la base',
+                  series: [
+                    { name: 'Mu', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.Mu)), color: th.accent },
+                    { name: 'φMn', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.phiMn)), color: th.ok, dash: '6 4' },
+                  ],
+                }),
+              }} />
+            </div>
+          </div>
+        </Card>
+      )}
+      {d.gravity && (
+        <Card title={`Secciones de la pantalla — ${d.gravityMaterial === 'mamposteria' ? 'mampostería sin refuerzo (esfuerzos de servicio)' : 'concreto simple (resistencia)'}`} icon={<BrickWall size={18} />}>
+          <Tbl
+            head={['y (m)', 't (m)', `N (${fmt.l('lforce')})`, `M (${fmt.l('lmoment')})`, `V (${fmt.l('lforce')})`, `σ dorso (${fmt.l('press')})`, `σ frente (${fmt.l('press')})`, 'Compr.', 'Tracc.', 'Cort.', '']}
+            align={['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'c']}
+            rows={d.gravity.map((s) => [s.y.toFixed(2), s.t.toFixed(2), fmt.n('lforce', s.N, 1), fmt.n('lmoment', s.M, 1), fmt.n('lforce', s.V, 1), fmt.n('press', s.sigBack, 1), fmt.n('press', s.sigFront, 1), s.ratioC.toFixed(2), isFinite(s.ratioT) ? s.ratioT.toFixed(2) : '∞', s.ratioV.toFixed(2), <StatusChip key="k" ok={s.ok} />])}
+          />
+        </Card>
+      )}
+      {d.baseCheck && d.baseCheck.length > 0 && (
+        <Card title="Zapata (concreto simple / mampostería)" icon={<Hammer size={18} />}>
+          <Tbl head={['Elemento', 'Relación', 'Detalle']} rows={d.baseCheck.map((b) => [b.name, b.ratio.toFixed(2), b.detail])} align={['l', 'r', 'l']} />
+        </Card>
+      )}
+      {(d.toe || d.heel) && (
+        <div className="grid2">
+          {[d.toe, d.heel].map((s) => s && (
+            <Card key={s.name} title={s.name} icon={<Layers size={18} />} right={<StatusChip ok={s.sectionOk && s.ratioM <= 1 && s.ratioV <= 1} />}>
+              <div className="kpis">
+                <Kpi label="Armado" value={s.det.text} sub={`Cara ${s.face} · As = ${s.det.asProv.toFixed(2)} cm²/m`} />
+                <Kpi label="Mu" value={fmt.u('lmoment', s.Mu, 1)} sub={`φMn ${fmt.n('lmoment', s.phiMn, 1)}`} />
+                <Kpi label="Vu" value={fmt.u('lforce', s.Vu, 1)} sub={`φVc ${fmt.n('lforce', s.phiVc, 1)}`} />
+              </div>
+              <div className="hint" style={{ marginTop: 8 }}>Combinación: {s.caseLabel}. Acero de retracción perpendicular: {s.shrinkDet.text}. {s.hook ? 'Gancho estándar necesario.' : ''}</div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {d.key && (
+        <Card title="Llave de corte" icon={<Hammer size={18} />} right={<StatusChip ok={d.key.slab.sectionOk} />}>
+          <div className="kpis">
+            <Kpi label="Armado vertical" value={d.key.slab.det.text} sub={`As = ${d.key.slab.det.asProv.toFixed(2)} cm²/m`} />
+            <Kpi label="Empuje pasivo sobre la llave" value={fmt.u('lforce', d.key.Pp, 1)} sub={`Usado ${fmt.u('lforce', d.key.PpUsed, 1)}`} />
+            <Kpi label="Mu" value={fmt.u('lmoment', d.key.slab.Mu, 1)} />
+          </div>
+        </Card>
+      )}
+      {d.counterfort && <CounterfortView res={res} />}
+      {d.notes.map((n, i) => <div className="hint" key={i}>{n}</div>)}
+    </>
+  );
+}
+
+function CounterfortView({ res }: { res: WallResults }) {
+  const { fmt } = useUnits();
+  const c = res.design.counterfort!;
+  return (
+    <>
+      <Card title={`Contrafuerte ${c.kind}`} icon={<Layers size={18} />} right={<StatusChip ok={c.sectionOk} />}>
+        <div className="kpis">
+          <Kpi label="Acero principal" value={`${c.nBars} × ${c.bar.id}`} sub={`As prov ${c.AsProv.toFixed(1)} cm² ≥ ${c.AsMax.toFixed(1)}`} />
+          <Kpi label="Estribos horizontales" value={`2 ramas ${c.stirrup.id} @ ${(c.stirrupSpacing * 100).toFixed(1)} cm`} />
+          <Kpi label="Amarres pantalla–contrafuerte" value={c.tieStem.text} />
+          <Kpi label="Amarres zapata–contrafuerte" value={c.tieSlab.text} sub={`T = ${fmt.n('lforce', c.tieSlabForce, 1)} por metro`} />
+        </div>
+        <Tbl
+          head={['y (m)', 'Proyección (m)', 'd (m)', `Mu (${fmt.l('moment')})`, `Vu (${fmt.l('force')})`, 'As horiz. (cm²)', 'As inclinada (cm²)']}
+          align={['r', 'r', 'r', 'r', 'r', 'r', 'r']}
+          rows={c.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.proj.toFixed(2), s.dcf.toFixed(2), fmt.n('moment', s.Mcf, 1), fmt.n('force', s.Vcf, 1), s.AsReq.toFixed(2), s.AsIncl.toFixed(2)])}
+        />
+      </Card>
+      <Card title="Pantalla entre contrafuertes (losa horizontal)" icon={<Layers size={18} />}>
+        <div className="kpis">
+          <Kpi label="Luz libre" value={fmt.u('len', c.Ls, 2)} />
+          <Kpi label={`Acero horizontal — ${c.stemFacePos}`} value={c.stemPosDet.text} />
+          <Kpi label={`Acero horizontal — ${c.stemFaceNeg}`} value={c.stemNegDet.text} />
+          <Kpi label="Vertical (cada cara)" value={c.vertDet.text} sub={`franja inferior: ${c.vertBottomDet.text}`} />
+        </div>
+        <Tbl
+          head={['y (m)', 't (m)', `wu (${fmt.l('press')})`, `Mu⁻ (${fmt.l('lmoment')})`, `Mu⁺ (${fmt.l('lmoment')})`, 'As⁻ (cm²/m)', 'As⁺ (cm²/m)']}
+          align={['r', 'r', 'r', 'r', 'r', 'r', 'r']}
+          rows={c.stemSlab.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.t.toFixed(2), fmt.n('press', s.wu, 1), fmt.n('lmoment', s.MuNeg, 1), fmt.n('lmoment', s.MuPos, 1), s.AsNeg.toFixed(2), s.AsPos.toFixed(2)])}
+        />
+      </Card>
+      <Card title={`${c.slabLabel} (losa entre contrafuertes)`} icon={<Layers size={18} />}>
+        <div className="kpis">
+          <Kpi label={`Acero — ${c.slabFacePos}`} value={c.slabPosDet.text} />
+          <Kpi label={`Acero — ${c.slabFaceNeg}`} value={c.slabNegDet.text} />
+        </div>
+      </Card>
+      {c.notes.map((n, i) => <div className="hint" key={i}>{n}</div>)}
+    </>
+  );
+}
+
+function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const d = res.design;
+  const rows: React.ReactNode[][] = [];
+  if (d.stem) {
+    rows.push(['Pantalla — vertical (cara del relleno)', d.stem.base.text, d.stem.base.asProv.toFixed(2), d.stem.cutNote]);
+    rows.push(['Pantalla — horizontal (total)', d.stem.horizontalDet.text, (d.stem.horizontalDet.asProv * 1.5).toFixed(2), '⅔ en la cara frontal y ⅓ en la cara del relleno']);
+    if (!d.stem.masonry) rows.push(['Pantalla — vertical (cara frontal)', d.stem.frontVertDet.text, d.stem.frontVertDet.asProv.toFixed(2), 'Acero mínimo']);
+    rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
+  }
+  if (d.toe) rows.push([`Pie (cara ${d.toe.face})`, d.toe.det.text, d.toe.det.asProv.toFixed(2), `Retracción: ${d.toe.shrinkDet.text}`]);
+  if (d.heel) rows.push([`Talón (cara ${d.heel.face})`, d.heel.det.text, d.heel.det.asProv.toFixed(2), `Retracción: ${d.heel.shrinkDet.text}`]);
+  if (d.key) rows.push(['Llave de corte', d.key.slab.det.text, d.key.slab.det.asProv.toFixed(2), 'Barras verticales ancladas en la zapata']);
+  if (d.counterfort) {
+    const c = d.counterfort;
+    rows.push(['Contrafuerte — acero principal', `${c.nBars} × ${c.bar.id}`, c.AsProv.toFixed(2), 'Sigue el borde inclinado']);
+    rows.push(['Contrafuerte — estribos horizontales', `${c.stirrup.id} @ ${(c.stirrupSpacing * 100).toFixed(1)} cm`, '—', '2 ramas']);
+    rows.push([`Pantalla — horizontal (${c.stemFacePos})`, c.stemPosDet.text, c.stemPosDet.asProv.toFixed(2), '']);
+    rows.push([`Pantalla — horizontal (${c.stemFaceNeg})`, c.stemNegDet.text, c.stemNegDet.asProv.toFixed(2), '']);
+    rows.push(['Pantalla — vertical (cada cara)', c.vertDet.text, c.vertDet.asProv.toFixed(2), `Franja inferior: ${c.vertBottomDet.text}`]);
+    rows.push([`${c.slabLabel} — ${c.slabFacePos}`, c.slabPosDet.text, c.slabPosDet.asProv.toFixed(2), '']);
+    rows.push([`${c.slabLabel} — ${c.slabFaceNeg}`, c.slabNegDet.text, c.slabNegDet.asProv.toFixed(2), '']);
+    rows.push(['Amarres pantalla–contrafuerte', c.tieStem.text, c.tieStem.asProv.toFixed(2), 'Horizontales']);
+    rows.push(['Amarres zapata–contrafuerte', c.tieSlab.text, c.tieSlab.asProv.toFixed(2), 'Verticales']);
+  }
+  if (d.gravity) rows.push(['Sin refuerzo estructural', '—', '—', 'Muro de gravedad: se verifica por esfuerzos. Puede añadirse acero de retracción.']);
+  return (
+    <>
+      <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, showRebar: true, showPressure: false, showLoads: false }) }} /></div>
+      {(res.inp.type === 'counterfortInt' || res.inp.type === 'counterfortExt') && <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>}
+      <Card title="Cuadro de armado (por metro de muro)" icon={<Grid3x3 size={18} />}>
+        <Tbl head={['Elemento', 'Armado', 'As prov (cm²/m)', 'Observación']} align={['l', 'l', 'r', 'l']} rows={rows} />
+      </Card>
+    </>
+  );
+}
+
+void Waves;
+void Settings2;
+void hasHeelSlab;
+void Txt;

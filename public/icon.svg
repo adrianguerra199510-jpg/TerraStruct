@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b2545"/>
+      <stop offset="1" stop-color="#1f6fb5"/>
+    </linearGradient>
+    <linearGradient id="soil" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2b55f"/>
+      <stop offset="1" stop-color="#c97a2b"/>
+    </linearGradient>
+    <linearGradient id="conc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#cfe0f3"/>
+    </linearGradient>
+    <clipPath id="r"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <circle cx="410" cy="96" r="46" fill="#ffffff" opacity=".10"/>
+    <!-- relleno detrás del muro -->
+    <path d="M308 170 L512 130 V420 H308 Z" fill="url(#soil)"/>
+    <path d="M308 170 L512 130" stroke="#ffe3b0" stroke-width="6" stroke-linecap="round" opacity=".7"/>
+    <!-- terreno bajo la zapata -->
+    <path d="M0 392 H512 V512 H0 Z" fill="#9a5b1f"/>
+    <path d="M0 392 H512" stroke="#ffd9a0" stroke-width="6" opacity=".55"/>
+    <!-- muro en T invertida -->
+    <path d="M232 104 H308 V330 H404 V396 H120 V330 H232 Z" fill="url(#conc)" stroke="#0b2545" stroke-width="8" stroke-linejoin="round"/>
+    <!-- armadura -->
+    <path d="M292 122 V344 H388" fill="none" stroke="#e5484d" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="250" cy="150" r="7" fill="#e5484d"/><circle cx="250" cy="206" r="7" fill="#e5484d"/><circle cx="250" cy="262" r="7" fill="#e5484d"/>
+    <!-- flechas de empuje -->
+    <g stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity=".95">
+      <path d="M470 196 H334 M356 176 L334 196 L356 216"/>
+      <path d="M470 262 H334 M356 242 L334 262 L356 282"/>
+    </g>
+  </g>
+</svg>
