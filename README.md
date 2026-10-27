@@ -32,3 +32,7 @@ Los datos se guardan automáticamente en el navegador y se pueden exportar/abrir
 ## Limitaciones
 
 No incluye estabilidad global (taludes), asentamientos, zapatas sobre base elástica ni diseño sísmico de la estructura. Es una ayuda de cálculo: los resultados deben ser revisados y avalados por un ingeniero responsable.
+
+## Aplicación de escritorio (Electron)
+
+`npm run electron` abre la app en una ventana propia. `npm run dist:win` genera `release-electron/TerraStruct-1.0.0-win.zip` (descomprimir y ejecutar `TerraStruct.exe`; puede compilarse desde Windows o Linux).
