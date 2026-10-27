@@ -204,5 +204,5 @@ export function exampleFootings(): { title: string; desc: string; make: () => Fo
 }
 
 export function exampleWalls(): { type: WallType; make: () => WallInput }[] {
-  return (['cantilever', 'counterfortInt', 'counterfortExt', 'gravityConcrete', 'gravityMasonry', 'masonryReinforced'] as WallType[]).map((t) => ({ type: t, make: () => defaultWall(t) }));
+  return (['cantilever', 'counterfortInt', 'counterfortExt', 'gravityConcrete', 'gravityMasonry', 'masonryReinforced', 'gabion'] as WallType[]).map((t) => ({ type: t, make: () => defaultWall(t) }));
 }

@@ -1,0 +1,20 @@
+import { chromium } from 'playwright';
+const out = process.argv[2];
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await b.newPage({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:4173/');
+await page.getByText('Diseñar un muro').click();
+await page.locator('.type-card', { hasText: 'Gaviones' }).click();
+await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}/gab-seccion.png` });
+await page.getByRole('tab', { name: /Diseño/ }).click(); await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/gab-diseno.png` });
+await page.getByRole('tab', { name: /Memoria/ }).click();
+const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.getByRole('button', { name: /Descargar PDF/ }).click()]);
+await dl.saveAs(`${out}/gab.pdf`);
+// muro en voladizo: armado con barras longitudinales
+await page.locator('.type-card').first().click(); 
+await page.getByRole('tab', { name: /Armado/ }).click(); await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/cant-armado.png` });
+await b.close();

@@ -1,5 +1,5 @@
 import { WallResults } from '../core/wall';
-import { WallType } from '../core/wallTypes';
+import { WallType, gabionWidths } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { Pt } from '../core/geometry';
 import { Theme, LIGHT, arrow, dimLine, line, poly, polyline, svgWrap, text, heat } from './svg';
@@ -44,6 +44,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   let s = '';
 
   s += `<defs><pattern id="wsoil" width="10" height="10" patternUnits="userSpaceOnUse"><rect width="10" height="10" fill="${th.soil}" opacity=".38"/><path d="M0 10 L10 0" stroke="${th.soilStroke}" stroke-width="0.8" opacity=".55"/></pattern>
+   <pattern id="wgab" width="16" height="14" patternUnits="userSpaceOnUse"><rect width="16" height="14" fill="#c9c2b6"/><circle cx="4" cy="4" r="3.2" fill="#9d9488"/><circle cx="12" cy="3" r="2.6" fill="#b3ab9e"/><circle cx="8" cy="10" r="3.4" fill="#8a8277"/><circle cx="1" cy="11" r="2.4" fill="#a39b8f"/><circle cx="14" cy="11" r="2.6" fill="#958d81"/></pattern>
   <pattern id="wmas" width="14" height="8" patternUnits="userSpaceOnUse"><rect width="14" height="8" fill="#d7b8a0"/><path d="M0 4 H14 M0 0 V4 M7 4 V8" stroke="#8c5b3f" stroke-width="0.7" fill="none"/></pattern></defs>`;
 
   // Suelo (perfil del terreno)
@@ -67,7 +68,17 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   const masonryStem = inp.type === 'gravityMasonry' || inp.type === 'masonryReinforced';
   if (g.basePoly) s += poly(g.basePoly.map(P), inp.type === 'gravityMasonry' ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
   if (g.keyPoly) s += poly(g.keyPoly.map(P), th.concrete, th.concreteStroke, 2);
-  s += poly(g.stemPoly.map(P), masonryStem ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
+  s += poly(g.stemPoly.map(P), inp.type === 'gabion' ? 'url(#wgab)' : masonryStem ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
+  if (inp.type === 'gabion') {
+    const gw = gabionWidths(inp.gab);
+    gw.forEach((w, k) => {
+      const xf = g.stemFrontX(k * inp.gab.hc), xb = g.stemBackX(k * inp.gab.hc);
+      s += line(X(xf), Y(k * inp.gab.hc), X(xb), Y(k * inp.gab.hc), '#3b362f', 2.2);
+      s += `<rect x="${(X((xf + xb) / 2) - 24).toFixed(1)}" y="${(Y((k + 0.5) * inp.gab.hc) - 8).toFixed(1)}" width="48" height="16" rx="4" fill="${th.bg}" opacity=".9"/>`;
+      s += text(X((xf + xb) / 2), Y((k + 0.5) * inp.gab.hc) + 4, `${fx(w)}`, { size: 11, fill: th.ink, anchor: 'middle', weight: 700 });
+    });
+    s += line(X(g.xFt), Y(g.yTop), X(g.xBt), Y(g.yTop), '#3b362f', 2.2);
+  }
   if (g.basePoly && g.hb > 0) {
     // oculta la línea de unión pantalla/zapata
     s += line(X(g.xFb) + 1.2, Y(g.hb), X(g.xBb) - 1.2, Y(g.hb), masonryStem ? 'url(#wmas)' : th.concrete, 2.6);
@@ -168,9 +179,11 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     }
     // zapata: barras principales y de reparto
     if (g.hb > 0.05) {
+      const shr = (res.design.toe ?? res.design.heel)?.shrinkDet;
+      const spL = Math.max(shr?.spacing ?? 0.3, 0.1);
       const dists = (yy: number) => {
         let k = '';
-        for (let x = covF + 0.15; x < g.B - covF - 0.05; x += 0.3) k += dot(x, yy, DIST);
+        for (let x = covF + 0.05; x < g.B - covF - 0.02; x += spL) k += dot(x, yy, DIST);
         return k;
       };
       if (res.design.toe && g.xFb > 0.05) {
@@ -188,6 +201,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
       if (res.design.toe || res.design.heel) {
         s += dists(covF + 0.06);
         s += dists(g.hb - covF - 0.06);
+        s += text(X(g.B / 2), Y(0) + 15, `Barras longitudinales de la zapata: ${shr?.text ?? ''} (arriba y abajo)`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
       }
     }
     if (res.design.key && g.keyPoly) {
@@ -204,7 +218,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
 
   // Cotas
   if (o.showDims !== false) {
-    const ybd = yb0 + pressH + 22;
+    const ybd = yb0 + pressH + 22 + (o.showRebar ? 14 : 0);
     // Línea inferior: Lt | tBot | Lh
     if (g.hb > 0) {
       s += dimLine(X(0), ybd, X(g.xFb), ybd, fx(inp.Lt), th.dim, 0, 11);
@@ -213,12 +227,13 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     } else {
       s += dimLine(X(0), ybd, X(g.xBb), ybd, `B = ${fx(g.xBb)}`, th.dim, 0, 11);
     }
-    s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
+    if (g.hb > 0) s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
     // Altura de la pantalla
     const xh = g.xFt - 0.0;
-    if (!o.showRebar) s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
+    if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
     if (g.hb > 0) s += dimLine(X(g.B) + 14, Y(0), X(g.B) + 14, Y(g.hb), fx(g.hb), th.dim, 0, 10.5);
-    s += dimLine(X(g.xFt), Y(g.yTop) - 12, X(g.xBt), Y(g.yTop) - 12, fx(inp.tTop), th.dim, 0, 10.5);
+    if (inp.type !== 'gabion') s += dimLine(X(g.xFt), Y(g.yTop) - 12, X(g.xBt), Y(g.yTop) - 12, fx(inp.tTop), th.dim, 0, 10.5);
+    else s += dimLine(X(0) - 26, Y(0), X(0) - 26, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
     if (inp.Df > 0) s += dimLine(X(xL) + 12, Y(0), X(xL) + 12, Y(Math.max(inp.Df, g.hb)), `Df = ${fx(inp.Df)}`, th.muted, 0, 10.5);
     if (inp.key.enabled) s += dimLine(X(inp.key.x + inp.key.b) + 14, Y(-inp.key.d), X(inp.key.x + inp.key.b) + 14, Y(0), fx(inp.key.d), th.dim, 0, 10);
     if (inp.fill.beta > 0) s += text(X(g.B + backExt * 0.55), Y(g.surfaceY(g.B + backExt * 0.55)) + 20, `β = ${inp.fill.beta}°`, { size: 11, fill: th.soilStroke, weight: 600 });
@@ -236,6 +251,7 @@ const WALL_LABEL: Record<WallType, string> = {
   gravityConcrete: 'Muro de gravedad de concreto',
   gravityMasonry: 'Muro de gravedad de mampostería',
   masonryReinforced: 'Muro de mampostería reforzada',
+  gabion: 'Muro de gaviones',
 };
 
 // ---------------------------------------------------------------------------
@@ -303,6 +319,9 @@ export function wallTypeIcon(t: WallType): string {
       break;
     case 'gravityMasonry':
       body = fillR(76) + `<path d="M50 14 H66 L80 62 H40 Z" fill="${C}" stroke="${S}" stroke-width="2" stroke-linejoin="round"/><path d="M46 26 H68 M43 38 H72 M41 50 H76 M56 14 V26 M50 26 V38 M62 26 V38 M46 38 V50 M58 38 V50 M68 38 V50 M54 50 V62 M66 50 V62" stroke="${S}" stroke-width="0.9" opacity=".8"/>`;
+      break;
+    case 'gabion':
+      body = fillR(80) + `<path d="M44 62 V50 H54 V38 H64 V26 H74 V14 H82 L90 62 Z" fill="#cfc8bc" stroke="#5b554c" stroke-width="1.8" stroke-linejoin="round"/><circle cx="58" cy="56" r="3" fill="#8a8277"/><circle cx="70" cy="56" r="3" fill="#8a8277"/><circle cx="68" cy="43" r="3" fill="#8a8277"/><circle cx="78" cy="31" r="3" fill="#8a8277"/><circle cx="58" cy="44" r="2.5" fill="#9d9488"/>`;
       break;
     case 'masonryReinforced':
       body = fillR(64) + `<path d="M52 12 H64 V56 H88 V62 H32 V56 H52 Z" fill="${C}" stroke="${S}" stroke-width="2" stroke-linejoin="round"/><path d="M52 20 H64 M52 28 H64 M52 36 H64 M52 44 H64" stroke="${S}" stroke-width="1" opacity=".7"/><path d="M60 12 V56" stroke="var(--bad)" stroke-width="1.6"/>`;

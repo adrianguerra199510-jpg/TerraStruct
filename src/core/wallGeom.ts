@@ -1,5 +1,5 @@
 import { Poly, Pt, polyProps, clipHalfPlane, ccw } from './geometry';
-import { WallInput, isCounterfort } from './wallTypes';
+import { WallInput, isCounterfort, gabionGamma, gabionWidths } from './wallTypes';
 import { rad } from './earth';
 
 export interface WallPart {
@@ -82,10 +82,21 @@ export function buildWallGeom(inp: WallInput): WallGeom {
 
   const concreteGamma = inp.mat.gammaC;
   const masonryStem = inp.type === 'gravityMasonry' || inp.type === 'masonryReinforced';
-  const stemGamma = masonryStem ? inp.mat.gammaM : concreteGamma;
+  const isGab = inp.type === 'gabion';
+  const stemGamma = isGab ? gabionGamma(inp.gab) : masonryStem ? inp.mat.gammaM : concreteGamma;
   const baseGamma = inp.type === 'gravityMasonry' ? inp.mat.gammaM : concreteGamma;
 
-  const stemPoly: Poly = ccw([{ x: xFb, y: hb }, { x: xBb, y: hb }, { x: xBt, y: yTop }, { x: xFt, y: yTop }]);
+  // Gaviones: contorno escalonado por cuerpos
+  const gw = isGab ? gabionWidths(inp.gab) : [];
+  const gFront = (k: number) => (inp.gab.side === 'front' ? gw[0] - gw[k] : inp.gab.side === 'back' ? 0 : (gw[0] - gw[k]) / 2);
+  const gBack = (k: number) => gFront(k) + gw[k];
+  let stemPoly: Poly = ccw([{ x: xFb, y: hb }, { x: xBb, y: hb }, { x: xBt, y: yTop }, { x: xFt, y: yTop }]);
+  if (isGab) {
+    const pts: Poly = [];
+    gw.forEach((_, k) => pts.push({ x: gFront(k), y: k * inp.gab.hc }, { x: gFront(k), y: (k + 1) * inp.gab.hc }));
+    for (let k = gw.length - 1; k >= 0; k--) pts.push({ x: gBack(k), y: (k + 1) * inp.gab.hc }, { x: gBack(k), y: k * inp.gab.hc });
+    stemPoly = ccw(pts);
+  }
   const basePoly: Poly | null = hasBase
     ? ccw([{ x: 0, y: 0 }, { x: B, y: 0 }, { x: B, y: hb }, { x: xFb, y: hb }, { x: 0, y: hbTip }])
     : null;
@@ -119,7 +130,7 @@ export function buildWallGeom(inp: WallInput): WallGeom {
     parts.push(partOf('cf', inp.type === 'counterfortInt' ? 'Contrafuertes internos' : 'Contrafuertes externos', cfPoly, concreteGamma, inp.cf.t / inp.cf.s));
   }
 
-  const coulomb = inp.theory === 'coulomb' && (inp.type === 'gravityConcrete' || inp.type === 'gravityMasonry');
+  const coulomb = inp.theory === 'coulomb' && (inp.type === 'gravityConcrete' || inp.type === 'gravityMasonry' || inp.type === 'gabion');
   let heelSoilPoly: Poly;
   if (coulomb) {
     heelSoilPoly = ccw([{ x: xBb, y: hb }, { x: B, y: hb }, { x: B, y: yPlane }, { x: xBb, y: surfaceY(xBb) }]);
@@ -133,8 +144,9 @@ export function buildWallGeom(inp: WallInput): WallGeom {
   }
 
   const stemT = (y: number) => xBackAt(y) - xFrontAt(y);
-  const xFrontAt = (y: number) => xFb + ((xFt - xFb) * y) / inp.H;
-  const xBackAt = (y: number) => xBb + ((xBt - xBb) * y) / inp.H;
+  const course = (y: number) => Math.min(Math.max(Math.floor((y + 1e-7) / inp.gab.hc), 0), gw.length - 1);
+  const xFrontAt = (y: number) => (isGab ? gFront(course(y)) : xFb + ((xFt - xFb) * y) / inp.H);
+  const xBackAt = (y: number) => (isGab ? gBack(course(y)) : xBb + ((xBt - xBb) * y) / inp.H);
 
   return {
     inp, B, hb, hbTip, xFb, xBb, xFt, xBt, yTop, psiDeg, surfaceY, yPlane, parts, stemPoly, basePoly, keyPoly, cfPoly,

@@ -1,5 +1,5 @@
 // Análisis completo de un muro de retención.
-import { WallInput, isGravity } from './wallTypes';
+import { WallInput, isGravity, normalizeWall } from './wallTypes';
 import { WallGeom, buildWallGeom } from './wallGeom';
 import { CaseResult, EarthModel, SERVICE_FACTORS, earthModel, evalCase } from './wallStability';
 import { WallDesign, designWall } from './wallDesign';
@@ -29,7 +29,8 @@ export interface WallResults {
   weightWall: number; // kN/m
 }
 
-export function analyzeWall(inp: WallInput): WallResults {
+export function analyzeWall(input: WallInput): WallResults {
+  const inp = normalizeWall(input);
   const geom = buildWallGeom(inp);
   const warnings: string[] = [];
   const surchargeV = !inp.ignoreSurchargeWeight && inp.fill.q > 0;
@@ -69,8 +70,8 @@ export function analyzeWall(inp: WallInput): WallResults {
   }
   if (d.gravity) {
     const wc = Math.max(...d.gravity.map((s) => Math.max(s.ratioC, s.ratioT, s.ratioV)));
-    const mat = d.gravityMaterial === 'mamposteria' ? 'mampostería' : 'concreto simple';
-    add({ group: 'Estructural', name: `Secciones de la pantalla (${mat})`, ratio: wc, detail: 'Compresión, tracción y cortante en 11 secciones', ok: d.gravity.every((s) => s.ok) });
+    const mat = d.gravityMaterial === 'mamposteria' ? 'mampostería' : d.gravityMaterial === 'gaviones' ? 'gaviones' : 'concreto simple';
+    add({ group: 'Estructural', name: `Secciones de la pantalla (${mat})`, ratio: wc, detail: d.gravityMaterial === 'gaviones' ? 'Compresión, excentricidad y deslizamiento entre cuerpos' : 'Compresión, tracción y cortante en 11 secciones', ok: d.gravity.every((s) => s.ok) });
   }
   if (d.baseCheck) {
     for (const b of d.baseCheck) add({ group: 'Estructural', name: `Zapata: ${b.name}`, ratio: b.ratio, detail: b.detail, ok: b.ratio <= 1 });
@@ -90,7 +91,7 @@ export function analyzeWall(inp: WallInput): WallResults {
   if (isFinite(staticCase.qmax) === false) warnings.push('Sin equilibrio: la resultante cae fuera de la base.');
   if (staticCase.xbar > 0 && !staticCase.fullContact) warnings.push('La resultante queda fuera del tercio medio: hay levantamiento parcial de la base.');
 
-  const concreteVolume = geom.parts.filter((p) => p.id !== 'stem' || inp.type !== 'gravityMasonry').reduce((s, p) => s + p.area * p.scale, 0);
+  const concreteVolume = geom.parts.filter((p) => p.id !== 'stem' || (inp.type !== 'gravityMasonry' && inp.type !== 'gabion')).reduce((s, p) => s + p.area * p.scale, 0);
   const weightWall = geom.parts.reduce((s, p) => s + p.W, 0);
   const ok = checks.filter((c) => !c.advisory).every((c) => c.ok);
   return {

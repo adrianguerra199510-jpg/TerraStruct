@@ -1,5 +1,5 @@
 import { WallResults } from '../core/wall';
-import { WALL_TYPES, WallInput, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { WALL_TYPES, WallInput, gabionGamma, gabionWidths, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { PHI_FLEX, PHI_SHEAR, PHI_PLAIN } from '../core/concrete';
 import { ProjectInfo } from '../state';
@@ -100,13 +100,13 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   const mat = inp.mat;
   d.kv(
     [
-      ...(!isGravity(inp.type) || inp.type === 'gravityConcrete'
+      ...((!isGravity(inp.type) || inp.type === 'gravityConcrete')
         ? ([
             ['f′c', u('stress', mat.fc, 1) + (fmt.sys === 'TEC' ? ` (${f(mat.fc, 1)} MPa)` : '')],
             ['fy', u('stress', mat.fy, 0) + (fmt.sys === 'TEC' ? ` (${f(mat.fy, 0)} MPa)` : '')],
           ] as [string, string][])
         : []),
-      ['Peso unitario del concreto', u('uw', mat.gammaC, 2)],
+      ...(inp.type === 'gabion' ? ([['Piedra: peso unitario / porosidad', `${u('uw', inp.gab.gammaStone, 1)} / ${f(inp.gab.porosity, 2)}`], ['Peso unitario del gavión', u('uw', gabionGamma(inp.gab), 2)]] as [string, string][]) : ([['Peso unitario del concreto', u('uw', mat.gammaC, 2)]] as [string, string][])),
       ...(isMasonry(inp.type)
         ? ([
             ['f′m de la mampostería', u('stress', mat.fm, 1)],
@@ -290,7 +290,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
           `Mu = ${u('lmoment', s.Mu, 2)} ;  As,req = ${f(s.AsReq, 2)} cm²/m ;  As,mín = ${f(s.AsMin, 2)} cm²/m ;  As,diseño = ${f(s.AsDes, 2)} cm²/m`,
           `Armado: ${s.det.text} → As = ${f(s.det.asProv, 2)} cm²/m ;  φMn = ${u('lmoment', s.phiMn, 2)}  (relación ${f(s.ratioM, 2)})`,
           `Cortante: Vu = ${u('lforce', s.Vu, 2)} ;  φVc = ${u('lforce', s.phiVc, 2)}  (relación ${f(s.ratioV, 2)})`,
-          `Acero de retracción perpendicular: ${s.shrinkDet.text} (0.0018·b·h)`,
+          `Barras longitudinales (paralelas al muro): ${s.shrinkDet.text} en cada cara (As total = 0.0018·b·h = ${f(s.shrinkAs, 2)} cm²/m)`,
           `Desarrollo: ld = ${f(s.ldReq, 2)} m  ${s.hook ? '>' : '≤'}  disponible ${f(s.ldAvail, 2)} m${s.hook ? ' → usar gancho estándar' : ''}`,
         ],
         s.name,
@@ -313,9 +313,26 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
 
   if (des.gravity) {
     const mas = des.gravityMaterial === 'mamposteria';
-    d.h2(mas ? 'Secciones de la pantalla (mampostería sin refuerzo)' : 'Secciones de la pantalla (concreto simple)');
+    const gabm = des.gravityMaterial === 'gaviones';
+    d.h2(gabm ? 'Secciones de los gaviones (base de cada cuerpo)' : mas ? 'Secciones de la pantalla (mampostería sin refuerzo)' : 'Secciones de la pantalla (concreto simple)');
+    if (gabm) {
+      const G = inp.gab;
+      const gw = gabionWidths(G);
+      d.table(
+        ['Cuerpo', 'Ancho (m)', 'Altura (m)', 'Piedra (m³/m)', 'Peso (kN/m)'],
+        gw.map((w, k) => [String(k + 1), f(w, 2), f(G.hc, 2), f(w * G.hc, 2), f(w * G.hc * gabionGamma(G), 1)]),
+        { align: ['c', 'r', 'r', 'r', 'r'], caption: `Tabla. Cuerpos de gavión (γ gavión = γ piedra·(1 − n) = ${f(G.gammaStone, 1)} × ${f(1 - G.porosity, 2)} = ${f(gabionGamma(G), 1)} kN/m³)` },
+      );
+    }
     d.eq(
-      mas
+      gabm
+        ? [
+            'Cada cuerpo se verifica en su base con las fuerzas de servicio del muro por encima: peso de los cuerpos superiores, empuje de tierra (con su componente vertical), sobrecarga y, con sismo, ΔPae e inercia.',
+            `Excentricidad e = M/N ;  si e ≤ t/6:  σ = N/t·(1 ± 6e/t) ;  si e > t/6:  σmáx = 2N/(3·(t/2 − e)) (sin tracción)`,
+            `Compresión: σmáx ≤ σadm = ${u('press', inp.gab.sigmaAllow, 0)} (× ${f(inp.factors.qaIncE, 2)} con sismo) ;  excentricidad: e ≤ ${f(inp.gab.eFrac, 2)}·t`,
+            `Deslizamiento entre cuerpos: V ≤ (μ·N + c·t)/FS = (${f(inp.gab.muG, 2)}·N + ${u('press', inp.gab.cG, 0)}·t)/${f(inp.gab.fsSlide, 2)}`,
+          ]
+        : mas
         ? [
             'Esfuerzos de servicio: σ = N/A ± M·6/t²  (compresión positiva);  se admite σc ≤ Fa = ' + f(inp.mat.fcAllowRatio, 2) + '·f′m y σt ≤ ft = ' + f(inp.mat.ftAllow, 2) + ' MPa',
             `Cortante en juntas: V ≤ (cJ·A + μJ·N)/FS = (${f(inp.mat.cJ, 2)} MPa·A + ${f(inp.mat.muJ, 2)}·N)/${f(inp.mat.fsJoint, 1)}`,
@@ -327,7 +344,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
       'Criterios',
     );
     d.table(
-      ['y (m)', 't (m)', `N (${fmt.l('lforce')})`, `M (${fmt.l('lmoment')})`, `V (${fmt.l('lforce')})`, `σ dorso (${fmt.l('press')})`, `σ frente (${fmt.l('press')})`, 'Compr.', 'Tracc.', 'Cort.', 'Estado'],
+      ['y (m)', 't (m)', `N (${fmt.l('lforce')})`, `M (${fmt.l('lmoment')})`, `V (${fmt.l('lforce')})`, `σ dorso (${fmt.l('press')})`, `σ frente (${fmt.l('press')})`, 'Compr.', gabm ? 'Excentr.' : 'Tracc.', 'Cort.', 'Estado'],
       des.gravity.map((s) => [f(s.y, 2), f(s.t, 2), n('lforce', s.N, 1), n('lmoment', s.M, 1), n('lforce', s.V, 1), n('press', s.sigBack, 1), n('press', s.sigFront, 1), f(s.ratioC, 2), isFinite(s.ratioT) ? f(s.ratioT, 2) : '∞', f(s.ratioV, 2), s.ok ? 'Cumple' : 'No cumple']),
       { align: ['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'c'], caption: 'Tabla. Verificación por secciones (relaciones demanda/capacidad)' },
     );
@@ -388,8 +405,10 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     rows.push(['Pantalla: horizontal', des.stem.horizontalDet.text + ' (cara frontal)', f(des.stem.horizontalDet.asProv, 2), 'Un tercio en la cara del relleno']);
     if (!des.stem.masonry) rows.push(['Pantalla: vertical (cara frontal)', des.stem.frontVertDet.text, f(des.stem.frontVertDet.asProv, 2), 'Acero mínimo']);
   }
-  if (des.toe) rows.push([`Pie (cara ${des.toe.face})`, des.toe.det.text, f(des.toe.det.asProv, 2), `Retracción: ${des.toe.shrinkDet.text}`]);
-  if (des.heel) rows.push([`Talón (cara ${des.heel.face})`, des.heel.det.text, f(des.heel.det.asProv, 2), `Retracción: ${des.heel.shrinkDet.text}`]);
+  if (des.toe) rows.push([`Pie (cara ${des.toe.face}) — transversal`, des.toe.det.text, f(des.toe.det.asProv, 2), 'Perpendicular al muro']);
+  if (des.heel) rows.push([`Talón (cara ${des.heel.face}) — transversal`, des.heel.det.text, f(des.heel.det.asProv, 2), 'Perpendicular al muro']);
+  const shrinkS = des.toe ?? des.heel;
+  if (shrinkS) rows.push(['Zapata: barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, f(shrinkS.shrinkDet.asProv, 2), `Cara superior e inferior; As total = ${f(shrinkS.shrinkAs, 2)} cm²/m (0.0018·h), mitad por cara`]);
   if (des.key) rows.push(['Llave de corte (vertical)', des.key.slab.det.text, f(des.key.slab.det.asProv, 2), 'Anclada en la zapata']);
   if (des.counterfort) {
     const c = des.counterfort;
@@ -403,7 +422,9 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     rows.push(['Amarres pantalla–contrafuerte', c.tieStem.text, f(c.tieStem.asProv, 2), 'Horizontales']);
     rows.push(['Amarres zapata–contrafuerte', c.tieSlab.text, f(c.tieSlab.asProv, 2), 'Verticales']);
   }
-  if (des.gravity) rows.push(['Muro de gravedad', 'Sin refuerzo estructural', '—', 'Se verifica por esfuerzos; puede añadirse acero de retracción']);
+  if (inp.type === 'gabion') {
+    gabionWidths(inp.gab).forEach((w, k) => rows.push([`Gavión: cuerpo ${k + 1}`, `${f(w, 2)} × ${f(inp.gab.hc, 2)} m`, '—', `Piedra ${f(w * inp.gab.hc, 2)} m³ por metro de muro; diafragmas cada 1.0 m y amarres entre cuerpos`]));
+  } else if (des.gravity) rows.push(['Muro de gravedad', 'Sin refuerzo estructural', '—', 'Se verifica por esfuerzos; puede añadirse acero de retracción']);
   d.table(['Elemento', 'Armado', 'As prov (cm²/m)', 'Observación'], rows, { align: ['l', 'l', 'r', 'l'], caption: 'Tabla. Cuadro de armado por metro de muro' });
   d.img(wallSectionSvg(res, { W: 860, H: 560, theme: th, fmt, showRebar: true, showPressure: false, showLoads: false }), 'Figura. Esquema de armado.');
 

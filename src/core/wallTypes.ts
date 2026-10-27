@@ -7,7 +7,8 @@ export type WallType =
   | 'gravityMasonry'
   | 'masonryReinforced'
   | 'counterfortInt'
-  | 'counterfortExt';
+  | 'counterfortExt'
+  | 'gabion';
 
 export const WALL_TYPES: { id: WallType; label: string; short: string; desc: string }[] = [
   { id: 'cantilever', label: 'Voladizo de concreto armado', short: 'Voladizo', desc: 'Muro en T invertida o en L con pantalla, pie y talón.' },
@@ -16,7 +17,34 @@ export const WALL_TYPES: { id: WallType; label: string; short: string; desc: str
   { id: 'gravityConcrete', label: 'Gravedad de concreto simple / ciclópeo', short: 'Gravedad concreto', desc: 'Muro macizo que resiste por peso propio; verificación de concreto simple.' },
   { id: 'gravityMasonry', label: 'Gravedad de mampostería', short: 'Gravedad mampostería', desc: 'Piedra, ladrillo o bloque sin refuerzo; esfuerzos admisibles y fricción en juntas.' },
   { id: 'masonryReinforced', label: 'Mampostería reforzada en voladizo', short: 'Mamp. reforzada', desc: 'Pantalla de bloque con celdas inyectadas sobre zapata de concreto.' },
+  { id: 'gabion', label: 'Muro de gaviones', short: 'Gaviones', desc: 'Cuerpos de canastas de malla rellenas de piedra, apilados en escalones.' },
 ];
+
+export interface GabionInput {
+  /** número de cuerpos (hiladas) y altura de cada uno */
+  n: number;
+  hc: number;
+  /** ancho del cuerpo inferior y reducción de ancho por cuerpo */
+  b0: number;
+  step: number;
+  /** lado donde se escalona: frente, dorso o ambos (simétrico) */
+  side: 'front' | 'back' | 'both';
+  /** peso unitario de la piedra y porosidad de la canasta */
+  gammaStone: number;
+  porosity: number;
+  /** esfuerzo admisible de compresión de la sección (kPa) */
+  sigmaAllow: number;
+  /** fricción entre cuerpos (tan δ) y cohesión (kPa) */
+  muG: number;
+  cG: number;
+  fsSlide: number;
+  /** excentricidad admisible como fracción del ancho del cuerpo */
+  eFrac: number;
+}
+
+export function gabionGamma(g: GabionInput): number {
+  return g.gammaStone * (1 - g.porosity);
+}
 
 export interface WallInput {
   name: string;
@@ -38,6 +66,7 @@ export interface WallInput {
   hbTip: number;
   key: { enabled: boolean; x: number; b: number; d: number };
   cf: { s: number; t: number; proj: number; projTop: number };
+  gab: GabionInput;
   /** altura del terreno al frente sobre la cara inferior de la zapata */
   Df: number;
   // --- suelos ---
@@ -107,6 +136,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     hbTip: 0.5,
     key: { enabled: false, x: 1.2, b: 0.4, d: 0.5 },
     cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0 },
+    gab: { n: 4, hc: 1.0, b0: 2.5, step: 0.5, side: 'front', gammaStone: 26, porosity: 0.3, sigmaAllow: 300, muG: 0.6, cG: 0, fsSlide: 1.5, eFrac: 1 / 3 },
     Df: 1.0,
     fill: { gamma: 18, gammaSat: 20, phi: 32, beta: 0, q: 10 },
     hw: 0,
@@ -157,6 +187,9 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       Object.assign(base, { H: 2.2, tTop: 0.6, tBot: 1.7, stemFace: 'front', Lt: 0, Lh: 0, hb: 0, hbTip: 0, theory: 'coulomb', Df: 0.6 });
       base.mat.gammaM = 22;
       break;
+    case 'gabion':
+      Object.assign(base, { theory: 'coulomb', Df: 0.5, Lt: 0, Lh: 0, hb: 0, hbTip: 0 });
+      break;
     case 'masonryReinforced':
       Object.assign(base, { H: 3.0, tTop: 0.2, tBot: 0.3, Lt: 0.7, Lh: 1.6, hb: 0.4, hbTip: 0.4 });
       base.mat.barStem = '#5';
@@ -169,5 +202,34 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
 
 export const hasHeelSlab = (t: WallType) => t === 'cantilever' || t === 'counterfortInt' || t === 'counterfortExt' || t === 'masonryReinforced';
 export const isCounterfort = (t: WallType) => t === 'counterfortInt' || t === 'counterfortExt';
-export const isGravity = (t: WallType) => t === 'gravityConcrete' || t === 'gravityMasonry';
+export const isGravity = (t: WallType) => t === 'gravityConcrete' || t === 'gravityMasonry' || t === 'gabion';
+export const isGabion = (t: WallType) => t === 'gabion';
+
+/** Para gaviones, deriva la geometría general (altura, anchos, sin zapata) a partir de los cuerpos. */
+export function normalizeWall(w: WallInput): WallInput {
+  if (w.type !== 'gabion') return w;
+  const g = w.gab;
+  const n = Math.max(1, Math.round(g.n));
+  const bTop = Math.max(g.b0 - (n - 1) * g.step, 0.5);
+  return {
+    ...w,
+    H: n * g.hc,
+    tBot: g.b0,
+    tTop: bTop,
+    stemFace: g.side === 'front' ? 'back' : g.side === 'back' ? 'front' : 'free',
+    fb: (g.b0 - bTop) / 2,
+    Lt: 0,
+    Lh: 0,
+    hb: 0,
+    hbTip: 0,
+    key: { ...w.key, enabled: false },
+    theory: w.theory,
+  };
+}
+
+/** Ancho de cada cuerpo (de abajo hacia arriba). */
+export function gabionWidths(g: GabionInput): number[] {
+  const n = Math.max(1, Math.round(g.n));
+  return Array.from({ length: n }, (_, k) => Math.max(g.b0 - k * g.step, 0.5));
+}
 export const isMasonry = (t: WallType) => t === 'gravityMasonry' || t === 'masonryReinforced';

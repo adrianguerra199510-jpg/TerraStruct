@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Settings2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
 } from 'lucide-react';
-import { WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
@@ -32,6 +32,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
   const setFill = (p: Partial<WallInput['fill']>) => set({ fill: { ...data.fill, ...p } });
   const setFound = (p: Partial<WallInput['found']>) => set({ found: { ...data.found, ...p } });
   const setFac = (p: Partial<WallInput['factors']>) => set({ factors: { ...data.factors, ...p } });
+  const setGab = (p: Partial<WallInput['gab']>) => set({ gab: { ...data.gab, ...p } });
 
   return (
     <div className="split">
@@ -58,6 +59,30 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
         </Acc>
 
         <Acc title="Geometría" icon={<Ruler size={18} />} open>
+          {t === 'gabion' ? (
+            <>
+              <div className="grid2">
+                <Num label="Número de cuerpos" value={data.gab.n} onChange={(v) => setGab({ n: Math.max(1, Math.round(v)) })} min={1} max={12} />
+                <Num label="Altura de cada cuerpo" q="len" value={data.gab.hc} onChange={(v) => setGab({ hc: v })} min={0.3} hint="Usual: 0.5 o 1.0 m" />
+                <Num label="Ancho del cuerpo inferior" q="len" value={data.gab.b0} onChange={(v) => setGab({ b0: v })} min={0.5} />
+                <Num label="Reducción de ancho por cuerpo" q="len" value={data.gab.step} onChange={(v) => setGab({ step: v })} min={0} />
+                <Sel label="Escalonado" value={data.gab.side} onChange={(v) => setGab({ side: v })} options={[{ id: 'front', label: 'En el frente (dorso vertical)' }, { id: 'back', label: 'En el dorso (frente vertical)' }, { id: 'both', label: 'En ambos lados' }]} />
+                <Num label="Altura de terreno al frente Df" q="len" value={data.Df} onChange={(v) => set({ Df: v })} min={0} hint="Empotramiento del primer cuerpo" />
+              </div>
+              <div className="hint"><b>Material de las canastas</b></div>
+              <div className="grid2">
+                <Num label="Peso unitario de la piedra" q="uw" value={data.gab.gammaStone} onChange={(v) => setGab({ gammaStone: v })} />
+                <Num label="Porosidad del relleno" value={data.gab.porosity} onChange={(v) => setGab({ porosity: v })} min={0.1} max={0.6} hint="Usual 0.30–0.40" />
+                <Num label="Esfuerzo admisible de la sección" q="press" value={data.gab.sigmaAllow} onChange={(v) => setGab({ sigmaAllow: v })} min={50} />
+                <Num label="Fricción entre cuerpos μ" value={data.gab.muG} onChange={(v) => setGab({ muG: v })} min={0.2} max={1} />
+                <Num label="Cohesión entre cuerpos" q="press" value={data.gab.cG} onChange={(v) => setGab({ cG: v })} min={0} />
+                <Num label="FS deslizamiento entre cuerpos" value={data.gab.fsSlide} onChange={(v) => setGab({ fsSlide: v })} min={1} />
+                <Num label="Excentricidad admisible / ancho" value={data.gab.eFrac} onChange={(v) => setGab({ eFrac: v })} min={0.1} max={0.5} hint="1/6 = tercio medio; 1/3 usual en gaviones" />
+              </div>
+              <div className="hint">Altura total H = {data.gab.n * data.gab.hc} m; peso unitario del gavión = γ·(1 − n) = {(data.gab.gammaStone * (1 - data.gab.porosity)).toFixed(1)} kN/m³. Sin zapata: los cuerpos apoyan directamente sobre el suelo.</div>
+            </>
+          ) : (
+            <>
           <div className="grid2">
             <Num label="Altura de la pantalla H" q="len" value={data.H} onChange={(v) => set({ H: v })} min={0.5} hint="De la cara superior de la zapata a la corona" />
             <Num label="Espesor en la corona" q="len" value={data.tTop} onChange={(v) => set({ tTop: v })} min={0.1} />
@@ -90,6 +115,8 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
               <Num label="Ancho" q="len" value={data.key.b} onChange={(v) => set({ key: { ...data.key, b: v } })} min={0.2} />
               <Num label="Profundidad" q="len" value={data.key.d} onChange={(v) => set({ key: { ...data.key, d: v } })} min={0.2} />
             </div>
+          )}
+                    </>
           )}
         </Acc>
 
@@ -141,7 +168,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
           )}
         </Acc>
 
-        <Acc title="Materiales y armado" icon={<Boxes size={18} />}>
+        {t !== 'gabion' && <Acc title="Materiales y armado" icon={<Boxes size={18} />}>
           <div className="grid2">
             {!isMasonry(t) || t === 'masonryReinforced' ? (
               <>
@@ -180,7 +207,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
               </div>
             </>
           )}
-        </Acc>
+        </Acc>}
 
         <Acc title="Factores de seguridad y de carga" icon={<Scale size={18} />}>
           <div className="grid2">
@@ -237,7 +264,7 @@ function Summary({ res }: { res: WallResults }) {
         <Kpi label="FS deslizamiento" value={isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'} sub={`mín. ${c.fsSLreq}`} />
         <Kpi label="Presión máxima" value={isFinite(c.qmax) ? fmt.u('press', c.qmax, 1) : '—'} sub={`adm. ${fmt.u('press', c.qaAllow, 1)}`} />
         <Kpi label="Base B" value={fmt.u('len', res.geom.B, 2)} sub={`e = ${c.e.toFixed(2)} m`} />
-        <Kpi label="Concreto" value={`${res.concreteVolume.toFixed(2)} m³/m`} sub={`Peso ${fmt.u('lforce', res.weightWall, 1)}`} />
+        <Kpi label={res.inp.type === 'gabion' ? 'Gavión (piedra + malla)' : 'Concreto'} value={`${(res.inp.type === 'gabion' ? res.geom.parts[0].area : res.concreteVolume).toFixed(2)} m³/m`} sub={`Peso ${fmt.u('lforce', res.weightWall, 1)}`} />
       </div>
     </>
   );
@@ -375,9 +402,9 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
         </Card>
       )}
       {d.gravity && (
-        <Card title={`Secciones de la pantalla — ${d.gravityMaterial === 'mamposteria' ? 'mampostería sin refuerzo (esfuerzos de servicio)' : 'concreto simple (resistencia)'}`} icon={<BrickWall size={18} />}>
+        <Card title={`Secciones de la pantalla — ${d.gravityMaterial === 'mamposteria' ? 'mampostería sin refuerzo (esfuerzos de servicio)' : d.gravityMaterial === 'gaviones' ? 'gaviones (base de cada cuerpo, esfuerzos de servicio)' : 'concreto simple (resistencia)'}`} icon={<BrickWall size={18} />}>
           <Tbl
-            head={['y (m)', 't (m)', `N (${fmt.l('lforce')})`, `M (${fmt.l('lmoment')})`, `V (${fmt.l('lforce')})`, `σ dorso (${fmt.l('press')})`, `σ frente (${fmt.l('press')})`, 'Compr.', 'Tracc.', 'Cort.', '']}
+            head={['y (m)', 't (m)', `N (${fmt.l('lforce')})`, `M (${fmt.l('lmoment')})`, `V (${fmt.l('lforce')})`, `σ dorso (${fmt.l('press')})`, `σ frente (${fmt.l('press')})`, 'Compr.', d.gravityMaterial === 'gaviones' ? 'Excentr.' : 'Tracc.', 'Cort.', '']}
             align={['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'c']}
             rows={d.gravity.map((s) => [s.y.toFixed(2), s.t.toFixed(2), fmt.n('lforce', s.N, 1), fmt.n('lmoment', s.M, 1), fmt.n('lforce', s.V, 1), fmt.n('press', s.sigBack, 1), fmt.n('press', s.sigFront, 1), s.ratioC.toFixed(2), isFinite(s.ratioT) ? s.ratioT.toFixed(2) : '∞', s.ratioV.toFixed(2), <StatusChip key="k" ok={s.ok} />])}
           />
@@ -397,7 +424,7 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
                 <Kpi label="Mu" value={fmt.u('lmoment', s.Mu, 1)} sub={`φMn ${fmt.n('lmoment', s.phiMn, 1)}`} />
                 <Kpi label="Vu" value={fmt.u('lforce', s.Vu, 1)} sub={`φVc ${fmt.n('lforce', s.phiVc, 1)}`} />
               </div>
-              <div className="hint" style={{ marginTop: 8 }}>Combinación: {s.caseLabel}. Acero de retracción perpendicular: {s.shrinkDet.text}. {s.hook ? 'Gancho estándar necesario.' : ''}</div>
+              <div className="hint" style={{ marginTop: 8 }}>Combinación: {s.caseLabel}. Barras longitudinales (paralelas al muro): {s.shrinkDet.text} en cada cara. {s.hook ? 'Gancho estándar necesario.' : ''}</div>
             </Card>
           ))}
         </div>
@@ -469,8 +496,10 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     if (!d.stem.masonry) rows.push(['Pantalla — vertical (cara frontal)', d.stem.frontVertDet.text, d.stem.frontVertDet.asProv.toFixed(2), 'Acero mínimo']);
     rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
   }
-  if (d.toe) rows.push([`Pie (cara ${d.toe.face})`, d.toe.det.text, d.toe.det.asProv.toFixed(2), `Retracción: ${d.toe.shrinkDet.text}`]);
-  if (d.heel) rows.push([`Talón (cara ${d.heel.face})`, d.heel.det.text, d.heel.det.asProv.toFixed(2), `Retracción: ${d.heel.shrinkDet.text}`]);
+  if (d.toe) rows.push([`Pie (cara ${d.toe.face}) — transversal`, d.toe.det.text, d.toe.det.asProv.toFixed(2), 'Perpendicular al muro']);
+  if (d.heel) rows.push([`Talón (cara ${d.heel.face}) — transversal`, d.heel.det.text, d.heel.det.asProv.toFixed(2), 'Perpendicular al muro']);
+  const shrinkS = d.toe ?? d.heel;
+  if (shrinkS) rows.push(['Zapata — barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, shrinkS.shrinkDet.asProv.toFixed(2), `Cara superior e inferior; As total = ${shrinkS.shrinkAs.toFixed(2)} cm²/m (0.0018·h), mitad por cara`]);
   if (d.key) rows.push(['Llave de corte', d.key.slab.det.text, d.key.slab.det.asProv.toFixed(2), 'Barras verticales ancladas en la zapata']);
   if (d.counterfort) {
     const c = d.counterfort;
@@ -484,7 +513,10 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     rows.push(['Amarres pantalla–contrafuerte', c.tieStem.text, c.tieStem.asProv.toFixed(2), 'Horizontales']);
     rows.push(['Amarres zapata–contrafuerte', c.tieSlab.text, c.tieSlab.asProv.toFixed(2), 'Verticales']);
   }
-  if (d.gravity) rows.push(['Sin refuerzo estructural', '—', '—', 'Muro de gravedad: se verifica por esfuerzos. Puede añadirse acero de retracción.']);
+  if (res.inp.type === 'gabion') {
+    const gw = gabionWidths(res.inp.gab);
+    gw.forEach((w, k) => rows.push([`Cuerpo ${k + 1}`, `${w.toFixed(2)} × ${res.inp.gab.hc.toFixed(2)} m`, '—', `Piedra: ${(w * res.inp.gab.hc).toFixed(2)} m³ por metro de muro; diafragmas cada 1.0 m`]));
+  } else if (d.gravity) rows.push(['Sin refuerzo estructural', '—', '—', 'Muro de gravedad: se verifica por esfuerzos. Puede añadirse acero de retracción.']);
   return (
     <>
       <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, showRebar: true, showPressure: false, showLoads: false }) }} /></div>

@@ -12,7 +12,7 @@ Aplicación para el **análisis y diseño de fundaciones y muros de retención**
 - Ayudas: espesor mínimo automático y ampliación por presión.
 
 **Muros de retención**
-- Voladizo de concreto, **contrafuertes internos** y **externos**, gravedad de concreto, gravedad de **mampostería**, **mampostería reforzada**; todos admiten **llave de corte**.
+- Voladizo de concreto, **contrafuertes internos** y **externos**, gravedad de concreto, gravedad de **mampostería**, **gaviones**, **mampostería reforzada**; todos admiten **llave de corte**.
 - Empuje Rankine (plano virtual) o Coulomb, talud, sobrecarga, nivel freático/subpresión, pasivo frontal, **sismo (Mononobe–Okabe)**.
 - Volcamiento, deslizamiento, presión de contacto, capacidad portante (Meyerhof/Vesic) y diseño estructural por elemento.
 

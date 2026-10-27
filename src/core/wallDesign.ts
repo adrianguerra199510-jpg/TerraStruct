@@ -246,7 +246,7 @@ export interface WallDesign {
   heel: SlabDesign | null;
   key: KeyDesign | null;
   gravity: GravitySection[] | null;
-  gravityMaterial: 'concreto' | 'mamposteria' | null;
+  gravityMaterial: 'concreto' | 'mamposteria' | 'gaviones' | null;
   baseCheck: { name: string; ratio: number; detail: string }[] | null;
   counterfort: CounterfortDesign | null;
   warnings: string[];
@@ -391,7 +391,7 @@ function slabDesign(
   return {
     name, caseLabel: label, face, Mu: M, d, b: 1, AsReq: asReq, AsMin: Math.max(asMinF, asMinS), AsDes: asDes, det, bar, phiMn, Vu: V, phiVc,
     ratioM: phiMn > 0 ? M / phiMn : 0, ratioV: phiVc > 0 ? V / phiVc : 0, ldReq, ldAvail, hook: ldAvail < ldReq,
-    shrinkAs: shrink, shrinkDet: chooseSpacing(shrink, findBar(m.barStemH), 0.45),
+    shrinkAs: shrink, shrinkDet: chooseSpacing(shrink / 2, findBar(m.barStemH), 0.45),
     sectionOk: fr.ok && M <= phiMn + 1e-9 && V <= phiVc + 1e-9,
     note: fr.ok ? undefined : 'Sección insuficiente: aumentar el espesor.',
   };
@@ -592,14 +592,15 @@ function gravitySections(g: WallGeom): GravitySection[] {
   const m = inp.mat;
   const f = inp.factors;
   const masonry = inp.type === 'gravityMasonry';
+  const gab = inp.type === 'gabion';
   const lat = stemLateral(g);
   const gammaStem = g.parts.find((p) => p.id === 'stem')!.gamma;
   const out: GravitySection[] = [];
   const NS = 10;
   const em = earthModel(g, false);
   const virtual = em.mode === 'virtual';
-  for (let k = 0; k <= NS; k++) {
-    const y = (inp.H * k) / NS;
+  const levels = gab ? Array.from({ length: Math.round(inp.gab.n) }, (_, k) => k * inp.gab.hc) : Array.from({ length: NS + 1 }, (_, k) => (inp.H * k) / NS);
+  for (const y of levels) {
     const ys = g.hb + y;
     const xf = g.stemFrontX(y);
     const xb = g.stemBackX(y);
@@ -638,7 +639,43 @@ function gravitySections(g: WallGeom): GravitySection[] {
       const H = cs.H * lat1 + cq.H * liveH + cw.H * water;
       return { N: Vv, M: Mt, V: H };
     };
-    if (masonry) {
+    if (gab) {
+      const G = inp.gab;
+      const r1 = evalAt(1, 1, 1, 1);
+      const A = t;
+      const sectionRatios = (r: { N: number; M: number; V: number }, sigAll: number) => {
+        const e = Math.abs(r.M) / Math.max(r.N, 1e-9);
+        let sigBack: number, sigFront: number;
+        if (r.N <= 0 || e >= t / 2) {
+          sigBack = sigFront = Infinity;
+        } else if (e <= t / 6) {
+          sigBack = r.N / A - (6 * r.M) / (A * A);
+          sigFront = r.N / A + (6 * r.M) / (A * A);
+        } else {
+          const smax = (2 * r.N) / (3 * (t / 2 - e));
+          sigFront = r.M > 0 ? smax : 0;
+          sigBack = r.M > 0 ? 0 : smax;
+        }
+        const ratioC = Math.max(sigBack, sigFront) / sigAll;
+        const ratioT = e / (G.eFrac * t);
+        const vAll = (G.muG * Math.max(r.N, 0) + G.cG * A) / G.fsSlide;
+        const ratioV = r.V / Math.max(vAll, 1e-9);
+        return { sigBack, sigFront, ratioC, ratioT, ratioV, worst: Math.max(ratioC, ratioT, ratioV) };
+      };
+      let use: { N: number; M: number; V: number } = r1;
+      let rr = sectionRatios(r1, G.sigmaAllow);
+      if (inp.seismic.on) {
+        const inertia = inp.seismic.kh * Wst;
+        const yI = pa ? pa.cy - ys : 0;
+        const r2 = { N: r1.N, M: r1.M + L.M.seis + inertia * Math.abs(yI), V: r1.V + L.V.seis + inertia };
+        const q2 = sectionRatios(r2, G.sigmaAllow * f.qaIncE);
+        if (q2.worst > rr.worst) {
+          rr = q2;
+          use = r2;
+        }
+      }
+      out.push({ y, t, N: use.N, M: use.M, V: use.V, sigBack: rr.sigBack, sigFront: rr.sigFront, ratioC: rr.ratioC, ratioT: rr.ratioT, ratioV: rr.ratioV, ok: rr.worst <= 1 });
+    } else if (masonry) {
       const r = evalAt(1, 1, 1, 1);
       const A = t, S = (t * t) / 6;
       const sigBack = r.N / A - r.M / S;
@@ -872,7 +909,7 @@ export function designWall(g: WallGeom): WallDesign {
 
   if (isGravity(inp.type)) {
     out.gravity = gravitySections(g);
-    out.gravityMaterial = inp.type === 'gravityMasonry' ? 'mamposteria' : 'concreto';
+    out.gravityMaterial = inp.type === 'gabion' ? 'gaviones' : inp.type === 'gravityMasonry' ? 'mamposteria' : 'concreto';
     // verificación de la zapata (si existe) como sección de concreto simple o mampostería
     if (g.hb > 1e-6 && (g.xFb > 1e-6 || inp.Lh > 1e-6)) {
       const env = slabEnvelope(g, uls, 0, 0);
