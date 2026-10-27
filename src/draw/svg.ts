@@ -32,10 +32,10 @@ export const DARK: Theme = {
 
 export const FONT = "font-family=\"Segoe UI, Arial, Helvetica, sans-serif\"";
 
-export function text(x: number, y: number, s: string, opts: { size?: number; fill?: string; anchor?: 'start' | 'middle' | 'end'; weight?: string | number; rotate?: number; italic?: boolean; baseline?: string } = {}): string {
-  const { size = 12, fill = '#000', anchor = 'start', weight = 400, rotate, italic, baseline } = opts;
+export function text(x: number, y: number, s: string, opts: { size?: number; fill?: string; anchor?: 'start' | 'middle' | 'end'; weight?: string | number; rotate?: number; italic?: boolean; baseline?: string; halo?: string } = {}): string {
+  const { size = 12, fill = '#000', anchor = 'start', weight = 400, rotate, italic, baseline, halo } = opts;
   const tr = rotate ? ` transform="rotate(${rotate} ${x.toFixed(2)} ${y.toFixed(2)})"` : '';
-  return `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" ${FONT} font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-weight="${weight}"${italic ? ' font-style="italic"' : ''}${baseline ? ` dominant-baseline="${baseline}"` : ''}${tr}>${esc(s)}</text>`;
+  return `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" ${FONT} font-size="${size}" fill="${fill}" text-anchor="${anchor}" font-weight="${weight}"${italic ? ' font-style="italic"' : ''}${baseline ? ` dominant-baseline="${baseline}"` : ''}${halo ? ` stroke="${halo}" stroke-width="3.2" stroke-linejoin="round" paint-order="stroke"` : ''}${tr}>${esc(s)}</text>`;
 }
 
 export function line(x1: number, y1: number, x2: number, y2: number, stroke: string, w = 1, dash?: string): string {
@@ -171,4 +171,8 @@ export function lineChart(opts: {
     }
   }
   return svgWrap(w, h, s, theme.bg);
+}
+
+export function polyline(pts: { x: number; y: number }[], stroke: string, w = 2, dash?: string): string {
+  return `<polyline points="${pts.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"${dash ? ` stroke-dasharray="${dash}"` : ''}/>`;
 }

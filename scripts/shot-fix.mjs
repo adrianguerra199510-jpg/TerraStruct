@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const out = process.argv[2];
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await b.newPage({ viewport: { width: 1500, height: 900 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:4173/');
+await page.getByText('Diseñar un muro').click();
+await page.getByRole('tab', { name: /Armado/ }).click();
+await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/fix-armado.png` });
+// scroll independiente: desplazar el panel izquierdo y comprobar que el derecho no se mueve
+const left = page.locator('.split > .left'), right = page.locator('.split > .right');
+await left.evaluate((e) => (e.scrollTop = 600));
+console.log('left', await left.evaluate((e) => [e.scrollTop, e.scrollHeight, e.clientHeight]), 'right', await right.evaluate((e) => [e.scrollTop, e.scrollHeight, e.clientHeight]));
+await page.screenshot({ path: `${out}/fix-scroll.png` });
+await page.getByRole('tab', { name: /Memoria/ }).click();
+await page.getByRole('button', { name: /Vista previa/ }).click();
+await page.waitForSelector('.modal iframe', { timeout: 60000 });
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${out}/fix-preview.png` });
+await b.close();

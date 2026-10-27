@@ -198,7 +198,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
         </Acc>
       </div>
 
-      <div className="stack" style={{ minWidth: 0 }}>
+      <div className="stack right" style={{ minWidth: 0 }}>
         <Tabs<Tab>
           value={tab}
           onChange={setTab}

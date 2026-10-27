@@ -153,7 +153,7 @@ export function App() {
             <span className="spacer" />
             <span className="chip"><FileText size={13} /> {project.info.name}</span>
           </div>
-          <div className="content">
+          <div className={'content' + (route.m === 'footing' || route.m === 'wall' ? ' fill' : '')}>
             {route.m === 'home' && (
               <Home
                 onGo={(m) => {

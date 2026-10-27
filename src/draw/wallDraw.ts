@@ -2,7 +2,7 @@ import { WallResults } from '../core/wall';
 import { WallType } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { Pt } from '../core/geometry';
-import { Theme, LIGHT, arrow, dimLine, line, poly, svgWrap, text, heat } from './svg';
+import { Theme, LIGHT, arrow, dimLine, line, poly, polyline, svgWrap, text, heat } from './svg';
 
 export interface WallDrawOpts {
   W?: number;
@@ -136,36 +136,70 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     const st = res.design.stem;
     const cov = inp.mat.cover;
     const covF = inp.mat.coverFound;
-    const rb = th.rebar;
+    const MAIN = th.rebar, SKIN = '#2a9d5c', DIST = '#1d63c7';
+    const halo = th.bg;
+    const pt = (x: number, y: number) => ({ x: X(x), y: Y(y) });
+    const dot = (x: number, y: number, c: string) => `<circle cx="${X(x).toFixed(1)}" cy="${Y(y).toFixed(1)}" r="3" fill="${c}"/>`;
     if (st) {
-      const yb = g.hb + (res.design.stem ? 0 : 0);
       const xb0 = g.stemBackX(0) - cov, xb1 = g.stemBackX(inp.H) - cov;
-      s += line(X(xb0), Y(covF), X(xb0), Y(yb), rb, 2.4);
-      s += line(X(xb0), Y(yb), X(xb1), Y(g.yTop - cov), rb, 2.8);
+      const hook = Math.max(Math.min(st.anchorage.ldh, xb0 - covF - 0.02), 0.1);
+      // barra principal del dorso con gancho hacia el pie
+      s += polyline([pt(xb1, g.yTop - cov), pt(xb0, covF + 0.035), pt(xb0 - hook, covF + 0.035)], MAIN, 3.2);
+      // barras de la cara frontal con gancho hacia el talón
       const xf0 = g.stemFrontX(0) + cov, xf1 = g.stemFrontX(inp.H) + cov;
-      s += line(X(xf0), Y(covF + 0.05), X(xf0), Y(yb), '#1d63c7', 2);
-      s += line(X(xf0), Y(yb), X(xf1), Y(g.yTop - cov), '#1d63c7', 2);
-      s += text(X(g.stemBackX(inp.H / 2)) + 8, Y(g.hb + inp.H * 0.5), `${st.base.text}`, { size: 11, fill: rb, weight: 700 });
+      const hk2 = Math.max(Math.min(0.25, xb0 - xf0 - 0.06), 0.08);
+      s += polyline([pt(xf1, g.yTop - cov), pt(xf0, covF + 0.075), pt(xf0 + hk2, covF + 0.075)], SKIN, 2.6);
       if (st.yCut) {
         const yc = g.hb + st.yCut;
-        s += line(X(g.stemBackX(st.yCut) - cov) - 6, Y(yc), X(g.stemBackX(st.yCut) - cov) + 6, Y(yc), th.ink, 1.6);
-        s += text(X(g.stemBackX(st.yCut)) + 10, Y(yc) + 4, 'corte del 50 %', { size: 9.5, fill: th.muted });
+        const xc = g.stemBackX(st.yCut) - cov;
+        s += polyline([pt(xc - 0.05, yc), pt(xc + 0.05, yc)], th.ink, 2);
+        s += text(X(xc) + 12, Y(yc) + 4, 'la mitad de las barras se corta aquí', { size: 10, fill: th.muted, halo });
+      }
+      const ym = g.hb + inp.H * 0.55;
+      s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym), `Vertical ${st.base.text}`, { size: 11, fill: MAIN, weight: 700, halo });
+      if (!st.masonry) s += text(X(g.stemFrontX(inp.H * 0.55)) - 10, Y(ym) - 2, `Vertical ${st.frontVertDet.text}`, { size: 11, fill: SKIN, weight: 700, anchor: 'end', halo });
+      s += text(X(g.stemFrontX(inp.H * 0.55)) - 10, Y(ym) + 13, `Horizontal ${st.horizontalDet.text}`, { size: 11, fill: DIST, weight: 700, anchor: 'end', halo });
+      // barras horizontales (puntos) en ambas caras
+      const sp = Math.max(st.horizontalDet.spacing, 0.15);
+      for (let y = 0.2; y < inp.H - 0.1; y += sp) {
+        s += dot(g.stemBackX(y) - cov - 0.035, g.hb + y, DIST);
+        s += dot(g.stemFrontX(y) + cov + 0.035, g.hb + y, DIST);
       }
     }
-    if (res.design.heel && g.B - g.xBb > 0.05) {
-      const yh = res.design.heel.face === 'superior' ? g.hb - covF : covF;
-      s += line(X(g.xFb + 0.05), Y(yh), X(g.B - covF), Y(yh), rb, 2.6);
-      s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(yh) + (res.design.heel.face === 'superior' ? -7 : 14), `Talón ${res.design.heel.det.text}`, { size: 10.5, fill: rb, anchor: 'middle', weight: 700 });
-    }
-    if (res.design.toe && g.xFb > 0.05) {
-      const yt = res.design.toe.face === 'inferior' ? covF : g.hb - covF;
-      s += line(X(covF), Y(yt), X(g.xBb - 0.05), Y(yt), '#1d63c7', 2.6);
-      s += text(X(g.xFb / 2), Y(yt) + (res.design.toe.face === 'inferior' ? -7 : 14), `Pie ${res.design.toe.det.text}`, { size: 10.5, fill: '#1d63c7', anchor: 'middle', weight: 700 });
+    // zapata: barras principales y de reparto
+    if (g.hb > 0.05) {
+      const dists = (yy: number) => {
+        let k = '';
+        for (let x = covF + 0.15; x < g.B - covF - 0.05; x += 0.3) k += dot(x, yy, DIST);
+        return k;
+      };
+      if (res.design.toe && g.xFb > 0.05) {
+        const t = res.design.toe;
+        const yt = t.face === 'inferior' ? covF : g.hb - covF;
+        s += polyline([pt(covF, yt), pt(Math.min(g.xBb + t.ldReq, g.B - covF), yt)], MAIN, 3.2);
+        s += text(X(g.xFb / 2), Y(g.hb) - 9, `Pie ${t.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
+      }
+      if (res.design.heel && g.B - g.xBb > 0.05) {
+        const h = res.design.heel;
+        const yh = h.face === 'superior' ? g.hb - covF : covF;
+        s += polyline([pt(Math.max(covF, g.xFb - h.ldReq), yh), pt(g.B - covF, yh)], MAIN, 3.2);
+        s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(g.hb) - 9, `Talón ${h.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
+      }
+      if (res.design.toe || res.design.heel) {
+        s += dists(covF + 0.06);
+        s += dists(g.hb - covF - 0.06);
+      }
     }
     if (res.design.key && g.keyPoly) {
       const kx = inp.key.x + inp.key.b / 2;
-      s += line(X(kx), Y(-inp.key.d + covF), X(kx), Y(g.hb - covF), rb, 2.2);
+      s += polyline([pt(kx, -inp.key.d + covF), pt(kx, g.hb - covF - 0.04)], MAIN, 3);
+      s += text(X(kx) + 8, Y(-inp.key.d / 2), `Llave ${res.design.key.slab.det.text}`, { size: 10.5, fill: MAIN, weight: 700, halo });
     }
+    // leyenda
+    const ly = 44;
+    s += polyline([{ x: 16, y: ly }, { x: 46, y: ly }], MAIN, 3.2) + text(54, ly + 4, 'Armadura principal (tracción)', { size: 10.5, fill: th.ink });
+    s += polyline([{ x: 16, y: ly + 16 }, { x: 46, y: ly + 16 }], SKIN, 2.6) + text(54, ly + 20, 'Armadura de la cara frontal', { size: 10.5, fill: th.ink });
+    s += `<circle cx="31" cy="${ly + 32}" r="3" fill="${DIST}"/>` + text(54, ly + 36, 'Armadura horizontal / de reparto (en sección)', { size: 10.5, fill: th.ink });
   }
 
   // Cotas
@@ -182,7 +216,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
     // Altura de la pantalla
     const xh = g.xFt - 0.0;
-    s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
+    if (!o.showRebar) s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
     if (g.hb > 0) s += dimLine(X(g.B) + 14, Y(0), X(g.B) + 14, Y(g.hb), fx(g.hb), th.dim, 0, 10.5);
     s += dimLine(X(g.xFt), Y(g.yTop) - 12, X(g.xBt), Y(g.yTop) - 12, fx(inp.tTop), th.dim, 0, 10.5);
     if (inp.Df > 0) s += dimLine(X(xL) + 12, Y(0), X(xL) + 12, Y(Math.max(inp.Df, g.hb)), `Df = ${fx(inp.Df)}`, th.muted, 0, 10.5);

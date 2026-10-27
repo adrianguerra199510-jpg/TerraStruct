@@ -15,6 +15,7 @@ function createWindow() {
   Menu.setApplicationMenu(null);
   win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('blob:')) return { action: 'allow' };
     shell.openExternal(url);
     return { action: 'deny' };
   });

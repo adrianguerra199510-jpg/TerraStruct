@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, FileDown, Loader2, FileType2, Eye } from 'lucide-react';
+import { FileText, FileDown, Loader2, FileType2, Eye, X } from 'lucide-react';
 import { FootingInput } from '../core/footing';
 import { WallInput } from '../core/wallTypes';
 import { Project, ProjectInfo } from '../state';
@@ -10,6 +10,7 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
   const { fmt } = useUnits();
   const [busy, setBusy] = useState<Format | 'preview' | null>(null);
   const [error, setError] = useState('');
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const info = project?.info ?? infoProp;
 
   const make = async (format: Format, preview = false) => {
@@ -21,7 +22,7 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
       const doc = kind === 'footing' ? reportForFooting(footing!, fmt, inf) : kind === 'wall' ? reportForWall(wall!, fmt, inf) : reportForProject(project!, fmt);
       const blob = await renderReport(doc, format);
       const name = safeFile(kind === 'footing' ? `Memoria_${footing!.name}` : kind === 'wall' ? `Memoria_${wall!.name}` : `Memoria_${inf.name}`) + (format === 'pdf' ? '.pdf' : '.docx');
-      if (preview) window.open(URL.createObjectURL(blob), '_blank');
+      if (preview) setPreview({ url: URL.createObjectURL(blob), name });
       else downloadBlob(blob, name);
     } catch (e: any) {
       console.error(e);
@@ -37,6 +38,10 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
       : kind === 'wall'
         ? 'datos, coeficientes de empuje, fuerzas y momentos, verificaciones de estabilidad, diseño estructural de cada elemento con fórmulas y valores, figuras y cuadro de armado.'
         : 'carátula con los datos del proyecto, resumen y la memoria de todas las fundaciones y muros del proyecto.';
+  const closePreview = () => {
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(null);
+  };
   return (
     <Card title="Memoria de cálculo" icon={<FileText size={18} />}>
       <div className="stack">
@@ -55,6 +60,19 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
           </button>
         </div>
         {busy && <span className="hint">Generando el documento…</span>}
+        {preview && (
+          <div className="modal-bg" onClick={closePreview}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-h">
+                <FileText size={18} /> <span>{preview.name}</span>
+                <span className="spacer" />
+                <a className="btn small" href={preview.url} download={preview.name}><FileDown size={14} /> Descargar</a>
+                <button className="icon-btn" title="Cerrar" onClick={closePreview}><X size={18} /></button>
+              </div>
+              <iframe title="Vista previa del PDF" src={preview.url} />
+            </div>
+          </div>
+        )}
         {error && <Alert>No se pudo generar el documento: {error}</Alert>}
       </div>
     </Card>
