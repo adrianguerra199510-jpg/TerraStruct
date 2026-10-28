@@ -20,6 +20,34 @@ export const WALL_TYPES: { id: WallType; label: string; short: string; desc: str
   { id: 'gabion', label: 'Muro de gaviones', short: 'Gaviones', desc: 'Cuerpos de canastas de malla rellenas de piedra, apilados en escalones.' },
 ];
 
+/** Armado del contrafuerte y de las losas que apoyan en él, definido por el usuario */
+export interface CounterfortRebar {
+  mainBar: string;
+  nMain: number;
+  stirBar: string;
+  stirS: number;
+  tieStemBar: string;
+  tieStemS: number;
+  tieSlabBar: string;
+  tieSlabS: number;
+  stemHBar: string;
+  stemHS: number;
+  stemVBar: string;
+  stemVS: number;
+}
+
+/** Malla de la zapata corrida (definida por el usuario) */
+export interface FootMesh {
+  botBar: string;
+  botS: number;
+  topOn: boolean;
+  topBar: string;
+  topS: number;
+  longOn: boolean;
+  longBar: string;
+  longS: number;
+}
+
 export type BlockType = '6' | '8' | '12';
 export const BLOCKS: { id: BlockType; label: string; t: number }[] = [
   { id: '6', label: 'Bloque de 6″ (15 cm)', t: 0.15 },
@@ -73,7 +101,7 @@ export interface WallInput {
   hb: number;
   hbTip: number;
   key: { enabled: boolean; x: number; b: number; d: number };
-  cf: { s: number; t: number; proj: number; projTop: number };
+  cf: { s: number; t: number; proj: number; projTop: number; rb: CounterfortRebar };
   gab: GabionInput;
   /** bloque de mampostería reforzada: 6", 8" o 12" */
   block: BlockType;
@@ -108,6 +136,7 @@ export interface WallInput {
     barKey: string;
     /** barras longitudinales de la zapata (paralelas al muro) */
     /** pantalla: capas de acero vertical (1 o 2 caras), separación vertical (0 = automática), barras horizontales y su separación (0 = automática) */
+    mesh: FootMesh;
     stemLayers: 1 | 2;
     stemVertS: number;
     horizOn: boolean;
@@ -155,7 +184,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     hb: 0.5,
     hbTip: 0.5,
     key: { enabled: false, x: 1.2, b: 0.4, d: 0.5 },
-    cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0 },
+    cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0, rb: { mainBar: '#8', nMain: 8, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.3 } },
     gab: { n: 4, hc: 1.0, b0: 2.5, step: 0.5, side: 'front', gammaStone: 26, porosity: 0.3, sigmaAllow: 300, muG: 0.6, cG: 0, fsSlide: 1.5, eFrac: 1 / 3 },
     block: '8',
     Df: 1.0,
@@ -181,6 +210,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       barHeel: '#5',
       barToe: '#5',
       barKey: '#5',
+      mesh: { botBar: '#5', botS: 0.2, topOn: true, topBar: '#5', topS: 0.2, longOn: true, longBar: '#4', longS: 0.25 },
       stemLayers: 2,
       stemVertS: 0,
       horizOn: true,
@@ -202,10 +232,18 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
   };
   switch (type) {
     case 'counterfortInt':
-      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 1.2, Lh: 3.2, hb: 0.6, hbTip: 0.6, cf: { s: 3.5, t: 0.3, proj: 3.2, projTop: 0 } });
+      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 1.2, Lh: 3.2, hb: 0.6, hbTip: 0.6, cf: { s: 3.5, t: 0.3, proj: 3.2, projTop: 0, rb: { mainBar: '#8', nMain: 10, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.3 } } });
+      base.mat.mesh = { botBar: '#6', botS: 0.15, topOn: true, topBar: '#6', topS: 0.15, longOn: true, longBar: '#5', longS: 0.15 };
+      base.cf.rb.tieStemS = 0.15;
+      base.cf.rb.tieSlabBar = '#5';
+      base.cf.rb.tieSlabS = 0.1;
       break;
     case 'counterfortExt':
-      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 2.8, Lh: 3.4, hb: 0.7, hbTip: 0.7, cf: { s: 3.5, t: 0.3, proj: 2.6, projTop: 0 }, Df: 1.0 });
+      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 2.8, Lh: 3.4, hb: 0.7, hbTip: 0.7, cf: { s: 3.5, t: 0.3, proj: 2.6, projTop: 0, rb: { mainBar: '#8', nMain: 10, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.3 } }, Df: 1.0 });
+      base.mat.mesh = { botBar: '#6', botS: 0.15, topOn: true, topBar: '#6', topS: 0.15, longOn: true, longBar: '#5', longS: 0.15 };
+      base.cf.rb.tieStemS = 0.15;
+      base.cf.rb.tieSlabBar = '#5';
+      base.cf.rb.tieSlabS = 0.1;
       break;
     case 'gravityConcrete':
       Object.assign(base, { H: 3.0, tTop: 0.6, tBot: 1.9, stemFace: 'front', Lt: 0.4, Lh: 0, hb: 0.5, hbTip: 0.5, theory: 'coulomb', Df: 0.8 });
@@ -220,7 +258,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       break;
     case 'masonryReinforced':
       Object.assign(base, { H: 2.4, tTop: 0.2, tBot: 0.2, Lt: 0.6, Lh: 1.5, hb: 0.4, hbTip: 0.4, block: '8' });
-      base.mat.stemLayers = 1;
+      base.mat.stemLayers = 2;
       base.mat.horizS = 0.4;
       base.mat.barStem = '#5';
       break;

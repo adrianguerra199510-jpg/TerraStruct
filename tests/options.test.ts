@@ -29,17 +29,46 @@ describe('acero superior opcional en zapatas', () => {
   });
 });
 
-describe('zapatas de muros: acero opcional', () => {
-  it('cara opuesta y sin acero longitudinal', () => {
+describe('zapata corrida de muros: malla definida por el usuario', () => {
+  it('sin acero longitudinal y sin malla superior', () => {
     const w = defaultWall('cantilever');
-    w.mat.footOpp = true;
-    w.mat.footLong = false;
+    w.mat.mesh.longOn = false;
+    w.mat.mesh.topOn = false;
     const r = analyzeWall(w);
-    expect(r.design.toe!.opp).toBeTruthy();
-    expect(r.design.toe!.shrinkDet.text).toBe('No se coloca');
-    const w2 = defaultWall('cantilever');
-    expect(analyzeWall(w2).design.toe!.opp).toBeUndefined();
+    expect(r.design.mesh!.long).toBeNull();
+    expect(r.design.mesh!.top).toBeNull();
+    // el talón necesita acero superior: sin malla superior no cumple
+    expect(r.design.heel!.ratioM).toBe(Infinity);
+    expect(r.ok).toBe(false);
   });
+  it('una separación mayor reduce la resistencia (se valida lo definido)', () => {
+    const w1 = defaultWall('cantilever'); w1.mat.mesh.topS = 0.2;
+    const w2 = defaultWall('cantilever'); w2.mat.mesh.topS = 0.4;
+    expect(analyzeWall(w2).design.heel!.phiMn).toBeLessThan(analyzeWall(w1).design.heel!.phiMn);
+  });
+  it('sugerencia cumple', () => {
+    const w = defaultWall('cantilever');
+    const sg = analyzeWall(w).design.suggest!.mesh;
+    w.mat.mesh.botS = sg.botS; w.mat.mesh.topS = sg.topS; w.mat.mesh.longS = sg.longS;
+    const r = analyzeWall(w);
+    expect(r.checks.filter((c) => /Zapata|Pie|Talón/.test(c.name)).every((c) => c.ok)).toBe(true);
+  });
+});
+
+describe('armado del contrafuerte definido por el usuario', () => {
+  for (const t of ['counterfortInt', 'counterfortExt'] as const) {
+    it(`${t}: pocas barras no cumplen y la sugerencia sí`, () => {
+      const w = defaultWall(t);
+      w.cf.rb.nMain = 2;
+      const r = analyzeWall(w);
+      expect(r.design.counterfort!.ratios.main).toBeGreaterThan(1);
+      const sg = r.design.counterfort!.suggest;
+      w.cf.rb.nMain = sg.nMain; w.cf.rb.stirS = sg.stirS; w.cf.rb.tieStemS = sg.tieStemS; w.cf.rb.tieSlabS = sg.tieSlabS; w.cf.rb.stemHS = sg.stemHS; w.cf.rb.stemVS = sg.stemVS;
+      w.mat.mesh.longS = sg.slabLongS;
+      const r2 = analyzeWall(w);
+      expect(Object.values(r2.design.counterfort!.ratios).every((v) => v <= 1.0001)).toBe(true);
+    });
+  }
 });
 
 describe('mampostería reforzada según el bloque', () => {
@@ -47,6 +76,7 @@ describe('mampostería reforzada según el bloque', () => {
     for (const b of ['6', '8', '12'] as const) {
       const w = defaultWall('masonryReinforced');
       w.block = b;
+      w.mat.stemLayers = 1;
       const r = analyzeWall(w);
       expect(r.geom.stemT(0)).toBeCloseTo(blockThickness(b), 9);
       expect(r.design.stem!.sections[0].d).toBeCloseTo(blockThickness(b) / 2, 9);

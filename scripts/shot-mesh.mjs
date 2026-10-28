@@ -1,0 +1,26 @@
+import { chromium } from 'playwright';
+const out = process.argv[2];
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await b.newPage({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:4173/');
+await page.getByText('Voladizo de concreto armado').click();
+await page.locator('summary', { hasText: 'Materiales y armado' }).click();
+await page.locator('.split > .left').evaluate((e) => e.scrollTo(0, 1500));
+await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/mesh-panel.png` });
+await page.getByRole('tab', { name: /Armado/ }).click(); await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/mesh-armado.png`, clip: { x: 760, y: 140, width: 740, height: 760 } });
+// contrafuertes internos
+await page.locator('.nav-btn', { hasText: 'Inicio' }).click();
+await page.getByText('Con contrafuertes internos').first().click();
+await page.locator('summary', { hasText: 'Materiales y armado' }).click();
+await page.locator('.split > .left').evaluate((e) => e.scrollTo(0, 1800));
+await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/cf-panel.png` });
+await page.getByRole('tab', { name: /Diseño/ }).click(); await page.waitForTimeout(400);
+await page.screenshot({ path: `${out}/cf-diseno.png` });
+await page.getByRole('tab', { name: /Memoria/ }).click();
+const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 120000 }), page.getByRole('button', { name: /Descargar PDF/ }).click()]);
+await dl.saveAs(`${out}/cf.pdf`);
+await b.close();

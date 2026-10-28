@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Settings2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
+  Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
 } from 'lucide-react';
 import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
@@ -34,6 +34,8 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
   const setFill = (p: Partial<WallInput['fill']>) => set({ fill: { ...data.fill, ...p } });
   const setFound = (p: Partial<WallInput['found']>) => set({ found: { ...data.found, ...p } });
   const setFac = (p: Partial<WallInput['factors']>) => set({ factors: { ...data.factors, ...p } });
+  const setMesh = (p: Partial<WallInput['mat']['mesh']>) => set({ mat: { ...data.mat, mesh: { ...data.mat.mesh, ...p } } });
+  const setRb = (p: Partial<WallInput['cf']['rb']>) => set({ cf: { ...data.cf, rb: { ...data.cf.rb, ...p } } });
   const setGab = (p: Partial<WallInput['gab']>) => set({ gab: { ...data.gab, ...p } });
 
   return (
@@ -211,8 +213,6 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
               <div className="grid3">
                 <Sel label="Pantalla (vertical)" value={data.mat.barStem} onChange={(v) => setMat({ barStem: v })} options={bars} />
                 <Sel label="Horizontal / amarres" value={data.mat.barStemH} onChange={(v) => setMat({ barStemH: v })} options={bars} />
-                <Sel label="Talón" value={data.mat.barHeel} onChange={(v) => setMat({ barHeel: v })} options={bars} />
-                <Sel label="Pie" value={data.mat.barToe} onChange={(v) => setMat({ barToe: v })} options={bars} />
                 {data.key.enabled && <Sel label="Llave" value={data.mat.barKey} onChange={(v) => setMat({ barKey: v })} options={bars} />}
               </div>
               {(t === 'cantilever' || t === 'masonryReinforced') && (
@@ -238,12 +238,60 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                   ))}
                 </>
               )}
-              <div className="hint"><b>Armado de la zapata</b></div>
-              <Check label="Acero transversal también en la cara opuesta (pie y talón)" value={data.mat.footOpp} onChange={(v) => setMat({ footOpp: v })} hint="Sin él solo se arma la cara en tracción" />
-              <Check label="Acero longitudinal (paralelo al muro)" value={data.mat.footLong} onChange={(v) => setMat({ footLong: v })} hint="Reparto y retracción, mitad por cara" />
+              {isCounterfort(t) && (
+                <>
+                  <div className="hint"><b>Armado del contrafuerte y de la pantalla (definido por usted)</b></div>
+                  <div className="grid3">
+                    <Sel label="Acero principal: barra" value={data.cf.rb.mainBar} onChange={(v) => setRb({ mainBar: v })} options={bars} />
+                    <Num label="Número de barras" value={data.cf.rb.nMain} onChange={(v) => setRb({ nMain: Math.max(1, Math.round(v)) })} min={1} />
+                    <span />
+                    <Sel label="Estribos (2 ramas)" value={data.cf.rb.stirBar} onChange={(v) => setRb({ stirBar: v })} options={bars} />
+                    <Num label="Separación" q="lencm" value={data.cf.rb.stirS} onChange={(v) => setRb({ stirS: v })} min={0.05} />
+                    <span />
+                    <Sel label="Amarres pantalla–contrafuerte" value={data.cf.rb.tieStemBar} onChange={(v) => setRb({ tieStemBar: v })} options={bars} />
+                    <Num label="Separación" q="lencm" value={data.cf.rb.tieStemS} onChange={(v) => setRb({ tieStemS: v })} min={0.05} />
+                    <span />
+                    <Sel label="Amarres zapata–contrafuerte" value={data.cf.rb.tieSlabBar} onChange={(v) => setRb({ tieSlabBar: v })} options={bars} />
+                    <Num label="Separación" q="lencm" value={data.cf.rb.tieSlabS} onChange={(v) => setRb({ tieSlabS: v })} min={0.05} />
+                    <span />
+                    <Sel label="Pantalla horizontal (cada cara)" value={data.cf.rb.stemHBar} onChange={(v) => setRb({ stemHBar: v })} options={bars} />
+                    <Num label="Separación" q="lencm" value={data.cf.rb.stemHS} onChange={(v) => setRb({ stemHS: v })} min={0.05} />
+                    <span />
+                    <Sel label="Pantalla vertical (cada cara)" value={data.cf.rb.stemVBar} onChange={(v) => setRb({ stemVBar: v })} options={bars} />
+                    <Num label="Separación" q="lencm" value={data.cf.rb.stemVS} onChange={(v) => setRb({ stemVS: v })} min={0.05} />
+                  </div>
+                  {res?.design.counterfort && (
+                    <button className="btn small" onClick={() => { const c = res.design.counterfort!.suggest; set({ cf: { ...data.cf, rb: { ...data.cf.rb, nMain: c.nMain, stirS: c.stirS, tieStemS: c.tieStemS, tieSlabS: c.tieSlabS, stemHS: c.stemHS, stemVS: c.stemVS } }, mat: { ...data.mat, mesh: { ...data.mat.mesh, longS: c.slabLongS } } }); }}>
+                      <Wand2 size={14} /> Sugerir armado del contrafuerte según el cálculo
+                    </button>
+                  )}
+                </>
+              )}
+              <div className="hint"><b>Malla de la zapata corrida (definida por usted)</b></div>
               <div className="grid3">
-                {data.mat.footLong && <Sel label="Barras longitudinales" value={data.mat.barLong} onChange={(v) => setMat({ barLong: v })} options={bars} />}
+                <Sel label="Transversal inferior: barra" value={data.mat.mesh.botBar} onChange={(v) => setMesh({ botBar: v })} options={bars} />
+                <Num label="Separación" q="lencm" value={data.mat.mesh.botS} onChange={(v) => setMesh({ botS: v })} min={0.05} />
               </div>
+              <Check label="Transversal superior" value={data.mat.mesh.topOn} onChange={(v) => setMesh({ topOn: v })} />
+              {data.mat.mesh.topOn && (
+                <div className="grid3">
+                  <Sel label="Transversal superior: barra" value={data.mat.mesh.topBar} onChange={(v) => setMesh({ topBar: v })} options={bars} />
+                  <Num label="Separación" q="lencm" value={data.mat.mesh.topS} onChange={(v) => setMesh({ topS: v })} min={0.05} />
+                </div>
+              )}
+              <Check label="Longitudinal (paralela al muro)" value={data.mat.mesh.longOn} onChange={(v) => setMesh({ longOn: v })} hint="En cada capa de la malla" />
+              {data.mat.mesh.longOn && (
+                <div className="grid3">
+                  <Sel label="Longitudinal: barra" value={data.mat.mesh.longBar} onChange={(v) => setMesh({ longBar: v })} options={bars} />
+                  <Num label="Separación" q="lencm" value={data.mat.mesh.longS} onChange={(v) => setMesh({ longS: v })} min={0.05} />
+                </div>
+              )}
+              {res?.design.suggest && (
+                <button className="btn small" onClick={() => { const g = res.design.suggest!.mesh; setMesh({ botS: g.botS, topS: g.topS, topOn: g.topOn, longS: g.longS }); }}>
+                  <Wand2 size={14} /> Sugerir separaciones según el cálculo
+                </button>
+              )}
+              <div className="hint">El programa no diseña la zapata: verifica pie y talón con esta malla (transversal) y, en muros con contrafuertes, la losa entre contrafuertes (longitudinal).</div>
             </>
           )}
         </Acc>}
@@ -501,6 +549,21 @@ function CounterfortView({ res }: { res: WallResults }) {
           rows={c.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.proj.toFixed(2), s.dcf.toFixed(2), fmt.n('moment', s.Mcf, 1), fmt.n('force', s.Vcf, 1), s.AsReq.toFixed(2), s.AsIncl.toFixed(2)])}
         />
       </Card>
+      <Card title="Verificación del armado definido" icon={<ListChecks size={18} />}>
+        <Tbl
+          head={['Elemento', 'Adoptado', 'Requerido', 'Relación', '']}
+          align={['l', 'l', 'r', 'r', 'c']}
+          rows={[
+            ['Acero principal del contrafuerte', `${c.nBars} × ${c.bar.id} = ${c.AsProv.toFixed(1)} cm²`, `${c.req.AsMain.toFixed(1)} cm²`, c.ratios.main],
+            ['Estribos horizontales (2 ramas)', `${c.stirrup.id} @ ${(c.stirrupSpacing * 100).toFixed(0)} cm`, `Vu ${fmt.n('force', c.critical.Vu, 1)} ≤ φVn ${fmt.n('force', c.critical.phiVc, 1)}`, Math.max(c.ratios.stirrup, c.ratios.stirMin)],
+            ['Amarres pantalla–contrafuerte', c.tieStem.text, `${c.req.tieStem.toFixed(2)} cm²/m`, c.ratios.tieStem],
+            ['Amarres zapata–contrafuerte', c.tieSlab.text, `${c.req.tieSlab.toFixed(2)} cm²/m`, c.ratios.tieSlab],
+            ['Pantalla horizontal (cada cara)', c.stemNegDet.text, `${Math.max(c.req.stemNeg, c.req.stemPos).toFixed(2)} cm²/m`, Math.max(c.ratios.stemNeg, c.ratios.stemPos)],
+            ['Pantalla vertical (cada cara)', c.vertDet.text, `${c.req.vert.toFixed(2)} cm²/m`, c.ratios.vert],
+            [`${c.slabLabel}: longitudinal`, c.slabPosDet.text, `${Math.max(c.req.slabNeg, c.req.slabPos).toFixed(2)} cm²/m`, Math.max(c.ratios.slabNeg, c.ratios.slabPos)],
+          ].map((r) => [r[0] as string, r[1] as string, r[2] as string, isFinite(r[3] as number) ? (r[3] as number).toFixed(2) : '∞', <StatusChip key={r[0] as string} ok={(r[3] as number) <= 1.0001} />])}
+        />
+      </Card>
       <Card title="Pantalla entre contrafuertes (losa horizontal)" icon={<Layers size={18} />}>
         <div className="kpis">
           <Kpi label="Luz libre" value={fmt.u('len', c.Ls, 2)} />
@@ -535,12 +598,14 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     rows.push([`Pantalla — horizontal${d.stem.horizOn ? (d.stem.horizLayers === 2 ? ' (cada cara)' : '') : ''}`, d.stem.horizontalDet.text, d.stem.horizOn ? (d.stem.horizontalDet.asProv * d.stem.horizLayers).toFixed(2) : '—', d.stem.horizOn ? `Requerido ${d.stem.AsH.toFixed(2)} cm²/m; ${d.stem.horizAuto ? 'separación automática' : 'separación elegida'}` : 'Sin barras horizontales']);
     rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
   }
-  if (d.toe) rows.push([`Pie (cara ${d.toe.face}) — transversal`, d.toe.det.text, d.toe.det.asProv.toFixed(2), 'Perpendicular al muro']);
-  if (d.toe?.opp) rows.push([`Pie (cara ${d.toe.opp.face}) — transversal`, d.toe.opp.det.text, d.toe.opp.det.asProv.toFixed(2), `Cara opuesta; Mu = ${d.toe.opp.Mu.toFixed(1)} kN·m/m`]);
-  if (d.heel) rows.push([`Talón (cara ${d.heel.face}) — transversal`, d.heel.det.text, d.heel.det.asProv.toFixed(2), 'Perpendicular al muro']);
-  if (d.heel?.opp) rows.push([`Talón (cara ${d.heel.opp.face}) — transversal`, d.heel.opp.det.text, d.heel.opp.det.asProv.toFixed(2), `Cara opuesta; Mu = ${d.heel.opp.Mu.toFixed(1)} kN·m/m`]);
-  const shrinkS = d.toe ?? d.heel;
-  if (shrinkS) rows.push(['Zapata — barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, shrinkS.shrinkDet.asProv.toFixed(2), res.inp.mat.footLong ? `Cara superior e inferior; As total = ${shrinkS.shrinkAs.toFixed(2)} cm²/m (0.0018·h), mitad por cara` : 'Sin acero longitudinal: verificar retracción y temperatura']);
+  if (d.mesh) {
+    const mm = d.mesh;
+    const mx = res.inp.mat.mesh;
+    rows.push(['Zapata — transversal inferior', mm.botDet.text, mm.botDet.asProv.toFixed(2), `Perpendicular al muro; mínimo ${(0.0018 * res.geom.hb * 1e4).toFixed(2)} cm²/m`]);
+    rows.push(['Zapata — transversal superior', mm.top ? mm.top.det.text : 'No se coloca', mm.top ? mm.top.det.asProv.toFixed(2) : '—', mm.top ? 'Perpendicular al muro' : 'Sin malla superior']);
+    rows.push(['Zapata — longitudinal (cada capa)', mm.long ? mm.long.det.text : 'No se coloca', mm.long ? mm.long.det.asProv.toFixed(2) : '—', mm.long ? `Paralela al muro; ${mm.long.layers} capa(s), total ${mm.long.AsTotal.toFixed(2)} cm²/m (mín. ${mm.long.AsMin.toFixed(2)})` : 'Sin acero longitudinal']);
+    void mx;
+  }
   if (d.key) rows.push(['Llave de corte', d.key.slab.det.text, d.key.slab.det.asProv.toFixed(2), 'Barras verticales ancladas en la zapata']);
   if (d.counterfort) {
     const c = d.counterfort;

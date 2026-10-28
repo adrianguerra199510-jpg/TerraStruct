@@ -29,6 +29,8 @@ export interface WallResults {
   weightWall: number; // kN/m
 }
 
+const res0h = (g: { hb: number }) => g.hb * 1e4;
+
 export function analyzeWall(input: WallInput): WallResults {
   const inp = normalizeWall(input);
   const geom = buildWallGeom(inp);
@@ -70,6 +72,15 @@ export function analyzeWall(input: WallInput): WallResults {
     add({ group: 'Estructural', name: 'Talón: flexión', ratio: d.heel.ratioM, detail: `Mu = ${d.heel.Mu.toFixed(1)} kN·m/m (cara ${d.heel.face})`, ok: d.heel.sectionOk && d.heel.ratioM <= 1 });
     add({ group: 'Estructural', name: 'Talón: cortante', ratio: d.heel.ratioV, detail: `Vu = ${d.heel.Vu.toFixed(1)} kN/m`, ok: d.heel.ratioV <= 1 });
   }
+  for (const sl of [d.toe, d.heel]) {
+    if (sl?.opp && sl.opp.Mu > 0.01) add({ group: 'Estructural', name: `${sl.name}: flexión cara ${sl.opp.face}`, ratio: sl.opp.ratioM, detail: `Mu = ${sl.opp.Mu.toFixed(1)} kN·m/m con ${sl.opp.det.text}`, ok: sl.opp.sectionOk && sl.opp.ratioM <= 1 });
+  }
+  if (d.mesh) {
+    const mm = d.mesh;
+    add({ group: 'Estructural', name: 'Zapata: acero transversal mínimo', ratio: Math.max(mm.minBot, mm.minTop ?? 0), detail: `0.0018·b·h = ${(0.0018 * res0h(geom)).toFixed(2)} cm²/m por capa`, ok: Math.max(mm.minBot, mm.minTop ?? 0) <= 1.0001 });
+    if (mm.long) add({ group: 'Estructural', name: 'Zapata: acero longitudinal mínimo', ratio: mm.long.ratio, detail: `${mm.long.det.text} × ${mm.long.layers} capa(s) = ${mm.long.AsTotal.toFixed(2)} cm²/m (mín. ${mm.long.AsMin.toFixed(2)})`, ok: mm.long.ratio <= 1.0001 });
+    add({ group: 'Estructural', name: 'Zapata: separación máxima de barras', ratio: Math.max(inp.mat.mesh.botS, inp.mat.mesh.topOn ? inp.mat.mesh.topS : 0, inp.mat.mesh.longOn ? inp.mat.mesh.longS : 0) / mm.sMax, detail: `máx. ${(mm.sMax * 100).toFixed(0)} cm (menor de 3h y 45 cm)`, ok: mm.spacingOk });
+  }
   if (d.key) {
     add({ group: 'Estructural', name: 'Llave de corte: flexión', ratio: d.key.slab.ratioM, detail: `Mu = ${d.key.slab.Mu.toFixed(1)} kN·m/m`, ok: d.key.slab.sectionOk && d.key.slab.ratioM <= 1 });
   }
@@ -86,6 +97,14 @@ export function analyzeWall(input: WallInput): WallResults {
     const mx = Math.max(...c.sections.map((s) => (s.AsReq > 1e5 ? Infinity : 0)));
     add({ group: 'Estructural', name: 'Contrafuerte: flexión', ratio: isFinite(mx) ? c.AsMax / Math.max(c.AsProv, 1e-9) : Infinity, detail: `${c.nBars} barras ${c.bar.id}`, ok: c.sectionOk && c.AsMax <= c.AsProv + 1e-9 });
     add({ group: 'Estructural', name: 'Contrafuerte: cortante', ratio: c.critical.ratio, detail: `Vu = ${c.critical.Vu.toFixed(1)} kN`, ok: c.critical.ratio <= 1 });
+    const rr = c.ratios;
+    add({ group: 'Estructural', name: 'Contrafuerte: acero principal adoptado', ratio: rr.main, detail: `${c.nBars} × ${c.bar.id} = ${c.AsProv.toFixed(1)} cm² (req. ${c.AsMax.toFixed(1)})`, ok: rr.main <= 1.0001 });
+    add({ group: 'Estructural', name: 'Contrafuerte: estribos', ratio: Math.max(rr.stirrup, rr.stirMin), detail: `${c.stirrup.id} @ ${(c.stirrupSpacing * 100).toFixed(0)} cm (2 ramas)`, ok: Math.max(rr.stirrup, rr.stirMin) <= 1.0001 });
+    add({ group: 'Estructural', name: 'Amarres pantalla–contrafuerte', ratio: rr.tieStem, detail: c.tieStem.text, ok: rr.tieStem <= 1.0001 });
+    add({ group: 'Estructural', name: 'Amarres zapata–contrafuerte', ratio: rr.tieSlab, detail: c.tieSlab.text, ok: rr.tieSlab <= 1.0001 });
+    add({ group: 'Estructural', name: 'Pantalla entre contrafuertes: acero horizontal', ratio: Math.max(rr.stemNeg, rr.stemPos), detail: `${c.stemNegDet.text} en cada cara`, ok: Math.max(rr.stemNeg, rr.stemPos) <= 1.0001 });
+    add({ group: 'Estructural', name: 'Pantalla entre contrafuertes: acero vertical', ratio: rr.vert, detail: `${c.vertDet.text} en cada cara`, ok: rr.vert <= 1.0001 });
+    add({ group: 'Estructural', name: `${c.slabLabel}: acero longitudinal`, ratio: Math.max(rr.slabNeg, rr.slabPos), detail: c.slabPosDet.text, ok: Math.max(rr.slabNeg, rr.slabPos) <= 1.0001 });
     add({ group: 'Estructural', name: 'Pantalla entre contrafuertes: cortante', ratio: c.stemShear.ratio, detail: `Vu = ${c.stemShear.Vu.toFixed(1)} kN/m`, ok: c.stemShear.ratio <= 1 });
   }
 

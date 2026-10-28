@@ -242,8 +242,31 @@ export interface CounterfortDesign {
   stemShear: { Vu: number; phiVc: number; ratio: number };
   vertDet: Detailing;
   vertBottomDet: Detailing;
+  /** relaciones requerido / adoptado del armado definido por el usuario */
+  ratios: { main: number; stirrup: number; stirMin: number; tieStem: number; tieSlab: number; stemNeg: number; stemPos: number; vert: number; slabNeg: number; slabPos: number };
+  /** valores requeridos del cálculo */
+  req: { AsMain: number; AvMin: number; tieStem: number; tieSlab: number; stemNeg: number; stemPos: number; vert: number; slabNeg: number; slabPos: number };
+  suggest: { nMain: number; stirS: number; tieStemS: number; tieSlabS: number; stemHS: number; stemVS: number; slabLongS: number };
   sectionOk: boolean;
   notes: string[];
+}
+
+export interface MeshSummary {
+  botBar: Bar;
+  botDet: Detailing;
+  top: { bar: Bar; det: Detailing } | null;
+  long: { bar: Bar; det: Detailing; layers: number; AsTotal: number; AsMin: number; ratio: number } | null;
+  /** relación acero mínimo / acero adoptado en cada capa transversal */
+  minBot: number;
+  minTop: number | null;
+  /** separación máxima admisible (menor de 3h y 45 cm) y si se cumple */
+  sMax: number;
+  spacingOk: boolean;
+}
+
+export interface WallSuggest {
+  mesh: { botS: number; topS: number; topOn: boolean; longS: number };
+  cf: { nMain: number; stirS: number; tieStemS: number; tieSlabS: number; stemHS: number; stemVS: number; slabLongS: number } | null;
 }
 
 export interface KeyDesign {
@@ -262,6 +285,8 @@ export interface WallDesign {
   gravityMaterial: 'concreto' | 'mamposteria' | 'gaviones' | null;
   baseCheck: { name: string; ratio: number; detail: string }[] | null;
   counterfort: CounterfortDesign | null;
+  mesh: MeshSummary | null;
+  suggest: WallSuggest | null;
   warnings: string[];
   notes: string[];
 }
@@ -407,6 +432,39 @@ function slabDesign(
     shrinkAs: shrink, shrinkDet: m.footLong ? chooseSpacing(shrink / 2, findBar(m.barLong), 0.45) : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true },
     sectionOk: fr.ok && M <= phiMn + 1e-9 && V <= phiVc + 1e-9,
     note: fr.ok ? undefined : 'Sección insuficiente: aumentar el espesor.',
+  };
+}
+
+function barDet(bar: Bar | null, spacing: number): Detailing {
+  if (!bar || !(spacing > 0)) return { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
+  return { text: `${bar.id} @ ${(spacing * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing, asProv: bar.area / spacing, ok: true };
+}
+
+/** Verificación de una sección de la zapata con el acero definido por el usuario (sin diseñarlo). */
+function slabCheck(
+  g: WallGeom, name: string, label: string, face: 'superior' | 'inferior', M: number, V: number, bar: Bar | null, spacing: number, ldAvail: number, dBarT: number,
+): SlabDesign {
+  const inp = g.inp;
+  const m = inp.mat;
+  const h = g.hb;
+  const dUse = h - m.coverFound - (bar ? bar.db : dBarT) / 2000;
+  const det = barDet(bar, spacing);
+  const fr = flexureAs(M, 1, dUse, m.fc, m.fy);
+  const asReq = M > 1e-9 ? (isFinite(fr.As) ? fr.As : Infinity) : 0;
+  const asMin = 0.0018 * h * 1e4 * (420 / Math.max(m.fy, 420));
+  const phiMn = det.asProv > 0 ? flexureCapacity(det.asProv, 1, dUse, m.fc, m.fy) : 0;
+  const rhoW = (det.asProv * 1e-4) / dUse;
+  const cap = oneWayVc(1, dUse, m.fc, rhoW, m.code, m.lambda);
+  const phiVc = PHI_SHEAR * cap.Vc;
+  const ldReq = bar ? developmentLength(bar.db, m.fy, m.fc, { lambda: m.lambda }) : 0;
+  const ratioM = M <= 1e-9 ? 0 : phiMn > 0 ? M / phiMn : Infinity;
+  const minOk = !bar || det.asProv + 1e-9 >= asMin;
+  return {
+    name, caseLabel: label, face, Mu: M, d: dUse, b: 1, AsReq: asReq, AsMin: asMin, AsDes: Math.max(asReq, bar ? asMin : 0), det, bar: bar ?? findBar(m.barToe), phiMn, Vu: V, phiVc,
+    ratioM, ratioV: phiVc > 0 ? V / phiVc : 0, ldReq, ldAvail, hook: !!bar && ldAvail < ldReq,
+    shrinkAs: 0.0018 * h * 1e4, shrinkDet: barDet(m.mesh.longOn ? findBar(m.mesh.longBar) : null, m.mesh.longS),
+    sectionOk: minOk && (M <= 1e-9 || (fr.ok && M <= phiMn + 1e-9)) && V <= phiVc + 1e-9,
+    note: !bar && M > 1e-9 ? 'No hay acero en esta cara: defina la malla correspondiente.' : !minOk ? 'Acero menor que el mínimo (0.0018·b·h).' : fr.ok || M <= 1e-9 ? undefined : 'Sección insuficiente: aumentar el espesor.',
   };
 }
 
@@ -782,8 +840,9 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const s = inp.cf.s;
   const tc = inp.cf.t;
   const Ls = Math.max(s - tc, 0.1);
-  const bar = findBar(m.barStem);
-  const barH = findBar(m.barStemH);
+  const bar = findBar(inp.cf.rb.mainBar);
+  const barH = findBar(inp.cf.rb.stemHBar);
+  const barV = findBar(inp.cf.rb.stemVBar);
   const NS = 10;
   const notes: string[] = [];
   // Presión mayorada en función de la profundidad
@@ -820,8 +879,8 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const stemCap = oneWayVc(1, sw.d, m.fc, 0.003, 'ACI318_14', m.lambda);
   const stemShear = { Vu: stemVu, phiVc: PHI_SHEAR * stemCap.Vc, ratio: stemVu / (PHI_SHEAR * stemCap.Vc) };
   const tAvg = (inp.tTop + inp.tBot) / 2;
-  const vertDet = chooseSpacing(0.5 * rhoVertMin(barH.db, m.fy) * tAvg * 1e4, barH, 0.45);
-  const vertBottomDet = chooseSpacing(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barH, 0.45);
+  const vertDet = chooseSpacing(0.5 * rhoVertMin(barV.db, m.fy) * tAvg * 1e4, barV, 0.45);
+  const vertBottomDet = chooseSpacing(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.45);
   const maxNeg = Math.max(...stemSlab.map((x) => x.AsNeg));
   const maxPos = Math.max(...stemSlab.map((x) => x.AsPos));
   const tMean = (inp.tTop + inp.tBot) / 2;
@@ -859,16 +918,15 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const AsMax = Math.max(...sections.map((x) => x.AsIncl));
   const nBars = Math.max(2, Math.ceil(AsMax / bar.area));
   // Estribos horizontales del contrafuerte
-  const stirrup = findBar(m.barStemH);
+  const stirrup = findBar(inp.cf.rb.stirBar);
   const AvMax = Math.max(...sections.map((x) => x.AvReq));
   const sSt = Math.min(Math.floor((2 * stirrup.area / Math.max(AvMax, 1e-6)) * 40) / 40, 0.30);
   const stirrupSpacing = Math.max(sSt, 0.1);
   const vc = sections[0];
   const capc = oneWayVc(tc, vc.dcf, m.fc, 0.005, 'ACI318_14', m.lambda);
-  const phiVn = PHI_SHEAR * (capc.Vc + (2 * stirrup.area * 1e-4 * m.fy * 1000 * vc.dcf) / stirrupSpacing);
   // Amarres entre pantalla y contrafuerte
   const tieMax = Math.max(...sections.map((x) => x.tiesStem));
-  const tieStem = chooseSpacing(tieMax, barH, 0.3);
+  const tieStem = chooseSpacing(tieMax, findBar(inp.cf.rb.tieStemBar), 0.3);
 
   // Losa de zapata entre contrafuertes
   const slabLabel = internal ? 'Talón entre contrafuertes' : 'Pie entre contrafuertes';
@@ -895,11 +953,42 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
     slabArr.push({ x, wu: wmax, MuNeg: Mneg, MuPos: Mpos, AsNeg: Math.max(isFinite(fn.As) ? fn.As : 1e6, asMin), AsPos: Math.max(isFinite(fp.As) ? fp.As : 1e6, asMin) });
     tieForce = Math.max(tieForce, wmax * s);
   }
-  const barS = findBar(m.barHeel);
+  const barS = findBar(m.mesh.longOn ? m.mesh.longBar : m.barHeel);
   const slabNegDet = chooseSpacing(Math.max(...slabArr.map((x) => x.AsNeg)), barS, Math.min(3 * hSlab, 0.45));
   const slabPosDet = chooseSpacing(Math.max(...slabArr.map((x) => x.AsPos)), barS, Math.min(3 * hSlab, 0.45));
   const tieSlabAs = (tieForce * 1e4) / (PHI_SHEAR * m.fy * 1000);
-  const tieSlab = chooseSpacing(tieSlabAs, barH, 0.3);
+  const tieSlab = chooseSpacing(tieSlabAs, findBar(inp.cf.rb.tieSlabBar), 0.3);
+
+  // ----- Armado definido por el usuario y verificación -----
+  const rb = inp.cf.rb;
+  const suggest = {
+    nMain: nBars, stirS: stirrupSpacing, tieStemS: tieStem.spacing, tieSlabS: tieSlab.spacing,
+    stemHS: Math.min(stemNegDet.spacing, stemPosDet.spacing), stemVS: vertDet.spacing, slabLongS: Math.min(slabNegDet.spacing, slabPosDet.spacing),
+  };
+  const uBar = findBar(rb.mainBar);
+  const uN = Math.max(1, Math.round(rb.nMain));
+  const uStir = findBar(rb.stirBar);
+  const uTieStem = barDet(findBar(rb.tieStemBar), rb.tieStemS);
+  const uTieSlab = barDet(findBar(rb.tieSlabBar), rb.tieSlabS);
+  const uStemH = barDet(findBar(rb.stemHBar), rb.stemHS);
+  const uStemV = barDet(findBar(rb.stemVBar), rb.stemVS);
+  const uLong = barDet(m.mesh.longOn ? findBar(m.mesh.longBar) : null, m.mesh.longS);
+  const phiVnUser = PHI_SHEAR * (capc.Vc + (2 * uStir.area * 1e-4 * m.fy * 1000 * vc.dcf) / Math.max(rb.stirS, 0.02));
+  const AvMinC = (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4;
+  const AvProv = (2 * uStir.area) / Math.max(rb.stirS, 0.02);
+  const reqVert = 0.5 * rhoVertMin(barH.db, m.fy) * tAvg * 1e4;
+  const maxSlabNeg = Math.max(...slabArr.map((x) => x.AsNeg));
+  const maxSlabPos = Math.max(...slabArr.map((x) => x.AsPos));
+  const rt = (req: number, prov: number) => (prov > 0 ? req / prov : Infinity);
+  const ratios = {
+    main: AsMax / Math.max(uN * uBar.area, 1e-9), stirrup: vc.Vcf / phiVnUser, stirMin: AvMinC / Math.max(AvProv, 1e-9),
+    tieStem: rt(tieMax, uTieStem.asProv), tieSlab: rt(tieSlabAs, uTieSlab.asProv), stemNeg: rt(maxNeg, uStemH.asProv), stemPos: rt(maxPos, uStemH.asProv),
+    vert: rt(reqVert, uStemV.asProv), slabNeg: rt(maxSlabNeg, uLong.asProv), slabPos: rt(maxSlabPos, uLong.asProv),
+  };
+  const req = { AsMain: AsMax, AvMin: AvMinC, tieStem: tieMax, tieSlab: tieSlabAs, stemNeg: maxNeg, stemPos: maxPos, vert: reqVert, slabNeg: maxSlabNeg, slabPos: maxSlabPos };
+  const ratiosOk = Object.values(ratios).every((v) => v <= 1.0001);
+  const sMaxStem = Math.min(3 * tMean, 0.45);
+  if (rb.stemHS > sMaxStem + 1e-9 || rb.stemVS > sMaxStem + 1e-9) notes.push(`Separación del acero de la pantalla mayor que ${(sMaxStem * 100).toFixed(0)} cm (máximo recomendado: menor de 3·t y 45 cm).`);
 
   if (internal) {
     notes.push('Contrafuerte interno: el acero principal va a lo largo del borde inclinado (cara del relleno); la pantalla es el ala comprimida (sección T).');
@@ -910,18 +999,19 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   }
   notes.push('La zona inferior de la pantalla trabaja en dos direcciones: se recomienda acero vertical adicional del 25 % del horizontal en una franja de altura igual a la luz libre.');
   return {
-    kind: internal ? 'interno' : 'externo', s, Ls, sections, bar, nBars, AsMax, AsProv: nBars * bar.area, stirrup, stirrupSpacing,
-    tieStem, tieSlab, tieSlabForce: tieForce, stemSlab, stemNegDet, stemPosDet,
+    kind: internal ? 'interno' : 'externo', s, Ls, sections, bar: uBar, nBars: uN, AsMax, AsProv: uN * uBar.area, stirrup: uStir, stirrupSpacing: rb.stirS,
+    tieStem: uTieStem, tieSlab: uTieSlab, tieSlabForce: tieForce, stemSlab, stemNegDet: uStemH, stemPosDet: uStemH,
     stemFaceNeg: internal ? 'cara del relleno (sobre el contrafuerte)' : 'cara frontal (sobre el contrafuerte)',
     stemFacePos: internal ? 'cara frontal (centro de la luz)' : 'cara del relleno (centro de la luz)',
-    slabLabel, slab: slabArr, slabNegDet, slabPosDet,
+    slabLabel, slab: slabArr, slabNegDet: uLong, slabPosDet: uLong,
     slabFaceNeg: internal ? 'superior (sobre el contrafuerte)' : 'inferior (sobre el contrafuerte)',
     slabFacePos: internal ? 'inferior (centro de la luz)' : 'superior (centro de la luz)',
-    critical: { Vu: vc.Vcf, phiVc: phiVn, ratio: vc.Vcf / phiVn },
+    critical: { Vu: vc.Vcf, phiVc: phiVnUser, ratio: vc.Vcf / phiVnUser },
     stemShear,
-    vertDet,
+    vertDet: uStemV,
     vertBottomDet,
-    sectionOk: sections.every((x) => isFinite(x.AsReq) && x.AsReq < 1e5) && vc.Vcf <= phiVn && stemShear.ratio <= 1 && stemSlab.every((x) => x.AsNeg < 1e5 && x.AsPos < 1e5),
+    ratios, req, suggest,
+    sectionOk: sections.every((x) => isFinite(x.AsReq) && x.AsReq < 1e5) && ratiosOk && stemShear.ratio <= 1 && stemSlab.every((x) => x.AsNeg < 1e5 && x.AsPos < 1e5),
     notes,
   };
 }
@@ -938,7 +1028,7 @@ export function designWall(g: WallGeom): WallDesign {
   for (const u of uls) {
     if (u.res.SumV <= 0 || u.res.xbar <= 0) warnings.push(`Combinación ${u.label}: la resultante cae fuera de la base (vuelco).`);
   }
-  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, warnings, notes };
+  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, mesh: null, suggest: null, warnings, notes };
 
   if (isGravity(inp.type)) {
     out.gravity = gravitySections(g);
@@ -960,32 +1050,62 @@ export function designWall(g: WallGeom): WallDesign {
       out.baseCheck = out2;
     }
   } else {
-    const barToe = findBar(m.barToe);
-    const barHeel = findBar(m.barHeel);
-    const dToe = g.hb - m.coverFound - barToe.db / 2000;
+    // Malla de la zapata corrida: definida por el usuario y verificada contra el cálculo
+    const mesh = m.mesh;
+    const botBar = findBar(mesh.botBar);
+    const topBar = mesh.topOn ? findBar(mesh.topBar) : null;
+    const longBar = mesh.longOn ? findBar(mesh.longBar) : null;
+    const dToe = g.hb - m.coverFound - botBar.db / 2000;
     const env = slabEnvelope(g, uls, dToe, 0);
-    const toeM = Math.max(env.toeBot.M, env.toeTop.M);
+    const sMax = Math.min(3 * g.hb, 0.45);
+    const botDet = barDet(botBar, mesh.botS);
+    const topDet = topBar ? barDet(topBar, mesh.topS) : null;
+    const asMinSlab = 0.0018 * g.hb * 1e4 * (420 / Math.max(m.fy, 420));
+    const layers = 1 + (mesh.topOn ? 1 : 0);
+    const longDet = longBar ? barDet(longBar, mesh.longS) : null;
+    const longTotal = longDet ? longDet.asProv * layers : 0;
+    out.mesh = {
+      botBar, botDet, top: topBar && topDet ? { bar: topBar, det: topDet } : null,
+      long: longBar && longDet ? { bar: longBar, det: longDet, layers, AsTotal: longTotal, AsMin: asMinSlab, ratio: asMinSlab / Math.max(longTotal, 1e-9) } : null,
+      minBot: asMinSlab / Math.max(botDet.asProv, 1e-9), minTop: topDet ? asMinSlab / Math.max(topDet.asProv, 1e-9) : null,
+      sMax, spacingOk: mesh.botS <= sMax + 1e-9 && (!mesh.topOn || mesh.topS <= sMax + 1e-9) && (!mesh.longOn || mesh.longS <= sMax + 1e-9),
+    };
+    if (!mesh.longOn) warnings.push('Sin acero longitudinal en la zapata: no se cubre el acero mínimo de retracción y temperatura.');
+    const meshOf = (face: 'superior' | 'inferior') => (face === 'inferior' ? { bar: botBar as Bar | null, s: mesh.botS } : { bar: topBar, s: mesh.topS });
+    const mk = (nm: string, e: { M: number; V: number; label: string }, face: 'superior' | 'inferior', ld: number) => {
+      const mm = meshOf(face);
+      return slabCheck(g, nm, e.label, face, e.M, e.V, mm.bar, mm.s, ld, botBar.db);
+    };
     if (g.xFb > 1e-6 && inp.type !== 'counterfortExt') {
       const isBot = env.toeBot.M >= env.toeTop.M;
-      const e = isBot ? env.toeBot : env.toeTop;
-      out.toe = slabDesign(g, 'Pie', e.label, isBot ? 'inferior' : 'superior', toeM, e.V, g.hb, barToe, g.xFb - m.coverFound);
-      if (m.footOpp) {
-        const eo = isBot ? env.toeTop : env.toeBot;
-        out.toe.opp = slabDesign(g, 'Pie (cara opuesta)', eo.label, isBot ? 'superior' : 'inferior', eo.M, eo.V, g.hb, barToe, g.xFb - m.coverFound);
-      }
+      const ld = g.xFb - m.coverFound;
+      out.toe = mk('Pie', isBot ? env.toeBot : env.toeTop, isBot ? 'inferior' : 'superior', ld);
+      out.toe.opp = mk('Pie (cara opuesta)', isBot ? env.toeTop : env.toeBot, isBot ? 'superior' : 'inferior', ld);
     }
     if (inp.Lh > 1e-6 && inp.type !== 'counterfortInt') {
       const isTop = env.heelTop.M >= env.heelBot.M;
-      const e = isTop ? env.heelTop : env.heelBot;
-      out.heel = slabDesign(g, 'Talón', e.label, isTop ? 'superior' : 'inferior', Math.max(env.heelTop.M, env.heelBot.M), e.V, g.hb, barHeel, inp.Lh - m.coverFound);
-      if (m.footOpp) {
-        const eo = isTop ? env.heelBot : env.heelTop;
-        out.heel.opp = slabDesign(g, 'Talón (cara opuesta)', eo.label, isTop ? 'inferior' : 'superior', eo.M, eo.V, g.hb, barHeel, inp.Lh - m.coverFound);
-      }
+      const ld = inp.Lh - m.coverFound;
+      out.heel = mk('Talón', isTop ? env.heelTop : env.heelBot, isTop ? 'superior' : 'inferior', ld);
+      out.heel.opp = mk('Talón (cara opuesta)', isTop ? env.heelBot : env.heelTop, isTop ? 'inferior' : 'superior', ld);
+    }
+    // Sugerencia de malla según el cálculo
+    {
+      const reqAs = (M: number, d: number) => {
+        const fr = flexureAs(M, 1, d, m.fc, m.fy);
+        return isFinite(fr.As) ? fr.As : 1e3;
+      };
+      const reqBot = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? reqAs(env.toeBot.M, dToe) : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? reqAs(env.heelBot.M, dToe) : 0, asMinSlab);
+      const reqTop = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? reqAs(env.toeTop.M, dToe) : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? reqAs(env.heelTop.M, dToe) : 0, asMinSlab);
+      const sb = chooseSpacing(reqBot, botBar, sMax).spacing;
+      const st = chooseSpacing(reqTop, findBar(mesh.topBar), sMax).spacing;
+      const needTop = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? env.toeTop.M : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? env.heelTop.M : 0) > 0.01;
+      const sl = chooseSpacing((0.0018 * g.hb * 1e4) / (needTop || mesh.topOn ? 2 : 1), findBar(mesh.longBar), sMax).spacing;
+      out.suggest = { mesh: { botS: sb, topS: st, topOn: needTop, longS: sl }, cf: null };
     }
     if (inp.type === 'masonryReinforced') out.stem = stemDesignMasonry(g);
     else if (isCounterfort(inp.type)) {
       out.counterfort = counterfortDesign(g, uls);
+      if (out.suggest) out.suggest.cf = out.counterfort.suggest;
     } else out.stem = stemDesignRC(g, uls);
     if (isCounterfort(inp.type)) {
       notes.push('En muros con contrafuertes la pantalla (y la zapata del lado de los contrafuertes) se diseñan como losas apoyadas en los contrafuertes; los valores del voladizo de la pantalla solo se usan como acero vertical de referencia.');

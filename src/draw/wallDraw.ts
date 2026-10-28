@@ -173,7 +173,8 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
         s += text(X(xc) + 12, Y(yc) + 4, 'la mitad de las barras se corta aquí', { size: 10, fill: th.muted, halo });
       }
       const ym = g.hb + inp.H * 0.55;
-      const vtxt = `Vertical ${st.base.text}${st.centered ? ' (al centro)' : st.layers === 2 ? ' (cada cara)' : ''}`;
+      const vtxt = `Vertical ${st.base.text}${st.centered ? ' (al centro)' : st.layers === 2 ? (masonry ? ' (cada cara)' : ' (cara del relleno)') : ''}`;
+      if (!masonry && st.layers === 2) s += text(X(g.stemFrontX(inp.H * 0.55)) - 10, Y(g.hb + inp.H * 0.55), `Vertical ${st.frontVertDet.text} (cara frontal)`, { size: 11, fill: SKIN, weight: 700, anchor: 'end', halo });
       s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym), vtxt, { size: 11, fill: MAIN, weight: 700, halo });
       if (st.horizOn) s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym) + 14, `Horizontal ${st.horizontalDet.text}${st.horizLayers === 2 ? ' (cada cara)' : ''}`, { size: 11, fill: DIST, weight: 700, halo });
       else s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym) + 14, 'Sin barras horizontales', { size: 11, fill: th.muted, weight: 700, halo });
@@ -189,42 +190,28 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
         }
       }
     }
-    // zapata: barras principales y de reparto
-    if (g.hb > 0.05) {
-      const shr = (res.design.toe ?? res.design.heel)?.shrinkDet;
-      const spL = Math.max(shr?.spacing ?? 0.3, 0.1);
+    // zapata corrida: malla transversal (inferior y superior) y barras longitudinales definidas por el usuario
+    if (g.hb > 0.05 && res.design.mesh) {
+      const mm = res.design.mesh;
       const OPP = '#d9822b';
-      const dists = (yy: number) => {
-        let k = '';
-        for (let x = covF + 0.05; x < g.B - covF - 0.02; x += spL) k += dot(x, yy, DIST);
-        return k;
-      };
-      if (res.design.toe && g.xFb > 0.05) {
-        const t = res.design.toe;
-        const yt = t.face === 'inferior' ? covF : g.hb - covF;
-        s += polyline([pt(covF, yt), pt(Math.min(g.xBb + t.ldReq, g.B - covF), yt)], MAIN, 3.2);
-        if (t.opp) {
-          const yo = t.opp.face === 'inferior' ? covF : g.hb - covF;
-          s += polyline([pt(covF, yo), pt(Math.max(g.xFb, covF + 0.1), yo)], OPP, 2.6);
-          s += text(X(g.xFb / 2), Y(0) + 15, `Pie, cara opuesta ${t.opp.det.text}`, { size: 10, fill: OPP, weight: 700, anchor: 'middle', halo });
-        }
-        s += text(X(g.xFb / 2), Y(g.hb) - 9, `Pie ${t.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
+      const yB = covF + 0.012;
+      s += polyline([pt(covF, yB), pt(g.B - covF, yB)], MAIN, 3.2);
+      s += text(X(g.B / 2), Y(0) + 15, `Transversal inferior ${mm.botDet.text}`, { size: 10.5, fill: MAIN, weight: 700, anchor: 'middle', halo });
+      if (mm.top) {
+        const yT = g.hb - covF - 0.012;
+        s += polyline([pt(covF, yT), pt(g.B - covF, yT)], OPP, 3.2);
+        s += text(X(g.B / 2), Y(g.hb) - 8, `Transversal superior ${mm.top.det.text}`, { size: 10.5, fill: OPP, weight: 700, anchor: 'middle', halo });
       }
-      if (res.design.heel && g.B - g.xBb > 0.05) {
-        const h = res.design.heel;
-        const yh = h.face === 'superior' ? g.hb - covF : covF;
-        s += polyline([pt(Math.max(covF, g.xFb - h.ldReq), yh), pt(g.B - covF, yh)], MAIN, 3.2);
-        if (h.opp) {
-          const yo = h.opp.face === 'inferior' ? covF : g.hb - covF;
-          s += polyline([pt(g.xBb, yo), pt(g.B - covF, yo)], OPP, 2.6);
-          s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(0) + 15, `Talón, cara opuesta ${h.opp.det.text}`, { size: 10, fill: OPP, weight: 700, anchor: 'middle', halo });
-        }
-        s += text(X(g.xBb + (g.B - g.xBb) / 2), Y(g.hb) - 9, `Talón ${h.det.text}`, { size: 11, fill: MAIN, weight: 700, anchor: 'middle', halo });
-      }
-      if ((res.design.toe || res.design.heel) && inp.mat.footLong) {
-        s += dists(covF + 0.06);
-        s += dists(g.hb - covF - 0.06);
-        s += text(X(g.B / 2) + 40, Y(0) + 30, `Barras longitudinales de la zapata: ${shr?.text ?? ''} (arriba y abajo)`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
+      if (mm.long) {
+        const spL = Math.max(mm.long.det.spacing, 0.1);
+        const dots = (yy: number) => {
+          let k = '';
+          for (let x = covF + 0.05; x < g.B - covF - 0.02; x += spL) k += dot(x, yy, DIST);
+          return k;
+        };
+        s += dots(yB + 0.055);
+        if (mm.top) s += dots(g.hb - covF - 0.012 - 0.055);
+        s += text(X(g.B / 2), Y(0) + 29, `Longitudinal ${mm.long.det.text}${mm.long.layers === 2 ? ' (en cada capa)' : ''}`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
       }
     }
     if (res.design.key && g.keyPoly) {

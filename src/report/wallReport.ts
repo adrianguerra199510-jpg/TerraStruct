@@ -371,13 +371,26 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
       c.sections.map((s) => [f(s.y, 2), f(s.proj, 2), f(s.dcf, 2), n('moment', s.Mcf, 1), n('force', s.Vcf, 1), f(s.AsReq, 2), f(s.AsIncl, 2), f(s.AvReq, 2)]),
       { align: ['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], caption: 'Tabla. Contrafuerte como viga en voladizo' },
     );
+    d.table(
+      ['Elemento', 'Adoptado', 'Requerido', 'Relación', 'Estado'],
+      [
+        ['Acero principal del contrafuerte', `${c.nBars} × ${c.bar.id} = ${f(c.AsProv, 1)} cm²`, `${f(c.req.AsMain, 1)} cm²`, c.ratios.main],
+        ['Estribos horizontales (2 ramas)', `${c.stirrup.id} @ ${f(c.stirrupSpacing * 100, 0)} cm`, `Vu ${u('force', c.critical.Vu, 1)} ≤ φVn ${u('force', c.critical.phiVc, 1)}`, Math.max(c.ratios.stirrup, c.ratios.stirMin)],
+        ['Amarres pantalla–contrafuerte', c.tieStem.text, `${f(c.req.tieStem, 2)} cm²/m`, c.ratios.tieStem],
+        ['Amarres zapata–contrafuerte', c.tieSlab.text, `${f(c.req.tieSlab, 2)} cm²/m`, c.ratios.tieSlab],
+        ['Pantalla horizontal (cada cara)', c.stemNegDet.text, `${f(Math.max(c.req.stemNeg, c.req.stemPos), 2)} cm²/m`, Math.max(c.ratios.stemNeg, c.ratios.stemPos)],
+        ['Pantalla vertical (cada cara)', c.vertDet.text, `${f(c.req.vert, 2)} cm²/m`, c.ratios.vert],
+        [`${c.slabLabel}: longitudinal`, c.slabPosDet.text, `${f(Math.max(c.req.slabNeg, c.req.slabPos), 2)} cm²/m`, Math.max(c.ratios.slabNeg, c.ratios.slabPos)],
+      ].map((r) => [r[0] as string, r[1] as string, r[2] as string, isFinite(r[3] as number) ? f(r[3] as number, 2) : '∞', (r[3] as number) <= 1.0001 ? 'Cumple' : 'No cumple']),
+      { align: ['l', 'l', 'r', 'r', 'c'], caption: 'Tabla. Verificación del armado del contrafuerte definido por el usuario' },
+    );
     d.eq(
       [
         `Acero principal: ${c.nBars} barras ${c.bar.id}  (As,prov = ${f(c.AsProv, 2)} cm² ≥ As,máx = ${f(c.AsMax, 2)} cm²)`,
         `Estribos horizontales (2 ramas): ${c.stirrup.id} @ ${f(c.stirrupSpacing * 100, 1)} cm ;  φVn = ${u('force', c.critical.phiVc, 1)} ≥ Vu = ${u('force', c.critical.Vu, 1)}`,
         `Amarres pantalla–contrafuerte: ${c.tieStem.text} ;  amarres zapata–contrafuerte: ${c.tieSlab.text}`,
       ],
-      'Armado del contrafuerte',
+      'Armado adoptado del contrafuerte',
     );
     d.table(
       ['y (m)', 't (m)', `wu (${fmt.l('press')})`, `Mu(−) (${fmt.l('lmoment')})`, `Mu(+) (${fmt.l('lmoment')})`, 'As(−) (cm²/m)', 'As(+) (cm²/m)'],
@@ -407,12 +420,12 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     if (st2.layers === 2) rows.push(['Pantalla: vertical (cara frontal)', st2.masonry ? st2.base.text : st2.frontVertDet.text, f((st2.masonry ? st2.base : st2.frontVertDet).asProv, 2), st2.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero mínimo']);
     rows.push([`Pantalla: horizontal${st2.horizOn && st2.horizLayers === 2 ? ' (cada cara)' : ''}`, st2.horizontalDet.text, st2.horizOn ? f(st2.horizontalDet.asProv * st2.horizLayers, 2) : '—', st2.horizOn ? `Requerido ${f(st2.AsH, 2)} cm²/m` : 'Sin barras horizontales']);
   }
-  if (des.toe) rows.push([`Pie (cara ${des.toe.face}) — transversal`, des.toe.det.text, f(des.toe.det.asProv, 2), 'Perpendicular al muro']);
-  if (des.toe?.opp) rows.push([`Pie (cara ${des.toe.opp.face}) — transversal`, des.toe.opp.det.text, f(des.toe.opp.det.asProv, 2), `Cara opuesta; Mu = ${u('lmoment', des.toe.opp.Mu, 1)}`]);
-  if (des.heel) rows.push([`Talón (cara ${des.heel.face}) — transversal`, des.heel.det.text, f(des.heel.det.asProv, 2), 'Perpendicular al muro']);
-  if (des.heel?.opp) rows.push([`Talón (cara ${des.heel.opp.face}) — transversal`, des.heel.opp.det.text, f(des.heel.opp.det.asProv, 2), `Cara opuesta; Mu = ${u('lmoment', des.heel.opp.Mu, 1)}`]);
-  const shrinkS = des.toe ?? des.heel;
-  if (shrinkS) rows.push(['Zapata: barras longitudinales (paralelas al muro)', shrinkS.shrinkDet.text, f(shrinkS.shrinkDet.asProv, 2), inp.mat.footLong ? `Cara superior e inferior; As total = ${f(shrinkS.shrinkAs, 2)} cm²/m (0.0018·h), mitad por cara` : 'Sin acero longitudinal: verificar retracción y temperatura']);
+  if (des.mesh) {
+    const mm = des.mesh;
+    rows.push(['Zapata: transversal inferior', mm.botDet.text, f(mm.botDet.asProv, 2), `Perpendicular al muro; mínimo ${f(0.0018 * g.hb * 1e4, 2)} cm²/m`]);
+    rows.push(['Zapata: transversal superior', mm.top ? mm.top.det.text : 'No se coloca', mm.top ? f(mm.top.det.asProv, 2) : '—', mm.top ? 'Perpendicular al muro' : 'Sin malla superior']);
+    rows.push(['Zapata: longitudinal (cada capa)', mm.long ? mm.long.det.text : 'No se coloca', mm.long ? f(mm.long.det.asProv, 2) : '—', mm.long ? `Paralela al muro; ${mm.long.layers} capa(s), total ${f(mm.long.AsTotal, 2)} cm²/m (mín. ${f(mm.long.AsMin, 2)})` : 'Sin acero longitudinal']);
+  }
   if (des.key) rows.push(['Llave de corte (vertical)', des.key.slab.det.text, f(des.key.slab.det.asProv, 2), 'Anclada en la zapata']);
   if (des.counterfort) {
     const c = des.counterfort;
