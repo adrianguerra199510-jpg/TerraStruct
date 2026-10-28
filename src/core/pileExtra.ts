@@ -171,7 +171,14 @@ export function settlement(inp: PileInput, o: { Qpile: number; Qgroup: number; Q
   const dp = (Cp * Qp) / (o.D * qbU);
   const Cs = (0.93 + 0.16 * Math.sqrt(p.L / o.D)) * Cp;
   const ds = (Cs * Qs) / (p.L * qbU);
-  const pile = { Q: o.Qpile, de, dp: Math.max(dp, 0), ds, total: de + Math.max(dp, 0) + ds };
+  // pilote con punta en roca: acortamiento elástico + deformación de la roca (Pells–Turner simplificado) w = Q·Iρ/(Em·D)
+  let dRock = 0;
+  if (o.tipKind === 'rock') {
+    const tipL = g.layers[layerIndexAt(g.layers, p.L)];
+    const Iw = p.L / o.D >= 2 ? 0.45 : 0.6;
+    dRock = (o.Qpile * Iw) / (Math.max(tipL?.Es ?? 1e6, 1) * o.D);
+  }
+  const pile = o.tipKind === 'rock' ? { Q: o.Qpile, de, dp: dRock, ds: 0, total: de + dRock } : { Q: o.Qpile, de, dp: Math.max(dp, 0), ds, total: de + Math.max(dp, 0) + ds };
 
   const zRaft = p.L * (1 - frictionShare / 3);
   const Beq = o.Bg + zRaft;

@@ -504,6 +504,7 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
             <Num label="Prof. base del cabezal Df" q="len" value={g.Df} onChange={(v) => set({ Df: v })} min={0} />
             <Num label="qb máximo" q="press" value={g.qbMax} onChange={(v) => set({ qbMax: v })} min={100} />
             <Num label="Asentamiento admisible del grupo" unit="mm" value={+(g.sAllow * 1000).toFixed(1)} onChange={(v) => set({ sAllow: v / 1000 })} min={5} />
+            <Num label="Punta en roca: fracción movilizada" value={g.socketQbMob} onChange={(v) => set({ socketQbMob: v })} min={0} max={1} hint="Compatibilidad fuste–punta en servicio" />
             <Num label="Plano neutro (fracción de L)" value={g.neutralFrac} onChange={(v) => set({ neutralFrac: v })} min={0.3} max={1} hint="Fricción negativa en estratos marcados «arrastre»" />
           </div>
           <Check label="Evaluar licuación (Seed–Idriss)" value={g.liqOn} onChange={(v) => set({ liqOn: v })} hint="Marque los estratos arenosos susceptibles e ingrese (N1)60 y finos" />
@@ -523,7 +524,7 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                 <button className="icon-btn danger" title="Quitar" onClick={() => set({ layers: g.layers.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
               </div>
               <div className="grid3">
-                <Sel label="Tipo" value={l.kind} onChange={(v) => updL(i, { kind: v })} options={[{ id: 'cohesive', label: 'Cohesivo (α·su)' }, { id: 'granular', label: 'Granular (K·tanδ)' }, { id: 'direct', label: 'fs directo' }]} />
+                <Sel label="Tipo" value={l.kind} onChange={(v) => updL(i, { kind: v })} options={[{ id: 'cohesive', label: 'Cohesivo (α·su)' }, { id: 'granular', label: 'Granular (K·tanδ)' }, { id: 'rock', label: 'Roca (socket)' }, { id: 'direct', label: 'fs directo' }]} />
                 <Num label="Espesor" q="len" value={l.thk} onChange={(v) => updL(i, { thk: v })} min={0.5} />
                 <Num label="γ efectivo" q="uw" value={l.gamma} onChange={(v) => updL(i, { gamma: v })} min={1} />
                 {l.kind === 'cohesive' && (
@@ -539,6 +540,15 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                     <Num label="Nq (0 = auto)" value={l.Nq} onChange={(v) => updL(i, { Nq: v })} min={0} />
                   </>
                 )}
+                {l.kind === 'rock' && (
+                  <>
+                    <Num label="qu (roca intacta)" q="stress" value={l.qu} onChange={(v) => updL(i, { qu: v })} min={1} />
+                    <Num label="RQD" unit="%" value={l.rqd} onChange={(v) => updL(i, { rqd: v })} min={0} max={100} />
+                    <Sel label="Superficie del socket" value={l.rough ? 'r' : 's'} onChange={(v) => updL(i, { rough: v === 'r' })} options={[{ id: 'r', label: 'Rugosa (Horvath–Kenney)' }, { id: 's', label: 'Lisa (Rowe–Armitage)' }]} />
+                    <Num label="Espaciamiento de juntas" q="len" value={l.jointS} onChange={(v) => updL(i, { jointS: v })} min={0.02} />
+                    <Num label="Abertura de juntas" unit="mm" value={l.aperture} onChange={(v) => updL(i, { aperture: v })} min={0} />
+                  </>
+                )}
                 {l.kind === 'direct' && (
                   <>
                     <Num label="fs" q="press" value={l.fs} onChange={(v) => updL(i, { fs: v })} min={0} />
@@ -546,7 +556,7 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                   </>
                 )}
                 <Num label="fs máx" q="press" value={l.fsMax} onChange={(v) => updL(i, { fsMax: v })} min={5} />
-                <Num label="Es (deformación)" q="press" value={l.Es} onChange={(v) => updL(i, { Es: v })} min={500} />
+                <Num label={l.kind === 'rock' ? 'Em (macizo rocoso)' : 'Es (deformación)'} q="press" value={l.Es} onChange={(v) => updL(i, { Es: v })} min={500} />
                 <Num label="Cc (0 = usar Es)" value={l.Cc} onChange={(v) => updL(i, { Cc: v })} min={0} />
                 <Num label="e0" value={l.e0} onChange={(v) => updL(i, { e0: v })} min={0.2} />
                 {g.liqOn && l.liq && (

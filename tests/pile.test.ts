@@ -218,3 +218,45 @@ describe('revisión a tracción', () => {
     expect(analyzePile(inp).tension.anchor.ok).toBe(false);
   });
 });
+
+describe('socket en roca', () => {
+  const rockInp = () => {
+    const i = defaultPileInput();
+    i.pile.D = 0.8; i.pile.L = 10; i.pile.nBars = 12;
+    i.geo.layers = [
+      { ...defaultLayers()[0], name: 'Arcilla', thk: 6, su: 35 },
+      { ...defaultLayers()[0], name: 'Roca', kind: 'rock', thk: 12, qu: 25, rqd: 80, jointS: 0.4, aperture: 1, Es: 2e6, fsMax: 3000, Cc: 0 },
+    ];
+    return i;
+  };
+  it('fricción y punta en roca siguen las expresiones de referencia', () => {
+    const r = analyzePile(rockInp());
+    const rk = r.geo.rock!;
+    expect(rk.Ls).toBeCloseTo(4, 6);
+    // fs = 0.65·pa·√(qu/pa)·ηm  (qu = 25 MPa, ηm = 0.85)
+    expect(rk.fs).toBeCloseTo(0.65 * 101.3 * Math.sqrt(25000 / 101.3) * 0.85, 0);
+    const Ksp = (3 + 0.4 / 0.8) / (10 * Math.sqrt(1 + (300 * 0.001) / 0.4));
+    expect(rk.Ksp).toBeCloseTo(Ksp, 9);
+    expect(rk.dFac).toBeCloseTo(1 + (0.4 * 4) / 0.8, 9);
+    expect(rk.qbRock).toBeGreaterThan(0);
+    expect(r.geo.qb).toBeCloseTo(Math.min(rk.qbRock, rk.qbLimit), 6);
+    expect(r.geo.QaC).toBeCloseTo((r.geo.Qs + 0.5 * r.geo.Qb) / 2.5, 6);
+  });
+  it('mayor qu o socket más largo aumenta la capacidad; el límite del concreto controla la punta', () => {
+    const a = analyzePile(rockInp());
+    const i2 = rockInp();
+    i2.pile.L = 12;
+    expect(analyzePile(i2).geo.QaC).toBeGreaterThan(a.geo.QaC);
+    const i3 = rockInp();
+    i3.geo.layers[1].qu = 120;
+    const r3 = analyzePile(i3);
+    expect(r3.geo.qb).toBeCloseTo(0.33 * 28 * 1000, 6);
+  });
+  it('asentamiento en roca y verificaciones', () => {
+    const r = analyzePile(rockInp());
+    expect(r.settle!.pile.total).toBeGreaterThan(0);
+    expect(r.checks.some((c) => /socket/.test(c.name))).toBe(true);
+    const doc = reportForPile(rockInp(), makeFmt('SI'), newProject().info);
+    expect(JSON.stringify(doc.blocks)).toContain('Socket en roca');
+  });
+});

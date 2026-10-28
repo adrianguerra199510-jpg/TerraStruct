@@ -299,14 +299,15 @@ export function pileProfileSvg(inp: PileInput, res: PileResults, o: { W?: number
   const x0 = 110, x1 = W - 190;
   let s = '';
   const palette = ['#e9c58f', '#cfd9a8', '#b8c9dd', '#d9b8a0', '#c4b8d9'];
+  const rockFill = '#9aa3ad';
   let z = 0;
   layers.forEach((l, i) => {
     const za = g0.Df + z, zb = g0.Df + z + l.thk;
     const liq = res.liq.enabled && res.liq.liquefied[i];
-    s += `<rect x="${x0}" y="${Y(za).toFixed(1)}" width="${x1 - x0}" height="${((zb - za) * sy).toFixed(1)}" fill="${palette[i % palette.length]}" fill-opacity="0.75" stroke="${th.soilStroke}"/>`;
+    s += `<rect x="${x0}" y="${Y(za).toFixed(1)}" width="${x1 - x0}" height="${((zb - za) * sy).toFixed(1)}" fill="${l.kind === 'rock' ? rockFill : palette[i % palette.length]}" fill-opacity="0.8" stroke="${th.soilStroke}"/>`;
     if (liq) s += `<rect x="${x0}" y="${Y(za).toFixed(1)}" width="${x1 - x0}" height="${((zb - za) * sy).toFixed(1)}" fill="${th.water}" fill-opacity="0.35"/>`;
     s += text(x1 + 8, Y(za) + 14, `${l.name}${liq ? ' — LICUA' : ''}`, { size: 11, fill: liq ? th.bad : th.ink, weight: liq ? 700 : 500 });
-    s += text(x1 + 8, Y(za) + 28, `${l.kind === 'cohesive' ? `su = ${o.fmt.n('press', l.su, 0)}` : l.kind === 'granular' ? `φ = ${l.phi}°` : `fs = ${o.fmt.n('press', l.fs, 0)}`}${l.downdrag ? ' · arrastre' : ''}`, { size: 10.5, fill: th.muted });
+    s += text(x1 + 8, Y(za) + 28, `${l.kind === 'rock' ? `roca qu = ${l.qu} MPa · RQD ${l.rqd}%` : l.kind === 'cohesive' ? `su = ${o.fmt.n('press', l.su, 0)}` : l.kind === 'granular' ? `φ = ${l.phi}°` : `fs = ${o.fmt.n('press', l.fs, 0)}`}${l.downdrag ? ' · arrastre' : ''}`, { size: 10.5, fill: th.muted });
     z += l.thk;
   });
   s += line(x0 - 20, Y(0), x1, Y(0), th.soilStroke, 2);

@@ -79,6 +79,15 @@ export interface GeoResult {
   QaDD: number;
   QaLiq: number;
   QsLiq: number;
+  /** socket en roca (si la punta está en roca) */
+  rock?: { Ls: number; D: number; qu: number; rqd: number; etaM: number; C: number; fs: number; Ksp: number; dFac: number; qbRock: number; qbLimit: number; mob: number; QbEff: number; fsNote: string };
+}
+
+const PA = 101.3; // presión atmosférica, kPa
+
+/** Reducción por discontinuidades según el RQD (criterio práctico). */
+export function rockMassFactor(rqd: number): number {
+  return rqd >= 90 ? 1 : rqd >= 70 ? 0.85 : rqd >= 50 ? 0.7 : rqd >= 25 ? 0.5 : 0.35;
 }
 
 function nqOf(phi: number): number {
@@ -120,6 +129,7 @@ export function geoCapacity(inp: PileInput, props: PileProps, liq?: LiqResult): 
   let Qs = 0;
   let Qdd = 0;
   let QsLiq = 0;
+  let Ls = 0;
   const zn = g.neutralFrac * p.L;
   const deltaOf = (phi: number) => (p.kind === 'concrete' ? 0.75 * phi : Math.max(phi - 5, 1));
   for (let k = 0; k < nS; k++) {
@@ -137,6 +147,12 @@ export function geoCapacity(inp: PileInput, props: PileProps, liq?: LiqResult): 
     } else if (l.kind === 'granular') {
       fs = Math.min(l.K * svk * Math.tan((deltaOf(l.phi) * Math.PI) / 180), l.fsMax);
       note = `K·tanδ·σ′v, δ = ${deltaOf(l.phi).toFixed(1)}°, φ = ${l.phi}°`;
+    } else if (l.kind === 'rock') {
+      const C = l.rough ? 0.65 : 0.45;
+      const quKpa = l.qu * 1000;
+      fs = Math.min(C * PA * Math.sqrt(quKpa / PA) * rockMassFactor(l.rqd), l.fsMax);
+      note = `${l.rough ? 'Horvath–Kenney' : 'Rowe–Armitage'}: fs = ${C}·pa·√(qu/pa)·ηm, qu = ${l.qu} MPa, RQD = ${l.rqd}%`;
+      Ls += dzz;
     } else {
       fs = l.fs;
       note = 'fs ingresado';
@@ -156,6 +172,7 @@ export function geoCapacity(inp: PileInput, props: PileProps, liq?: LiqResult): 
   const svTip = sv[Math.min(nS - 1, kc)];
   let qb = 0;
   let qbNote = '';
+  let rockInfo: GeoResult['rock'];
   if (lt.kind === 'cohesive') {
     qb = Math.min(9 * lt.su, g.qbMax);
     qbNote = `qb = 9·su = ${(9 * lt.su).toFixed(0)} kPa`;
@@ -163,17 +180,31 @@ export function geoCapacity(inp: PileInput, props: PileProps, liq?: LiqResult): 
     const Nq = lt.Nq > 0 ? lt.Nq : nqOf(lt.phi);
     qb = Math.min(Nq * svTip, g.qbMax);
     qbNote = `qb = Nq·σ′v = ${Nq.toFixed(1)}·${svTip.toFixed(0)}`;
+  } else if (lt.kind === 'rock') {
+    // Canadian Foundation Engineering Manual / Rowe–Armitage: qb = 3·Ksp·d·qu
+    const D = props.Dp;
+    const Ksp = (3 + lt.jointS / D) / (10 * Math.sqrt(1 + (300 * (lt.aperture / 1000)) / Math.max(lt.jointS, 1e-3)));
+    const dFac = Math.min(1 + (0.4 * Ls) / D, 3);
+    const etaM = rockMassFactor(lt.rqd);
+    const qbRock = 3 * Ksp * dFac * lt.qu * 1000 * etaM;
+    const qbLimit = (p.kind === 'concrete' ? 0.33 * p.fc : 0.5 * p.Fy) * 1000;
+    qb = Math.min(qbRock, qbLimit);
+    qbNote = `qb = 3·Ksp·d·qu·ηm = 3·${Ksp.toFixed(3)}·${dFac.toFixed(2)}·${(lt.qu).toFixed(1)} MPa·${etaM.toFixed(2)}${qb < qbRock ? ` (limitado por el material del pilote: ${(qbLimit / 1000).toFixed(1)} MPa)` : ''}`;
+    rockInfo = { Ls, D, qu: lt.qu, rqd: lt.rqd, etaM, C: lt.rough ? 0.65 : 0.45, fs: rows.length ? rows[rows.length - 1].fs : 0, Ksp, dFac, qbRock, qbLimit, mob: g.socketQbMob, QbEff: 0, fsNote: lt.rough ? 'socket rugoso' : 'socket liso' };
   } else {
     qb = Math.min(lt.qb, g.qbMax);
     qbNote = 'qb ingresado';
   }
   const Qb = qb * props.Atip;
+  // en roca, la punta se moviliza solo parcialmente cuando el fuste ya alcanzó su resistencia
+  const QbEff = rockInfo ? Qb * g.socketQbMob : Qb;
+  if (rockInfo) rockInfo.QbEff = QbEff;
   const Qult = Qs + Qb;
-  const QaC = Qult / g.FS;
+  const QaC = (Qs + QbEff) / g.FS;
   const QaT = (g.etaT * Qs) / g.FSt + W;
-  const QaDD = Math.max(Qs - Qdd + Qb, 0) / g.FS;
-  const QaLiq = (QsLiq + Qb) / 1.5;
-  return { mode: 'static', rows, Qs, Qb, qb, qbNote, Qult, QaC, QaT, Wpile: W, perim: props.perim, Atip: props.Atip, Qneg: Qdd, QaDD, QaLiq, QsLiq };
+  const QaDD = Math.max(Qs - Qdd + QbEff, 0) / g.FS;
+  const QaLiq = (QsLiq + QbEff) / 1.5;
+  return { mode: 'static', rows, Qs, Qb, qb, qbNote, Qult, QaC, QaT, Wpile: W, perim: props.perim, Atip: props.Atip, Qneg: Qdd, QaDD, QaLiq, QsLiq, rock: rockInfo };
 }
 
 /** Eficiencia de grupo de Converse–Labarre (solo distribuciones en malla). */
@@ -403,6 +434,18 @@ export function analyzePile(inp: PileInput): PileResults {
   if (n > 1) checks.push({ name: 'Pilotes · separación mínima', ratio: (2.5 * props.Dp) / minSp, ok: minSp >= 2.5 * props.Dp - 1e-9, detail: `s mín = ${minSp.toFixed(2)} m ≥ 2.5·D = ${(2.5 * props.Dp).toFixed(2)} m` });
   const edgeMin = props.Dp / 2 + 0.15;
   checks.push({ name: 'Cabezal · distancia al borde', ratio: edgeMin / Math.max(inp.cap.manualSize ? Math.min(...pts.flatMap((q) => [q.x - rect.x0, rect.x1 - q.x, q.y - rect.y0, rect.y1 - q.y])) : cap.edge, 1e-9), ok: (inp.cap.manualSize ? Math.min(...pts.flatMap((q) => [q.x - rect.x0, rect.x1 - q.x, q.y - rect.y0, rect.y1 - q.y])) : cap.edge) >= edgeMin - 1e-9, detail: `≥ D/2 + 15 cm = ${edgeMin.toFixed(2)} m` });
+
+  // ---------- socket en roca
+  if (geo.rock) {
+    const rk = geo.rock;
+    checks.push({ name: 'Pilote · empotramiento en roca (socket)', ratio: props.Dp / Math.max(rk.Ls, 1e-9), ok: rk.Ls >= props.Dp - 1e-9, advisory: true, detail: `Ls = ${rk.Ls.toFixed(2)} m (${(rk.Ls / props.Dp).toFixed(1)}·D); mínimo recomendado 1·D` });
+    if (p.kind === 'concrete') {
+      const sv0 = service.reduce((a, b) => (b.Rmax > a ? b.Rmax : a), 0);
+      const lim = 0.33 * p.fc * 1000;
+      const Ag = (p.shape === 'circle' ? Math.PI * p.D ** 2 / 4 : p.D ** 2);
+      checks.push({ name: 'Pilote · esfuerzo de servicio en el concreto', ratio: sv0 / Ag / lim, ok: sv0 / Ag <= lim + 1e-9, detail: `R máx / Ag = ${(sv0 / Ag / 1000).toFixed(1)} MPa ≤ 0.33·f′c = ${(lim / 1000).toFixed(1)} MPa` });
+    }
+  }
 
   // ---------- servicio (geotecnia)
   const worstS = service.reduce<ComboRes | null>((a, b) => (!a || b.ratioC > a.ratioC ? b : a), null);

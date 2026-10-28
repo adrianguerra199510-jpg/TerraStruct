@@ -71,7 +71,13 @@ export interface PileDef {
 export interface SoilLayer {
   name: string;
   thk: number;
-  kind: 'cohesive' | 'granular' | 'direct';
+  kind: 'cohesive' | 'granular' | 'direct' | 'rock';
+  /** roca (socket): resistencia a compresión simple qu (MPa), RQD (%), socket rugoso, espaciamiento (m) y abertura (mm) de discontinuidades; Em = Es */
+  qu: number;
+  rqd: number;
+  rough: boolean;
+  jointS: number;
+  aperture: number;
   /** cohesivo: resistencia no drenada, kPa; α = 0 ⇒ método API */
   su: number;
   alpha: number;
@@ -113,6 +119,8 @@ export interface PileGeo {
   layers: SoilLayer[];
   /** aplicar eficiencia de grupo (Converse–Labarre) a la compresión */
   groupEff: boolean;
+  /** roca: fracción de la resistencia de punta movilizada en servicio (compatibilidad de desplazamientos fuste–punta) */
+  socketQbMob: number;
   /** fricción negativa: profundidad del plano neutro como fracción de L */
   neutralFrac: number;
   /** asentamiento admisible del grupo, m */
@@ -218,7 +226,7 @@ export function defaultPile(kind: PileKind = 'concrete'): PileDef {
 
 export function defaultLayers(): SoilLayer[] {
   const l = (name: string, thk: number, kind: SoilLayer['kind'], p: Partial<SoilLayer>): SoilLayer => ({
-    name, thk, kind, su: 50, alpha: 0, gamma: 9, phi: 32, K: 1, Nq: 0, fsMax: 100, fs: 30, qb: 2000, Es: 30000, Cc: 0, e0: 0.8, downdrag: false, N160: 20, FC: 10, liq: false, ...p,
+    name, thk, kind, su: 50, alpha: 0, gamma: 9, phi: 32, K: 1, Nq: 0, fsMax: 100, fs: 30, qb: 2000, Es: 30000, Cc: 0, e0: 0.8, qu: 20, rqd: 75, rough: true, jointS: 0.3, aperture: 1, downdrag: false, N160: 20, FC: 10, liq: false, ...p,
   });
   return [
     l('Arcilla blanda a media', 6, 'cohesive', { su: 40, gamma: 8, Es: 8000, Cc: 0.3, e0: 1.0 }),
@@ -250,7 +258,7 @@ export function defaultPileInput(kind: PileKind = 'concrete'): PileInput {
       fc: 28, fy: 420, lambda: 1, code: 'ACI318_14', gammaC: 24, crackMesh: true,
     },
     column: { geom: { ...defaultColumnGeom('rect'), b: 0.5, h: 0.5 }, x: 0, y: 0 },
-    geo: { mode: 'static', QaC: 700, QaT: 150, FS: 2.5, FSt: 3, etaT: 0.75, Df: 1.5, qbMax: 5000, layers: defaultLayers(), groupEff: false, neutralFrac: 0.8, sAllow: 0.025, liqOn: false, gwt: 2, amax: 0.25, Mw: 7, fsLiq: 1.1, liqResid: 0 },
+    geo: { mode: 'static', QaC: 700, QaT: 150, FS: 2.5, FSt: 3, etaT: 0.75, Df: 1.5, qbMax: 5000, layers: defaultLayers(), groupEff: false, socketQbMob: 0.5, neutralFrac: 0.8, sAllow: 0.025, liqOn: false, gwt: 2, amax: 0.25, Mw: 7, fsLiq: 1.1, liqResid: 0 },
     combos: defaultCombos(),
   };
 }

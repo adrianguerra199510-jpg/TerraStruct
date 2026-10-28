@@ -125,6 +125,31 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
       1,
     );
   }
+  if (g.rock) {
+    const rk = g.rock;
+    d.h2('Socket en roca');
+    d.eq(
+      [
+        `Fricción lateral:  fs = C·pa·√(qu/pa)·ηm  ≤ fs,máx    (C = ${f(rk.C, 2)} ${rk.C > 0.6 ? 'socket rugoso, Horvath–Kenney' : 'socket liso, Rowe–Armitage'};  pa = 101.3 kPa;  ηm = ${f(rk.etaM, 2)} por RQD = ${f(rk.rqd, 0)} %)`,
+        'Punta (Canadian Foundation Engineering Manual):  qb = 3·Ksp·d·qu·ηm ≤ 0.33·f′c (concreto) ó 0.5·Fy (acero)',
+        'Ksp = (3 + s/D) / [10·√(1 + 300·δ/s)];   d = 1 + 0.4·Ls/D ≤ 3   (s = espaciamiento y δ = abertura de las juntas)',
+        `Qa = (Qs + ${f(rk.mob, 2)}·Qb) / FS   (la punta se moviliza parcialmente en servicio por compatibilidad de desplazamientos)`,
+        'Asentamiento: w = δe + Q·Iρ/(Em·D),  Iρ = 0.45 (L/D ≥ 2) ó 0.60',
+      ],
+      'Ecuaciones',
+    );
+    d.kv(
+      [
+        ['Longitud del socket Ls', `${u('len', rk.Ls, 2)} (${f(rk.Ls / rk.D, 1)}·D)`],
+        ['qu de la roca', `${f(rk.qu, 1)} MPa; RQD = ${f(rk.rqd, 0)} %`],
+        ['Fricción lateral en el socket fs', u('press', rk.fs, 0)],
+        ['Ksp / factor de profundidad d', `${f(rk.Ksp, 3)} / ${f(rk.dFac, 2)}`],
+        ['qb calculado / límite del material', `${u('press', rk.qbRock, 0)} / ${u('press', rk.qbLimit, 0)}`],
+        ['Punta movilizada en servicio', `${u('force', rk.QbEff, 0)} (${f(rk.mob * 100, 0)} % de Qb)`],
+      ],
+      1,
+    );
+  }
   if (res.Eg.applicable) {
     d.p(`Eficiencia de grupo (Converse–Labarre): Eg = ${f(res.Eg.Eg, 3)}${inp.geo.groupEff ? `; Qa del grupo = ${u('force', res.QaCeff, 0)} por pilote.` : ' (informativa, no aplicada a la capacidad).'}`);
   }

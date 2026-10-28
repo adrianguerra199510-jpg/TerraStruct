@@ -1,6 +1,6 @@
 import { FootingInput, defaultFooting, defaultColumn } from './core/footing';
 import { WallInput, WallType, defaultWall } from './core/wallTypes';
-import { PileInput, PileKind, defaultPileInput } from './core/pileTypes';
+import { PileInput, PileKind, defaultPileInput, defaultLayers } from './core/pileTypes';
 import { UnitSystem } from './core/units';
 import { footingPresetPoly, defaultPresetParams } from './core/shapes';
 
@@ -98,6 +98,26 @@ export function normalizePile(raw: any): PileInput {
 export function examplePiles(): { title: string; desc: string; make: () => PileInput }[] {
   return [
     { title: 'Cabezal de 4 pilotes de concreto', desc: 'Pilotes preexcavados Ø50 cm de 18 m, columna 50×50 cm con momento sísmico.', make: () => defaultPileInput('concrete') },
+    {
+      title: 'Cabezal con pilotes preexcavados en roca (socket)',
+      desc: 'Pilotes Ø80 cm con 4 m de empotramiento en roca de qu = 25 MPa.',
+      make: () => {
+        const i = defaultPileInput('concrete');
+        i.name = 'Cabezal CP-R';
+        i.pile.D = 0.8;
+        i.pile.nBars = 12;
+        i.pile.L = 10;
+        i.layout = { ...i.layout, sx: 2.4, sy: 2.4 };
+        i.cap.edge = 0.7;
+        i.cap.barX = '#10';
+        i.cap.barY = '#10';
+        i.geo.layers = [
+          { ...defaultLayers()[0], name: 'Arcilla blanda', thk: 6, su: 35, gamma: 8 },
+          { ...defaultLayers()[0], name: 'Roca sana (socket)', kind: 'rock', thk: 12, qu: 25, rqd: 80, rough: true, jointS: 0.4, aperture: 1, Es: 2000000, fsMax: 3000, gamma: 14, Cc: 0 },
+        ];
+        return i;
+      },
+    },
     {
       title: 'Cabezal con pilotes de tubo de acero',
       desc: 'Tubo Ø356 mm (e = 9.5 mm), 10 pilotes hincados.',
