@@ -1,17 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves, Activity } from 'lucide-react';
 import { PileInput, PileKind, CAP_SHAPES, CapShape, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
 import { analyzePile, autoSizePile, findCapDesign, PileResults } from '../core/pile';
 import { barList } from '../core/materials';
 import { FootingColumn, defaultColumn } from '../core/footing';
 import { Acc, Alert, Card, Check, CheckCard, CellNum, CellText, Kpi, Num, Sel, Tabs, Tbl, Txt, useUnits } from './common';
 import { DARK, LIGHT } from '../draw/svg';
-import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
+import { cabezalDiagram } from '../core/pileDiagram';
+import { pileDiagramSvg, pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
 import { ColumnEditor } from './FootingPage';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 
-type Tab = 'planta' | 'resultados' | 'stm' | 'suelo' | 'armado' | 'memoria';
+type Tab = 'planta' | 'resultados' | 'diag' | 'stm' | 'suelo' | 'armado' | 'memoria';
 
 export function PilePage({ data, onChange, theme, info }: { data: PileInput; onChange: (f: PileInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const { fmt } = useUnits();
@@ -269,6 +270,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
           items={[
             { id: 'planta', label: 'Planta y reacciones', icon: <Eye size={16} /> },
             { id: 'resultados', label: 'Resultados', icon: <ListChecks size={16} /> },
+            { id: 'diag', label: 'Diagramas', icon: <Activity size={16} /> },
             { id: 'stm', label: 'Puntales y tirantes', icon: <Network size={16} /> },
             { id: 'suelo', label: 'Suelo y efectos', icon: <Waves size={16} /> },
             { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
@@ -317,6 +319,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
             <PileResultTables res={res} data={data} />
           </>
         )}
+        {res && tab === 'diag' && <DiagramTab data={data} res={res} th={th} />}
         {res && tab === 'stm' && res.stm && (
           <>
             <div className={'banner ' + (res.deep ? 'ok' : 'ok')} style={{ background: res.deep ? undefined : undefined }}>
@@ -418,6 +421,46 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
         {res && tab === 'memoria' && <ReportButtons kind="pile" pile={data} info={info} />}
       </div>
     </div>
+  );
+}
+
+function DiagramTab({ data, res, th }: { data: PileInput; res: PileResults; th: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const [sel, setSel] = useState('');
+  const dx = useMemo(() => cabezalDiagram(data, res, 'x'), [data, res]);
+  const dy = useMemo(() => cabezalDiagram(data, res, 'y'), [data, res]);
+  if (!dx.combos.length) return <Alert>Agregue al menos una combinación última (EU) para ver los diagramas.</Alert>;
+  const combo = sel || null;
+  return (
+    <>
+      <div className="draw-tools" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <span className="hint">Combinación</span>
+          <div className="inp" style={{ minWidth: 220 }}>
+            <select value={sel} onChange={(e) => setSel(e.target.value)}>
+              <option value="">Todas (envolvente)</option>
+              {dx.combos.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+          </div>
+        </label>
+        <span className="hint">Reacciones de los pilotes por las cargas mayoradas de la columna (sin peso propio del cabezal)</span>
+      </div>
+      <div className="grid2" style={{ gap: 12 }}>
+        <Kpi label="Momento máx. en X (+) / (−)" value={`${fmt.n('moment', dx.Mpos.v, 0)} / ${fmt.n('moment', dx.Mneg.v, 0)}`} sub={`${fmt.l('moment')} · ${dx.Mpos.combo}`} />
+        <Kpi label="Momento máx. en Y (+) / (−)" value={`${fmt.n('moment', dy.Mpos.v, 0)} / ${fmt.n('moment', dy.Mneg.v, 0)}`} sub={`${fmt.l('moment')} · ${dy.Mpos.combo}`} />
+      </div>
+      <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileDiagramSvg(data, res, dx, { kind: 'M', W: 820, H: 380, theme: th, fmt, combo }) }} /></div>
+      <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileDiagramSvg(data, res, dy, { kind: 'M', W: 820, H: 380, theme: th, fmt, combo }) }} /></div>
+      <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileDiagramSvg(data, res, dx, { kind: 'V', W: 820, H: 340, theme: th, fmt, combo }) }} /></div>
+      <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileDiagramSvg(data, res, dy, { kind: 'V', W: 820, H: 340, theme: th, fmt, combo }) }} /></div>
+      <Card title="Valores de diseño en las caras de la columna" icon={<Activity size={18} />}>
+        <Tbl
+          head={['Dirección', `Mu de diseño (${fmt.l('moment')})`, `M en la cara (diagrama, ${fmt.l('moment')})`, 'Cortante máx. (+/−)']}
+          align={['l', 'r', 'r', 'r']}
+          rows={([['X', res.flexX, dx], ['Y', res.flexY, dy]] as const).map(([a, f, d]) => [a, fmt.n('moment', f!.Mpos, 0), fmt.n('moment', Math.max(...d.combos.flatMap((c) => [d.face[0], d.face[1]].map((x) => c.M[Math.round(((x - d.lo) / (d.hi - d.lo)) * (d.s.length - 1))]))), 0), `${fmt.n('force', d.Vpos.v, 0)} / ${fmt.n('force', d.Vneg.v, 0)}`])}
+        />
+      </Card>
+    </>
   );
 }
 

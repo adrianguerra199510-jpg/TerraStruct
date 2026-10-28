@@ -370,3 +370,65 @@ export function settlementChartSvg(res: PileResults, o: { W?: number; H?: number
     title: 'Asentamiento del grupo', series: [{ name: 'S acum.', xs: cum, ys: sl.map((q) => q.zBelow), color: th.accent }],
   });
 }
+
+// ---------------------------------------------------------------- diagramas de momento y cortante del cabezal
+import { Diagram } from '../core/pileDiagram';
+
+/** Diagrama de momento (kind = 'M') o de cortante (kind = 'V') del cabezal. Momentos dibujados del lado de la tracción (positivo = abajo). */
+export function pileDiagramSvg(inp: PileInput, res: PileResults, dg: Diagram, o: { kind: 'M' | 'V'; W?: number; H?: number; theme?: Theme; fmt: Fmt; combo?: string | null }): string {
+  const W = o.W ?? 820, H = o.H ?? 380;
+  const th = o.theme ?? LIGHT;
+  const isM = o.kind === 'M';
+  const unitQ = isM ? 'moment' : 'force';
+  const label = isM ? 'Momento' : 'Cortante';
+  const m = { l: 64, r: 24, t: 74, b: 48 };
+  const plotW = W - m.l - m.r;
+  const strip = 38; // franja del cabezal sobre el diagrama
+  const X = (v: number) => m.l + ((v - dg.lo) / Math.max(dg.hi - dg.lo, 1e-9)) * plotW;
+  const series = dg.combos.map((c) => (isM ? c.M : c.V));
+  const envMax = dg.s.map((_, k) => Math.max(0, ...series.map((a) => a[k])));
+  const envMin = dg.s.map((_, k) => Math.min(0, ...series.map((a) => a[k])));
+  const top = Math.max(...envMax, 1e-9), bot = Math.min(...envMin, -1e-9);
+  const span = top - bot;
+  const y0 = m.t + strip + 14;
+  const hPlot = H - y0 - m.b;
+  // convención: valores positivos hacia abajo (lado de la tracción inferior)
+  const Ydraw = (v: number) => y0 + ((v - bot) / span) * hPlot; // abajo = positivo
+  let s = '';
+  // franja del cabezal con pilotes y columna
+  s += `<rect x="${X(dg.lo).toFixed(1)}" y="${m.t - 6}" width="${plotW.toFixed(1)}" height="${strip}" fill="${th.concrete}" fill-opacity=".55" stroke="${th.concreteStroke}" stroke-width="1.6"/>`;
+  dg.piles.forEach((p, i) => {
+    s += `<rect x="${(X(p - res.props.Dp / 2)).toFixed(1)}" y="${m.t + strip - 6}" width="${(res.props.Dp / Math.max(dg.hi - dg.lo, 1e-9) * plotW).toFixed(1)}" height="14" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-dasharray="3 2"/>`;
+    s += text(X(p), m.t + strip + 22, `P${i + 1}`, { size: 10, fill: th.muted, anchor: 'middle' });
+  });
+  s += `<rect x="${X(dg.face[0]).toFixed(1)}" y="${m.t - 24}" width="${((dg.face[1] - dg.face[0]) / Math.max(dg.hi - dg.lo, 1e-9) * plotW).toFixed(1)}" height="22" fill="${th.col}" fill-opacity=".85" stroke="${th.ink}"/>`;
+  // cuadrícula y eje cero
+  const step = niceStep(span, 5);
+  for (let v = Math.ceil(bot / step) * step; v <= top + 1e-9; v += step) {
+    s += line(m.l, Ydraw(v), W - m.r, Ydraw(v), th.grid, 1);
+    s += text(m.l - 6, Ydraw(v) + 3.5, o.fmt.n(unitQ, v, 0), { size: 10.5, fill: th.muted, anchor: 'end' });
+  }
+  s += line(m.l, Ydraw(0), W - m.r, Ydraw(0), th.muted, 1.4);
+  // caras de la columna
+  for (const f of dg.face) s += line(X(f), m.t + strip + 8, X(f), H - m.b, th.accent, 1, '5 4');
+  // envolvente (relleno)
+  const ptsTop = dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw(envMax[k]).toFixed(1)}`);
+  const ptsBot = dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw(envMin[k]).toFixed(1)}`).reverse();
+  s += `<polygon points="${ptsTop.join(' ')} ${ptsBot.join(' ')}" fill="${th.concreteStroke}" fill-opacity="0.1"/>`;
+  s += `<polyline points="${ptsTop.join(' ')}" fill="none" stroke="${th.concreteStroke}" stroke-width="2.2"/>`;
+  s += `<polyline points="${dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw(envMin[k]).toFixed(1)}`).join(' ')}" fill="none" stroke="${th.bad}" stroke-width="2.2"/>`;
+  // combinación seleccionada
+  const sel = o.combo ? dg.combos.find((c) => c.name === o.combo) : null;
+  if (sel) s += `<polyline points="${dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw((isM ? sel.M : sel.V)[k]).toFixed(1)}`).join(' ')}" fill="none" stroke="${th.accent}" stroke-width="2.6"/>`;
+  else dg.combos.forEach((c) => (s += `<polyline points="${dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw((isM ? c.M : c.V)[k]).toFixed(1)}`).join(' ')}" fill="none" stroke="${th.muted}" stroke-width="1" opacity=".55"/>`));
+  // valores extremos
+  const peak = (v: number, x: number, c: string) => `<circle cx="${X(x).toFixed(1)}" cy="${Ydraw(v).toFixed(1)}" r="4" fill="${c}"/>${text(X(x) + 8, Ydraw(v) + (v >= 0 ? -6 : 14), `${o.fmt.n(unitQ, v, 0)}`, { size: 11, fill: c, anchor: 'start', weight: 700, halo: th.bg })}`;
+  const pos = isM ? dg.Mpos : dg.Vpos, neg = isM ? dg.Mneg : dg.Vneg;
+  if (pos.v > 1e-6) s += peak(pos.v, pos.s, th.concreteStroke);
+  if (neg.v < -1e-6) s += peak(neg.v, neg.s, th.bad);
+  s += text(m.l, 18, `${label} en ${dg.axis.toUpperCase()} (${o.fmt.l(unitQ)}) — envolvente de combinaciones últimas${sel ? ` — ${sel.name}` : ''}`, { size: 12.5, fill: th.ink, weight: 600 });
+  s += text(W - m.r, 18, isM ? 'positivo abajo (tracción inferior)' : 'positivo hacia abajo', { size: 10.5, fill: th.muted, anchor: 'end' });
+  s += text((m.l + W - m.r) / 2, H - 10, `Posición ${dg.axis} (m)`, { size: 10.5, fill: th.muted, anchor: 'middle' });
+  for (let v = Math.ceil(dg.lo); v <= dg.hi + 1e-9; v += niceStep(dg.hi - dg.lo, 8)) s += text(X(v), H - m.b + 14, o.fmt.n('len', v, 1), { size: 10, fill: th.muted, anchor: 'middle' });
+  return svgWrap(W, H, s, th.bg);
+}

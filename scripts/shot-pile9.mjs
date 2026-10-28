@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const out = process.argv[2], file = process.argv[3];
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
+await page.goto('file://' + file);
+await page.waitForTimeout(400);
+await page.getByText('Cabezal de 4 pilotes de concreto').click();
+await page.waitForTimeout(500);
+await page.getByRole('tab', { name: /Diagramas/ }).click();
+await page.waitForTimeout(500);
+await page.screenshot({ path: out + '/dg1.png' });
+await page.locator('.right').evaluate((e) => e.scrollTo(0, 700));
+await page.waitForTimeout(300);
+await page.screenshot({ path: out + '/dg2.png' });
+await browser.close();

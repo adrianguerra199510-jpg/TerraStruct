@@ -9,7 +9,8 @@ import { Fmt } from '../core/units';
 import { ProjectInfo } from '../state';
 import { DocBuilder, ReportDoc } from './model';
 import { LIGHT, lineChart } from '../draw/svg';
-import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
+import { cabezalDiagram } from '../core/pileDiagram';
+import { pileDiagramSvg, pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
 
 export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBuilder) {
   const u = fmt.u;
@@ -294,6 +295,20 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
 
   // ------------------------------------------------------------------ 6
   d.h1('Diseño del cabezal');
+  d.h2('Diagramas de momento y cortante del cabezal');
+  {
+    const dgx = cabezalDiagram(inp, res, 'x'), dgy = cabezalDiagram(inp, res, 'y');
+    d.p('El cabezal se trata como un sólido rígido cargado por la columna (hacia abajo) y por las reacciones de los pilotes (hacia arriba), calculadas con las cargas mayoradas de la columna sin el peso propio. Se dibuja la envolvente de todas las combinaciones últimas; el momento positivo (tracción inferior) se dibuja hacia abajo. Los momentos de diseño son los de las caras de la columna.', { align: 'justify' });
+    d.table(
+      ['Dirección', `Mu(+) máx. (${fmt.l('moment')})`, 'Combinación', `Mu(−) máx. (${fmt.l('moment')})`, `V máx. (+/−) (${fmt.l('force')})`],
+      ([['X', dgx], ['Y', dgy]] as const).map(([a, dg]) => [a, n('moment', dg.Mpos.v, 1), dg.Mpos.combo, n('moment', dg.Mneg.v, 1), `${n('force', dg.Vpos.v, 0)} / ${n('force', dg.Vneg.v, 0)}`]),
+      { align: ['l', 'r', 'l', 'r', 'r'], caption: 'Tabla. Valores extremos de los diagramas' },
+    );
+    d.img(pileDiagramSvg(inp, res, dgx, { kind: 'M', W: 800, H: 380, theme: th, fmt }), 'Figura. Diagrama de momento a lo largo de X (envolvente).');
+    d.img(pileDiagramSvg(inp, res, dgy, { kind: 'M', W: 800, H: 380, theme: th, fmt }), 'Figura. Diagrama de momento a lo largo de Y (envolvente).');
+    d.img(pileDiagramSvg(inp, res, dgx, { kind: 'V', W: 800, H: 340, theme: th, fmt }), 'Figura. Diagrama de cortante a lo largo de X (envolvente).');
+    d.img(pileDiagramSvg(inp, res, dgy, { kind: 'V', W: 800, H: 340, theme: th, fmt }), 'Figura. Diagrama de cortante a lo largo de Y (envolvente).');
+  }
   d.h2('Flexión');
   d.eq(
     [

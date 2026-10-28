@@ -369,3 +369,34 @@ describe('redondeo de esquinas del cabezal', () => {
     expect(r.capPoly.length).toBeGreaterThan(8);
   });
 });
+
+import { cabezalDiagram } from '../src/core/pileDiagram';
+describe('diagramas de momento y cortante del cabezal', () => {
+  it('cierran en cero en los extremos (equilibrio) y el momento en la cara coincide con el de diseño', () => {
+    const i = defaultPileInput();
+    const r = analyzePile(i);
+    for (const ax of ['x', 'y'] as const) {
+      const d = cabezalDiagram(i, r, ax);
+      for (const c of d.combos) {
+        expect(Math.abs(c.M[c.M.length - 1])).toBeLessThan(1e-6);
+        expect(Math.abs(c.V[c.V.length - 1])).toBeLessThan(1e-6);
+        expect(Math.abs(c.M[0])).toBeLessThan(1e-9);
+      }
+    }
+    const dx = cabezalDiagram(i, r, 'x');
+    expect(dx.Mpos.v).toBeCloseTo(r.flexX!.Mpos, 0);
+  });
+  it('con momento aplicado sigue cerrando y la envolvente tiene signos', () => {
+    const i = defaultPileInput();
+    const r = analyzePile(i);
+    const d = cabezalDiagram(i, r, 'x');
+    expect(d.combos.length).toBe(3);
+    for (const c of d.combos) expect(Math.abs(c.M[c.M.length - 1])).toBeLessThan(1e-6);
+    expect(d.Mpos.v).toBeGreaterThan(0);
+  });
+  it('en una forma no rectangular también cierra', () => {
+    const i = examplePiles().find((e) => /en L/.test(e.title))!.make();
+    const r = analyzePile(i);
+    for (const ax of ['x', 'y'] as const) for (const c of cabezalDiagram(i, r, ax).combos) expect(Math.abs(c.M[c.M.length - 1])).toBeLessThan(1e-6);
+  });
+});
