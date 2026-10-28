@@ -171,3 +171,199 @@ export function pileSectionSvg(inp: PileInput, res: PileResults, o: { W?: number
   g += text(X(r.x0), 18, `Sección en X — ${res.props.label}`, { size: 12, fill: th.muted });
   return svgWrap(W, H, g, th.bg);
 }
+
+// ---------------------------------------------------------------- puntales y tirantes
+import { StmResult } from '../core/pileSTM';
+import { arrow, lineChart } from './svg';
+
+/** Elevación del modelo de puntales y tirantes proyectado sobre el eje indicado. */
+export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis: 'x' | 'y'; W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+  const stm = res.stm as StmResult;
+  const W = o.W ?? 820, H = o.H ?? 470;
+  const th = o.theme ?? LIGHT;
+  const ax = o.axis;
+  const r = res.capRect;
+  const lo = ax === 'x' ? r.x0 : r.y0, hi = ax === 'x' ? r.x1 : r.y1;
+  const cap = inp.cap;
+  const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
+  const cc = ax === 'x' ? colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length : colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
+  const colMin = Math.min(...colPoly.map((q) => (ax === 'x' ? q.x : q.y))), colMax = Math.max(...colPoly.map((q) => (ax === 'x' ? q.x : q.y)));
+  const span = hi - lo;
+  const s = Math.min((W - 150) / span, (H - 150) / (cap.h + 0.8));
+  const ox = (W - span * s) / 2;
+  const X = (v: number) => ox + (v - lo) * s;
+  const yBot = H - 100;
+  const Y = (hh: number) => yBot - hh * s;
+  let g = '';
+  g += `<rect x="${X(lo).toFixed(1)}" y="${Y(cap.h).toFixed(1)}" width="${(span * s).toFixed(1)}" height="${(cap.h * s).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.5" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  g += `<rect x="${X(colMin).toFixed(1)}" y="${(Y(cap.h) - 50).toFixed(1)}" width="${((colMax - colMin) * s).toFixed(1)}" height="50" fill="${th.col}" fill-opacity="0.85" stroke="${th.ink}"/>`;
+  // pilotes (agrupados por coordenada proyectada)
+  const groups = new Map<number, { v: number; idx: number[] }>();
+  res.pts.forEach((q, i) => {
+    const v = ax === 'x' ? q.x : q.y;
+    const k = Math.round(v * 20);
+    const gr = groups.get(k) ?? { v, idx: [] };
+    gr.idx.push(i);
+    groups.set(k, gr);
+  });
+  const pw = res.props.Dp * s;
+  for (const gr of groups.values()) g += `<rect x="${(X(gr.v) - pw / 2).toFixed(1)}" y="${yBot.toFixed(1)}" width="${pw.toFixed(1)}" height="46" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-dasharray="3 3"/>`;
+  // nodos
+  const zT = stm.hTie;
+  const zN = stm.hNode;
+  const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
+  const nodeTop = { x: X(cc), y: Y(zN) };
+  for (const gr of groups.values()) {
+    const sts = gr.idx.map((i) => stm.struts[i]);
+    const C = Math.max(...sts.map((q) => q.C));
+    const ratio = Math.max(...sts.map((q) => q.ratio));
+    const pn = { x: X(gr.v), y: Y(zT) };
+    const col = ratio > 1 ? th.bad : th.concreteStroke;
+    g += line(nodeTop.x, nodeTop.y, pn.x, pn.y, col, 2 + (6 * C) / maxC);
+    const mx = (nodeTop.x + pn.x) / 2, my = (nodeTop.y + pn.y) / 2;
+    g += text(mx + (pn.x >= nodeTop.x ? 8 : -8), my - 4, `C = ${o.fmt.n('force', C, 0)}${gr.idx.length > 1 ? ` (×${gr.idx.length})` : ''}`, { size: 11, fill: col, weight: 600, anchor: pn.x >= nodeTop.x ? 'start' : 'end', halo: th.bg });
+    g += `<circle cx="${pn.x.toFixed(1)}" cy="${pn.y.toFixed(1)}" r="5" fill="${th.rebar}"/>`;
+  }
+  // tirante
+  const xsAll = [...groups.values()].map((q) => q.v);
+  const t = ax === 'x' ? stm.tieX : stm.tieY;
+  g += line(X(Math.min(...xsAll)), Y(zT), X(Math.max(...xsAll)), Y(zT), th.rebar, 3.2);
+  g += text(X((Math.min(...xsAll) + Math.max(...xsAll)) / 2), yBot + 84, `Tirante T = ${o.fmt.n('force', t.T, 0)} ${o.fmt.l('force')}  (As req = ${t.AsReq.toFixed(1)} cm²)`, { size: 12, fill: th.rebar, weight: 700, anchor: 'middle' });
+  g += `<circle cx="${nodeTop.x.toFixed(1)}" cy="${nodeTop.y.toFixed(1)}" r="6" fill="${th.ink}"/>`;
+  g += text(nodeTop.x + 10, nodeTop.y - 6, `Nodo superior (prof. ${o.fmt.n('len', stm.ay, 2)} m)`, { size: 11, fill: th.ink, halo: th.bg });
+  g += dimLine(X(hi) + 20, Y(zN), X(hi) + 20, Y(zT), `z = ${o.fmt.n('len', stm.z, 2)}`, th.dim, 0, 11);
+  g += dimLine(X(lo), yBot + 56, X(hi), yBot + 56, `${o.fmt.n('len', span, 2)} ${o.fmt.l('len')}`, th.dim, 0);
+  g += arrow(nodeTop.x, Y(cap.h) - 70, nodeTop.x, Y(cap.h) - 52, th.accent, 2.4, 9);
+  g += text(nodeTop.x + 10, Y(cap.h) - 58, `Pu = ${o.fmt.n('force', Math.max(0, ...res.ultimate.map((q) => q.combo.P)), 0)}`, { size: 11, fill: th.accent, weight: 700 });
+  g += text(12, 20, `Modelo de puntales y tirantes — eje ${ax.toUpperCase()} — ${stm.combo}${stm.deep ? '' : ' (cabezal no profundo: informativo)'}`, { size: 12.5, fill: th.muted });
+  return svgWrap(W, H, g, th.bg);
+}
+
+/** Planta del modelo: puntales de la columna a cada pilote y tirantes por bandas. */
+export function pileStmPlanSvg(inp: PileInput, res: PileResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+  const stm = res.stm as StmResult;
+  const W = o.W ?? 820, H = o.H ?? 560;
+  const th = o.theme ?? LIGHT;
+  const view = makePlanView(pilePlanPoints(inp, res), W, H, 70);
+  const r = res.capRect;
+  const A = view.toSvg(r.x0, r.y1), B = view.toSvg(r.x1, r.y0);
+  let g = `<rect x="${A.x.toFixed(1)}" y="${A.y.toFixed(1)}" width="${(B.x - A.x).toFixed(1)}" height="${(B.y - A.y).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.3" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
+  const cx = colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length, cy = colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
+  const cs = view.toSvg(cx, cy);
+  const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
+  // tirantes
+  for (const t of [stm.tieX, stm.tieY]) {
+    for (const b of t.bands) {
+      const idx = res.pts.map((q, i) => ({ v: t.axis === 'x' ? q.y : q.x, i })).filter((q) => Math.abs(q.v - b.pos) <= 0.5 * res.props.Dp + 1e-6).map((q) => q.i);
+      const ps = idx.map((i) => res.pts[i]);
+      if (ps.length < 2) continue;
+      const a1 = ps.reduce((m, q) => (t.axis === 'x' ? (q.x < m.x ? q : m) : q.y < m.y ? q : m));
+      const a2 = ps.reduce((m, q) => (t.axis === 'x' ? (q.x > m.x ? q : m) : q.y > m.y ? q : m));
+      const p1 = view.toSvg(a1.x, a1.y), p2 = view.toSvg(a2.x, a2.y);
+      g += line(p1.x, p1.y, p2.x, p2.y, th.rebar, 3.2);
+      g += text((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 8 - (t.axis === 'y' ? 0 : 0), `T ${t.axis} = ${o.fmt.n('force', b.T, 0)}`, { size: 11, fill: th.rebar, weight: 700, anchor: 'middle', halo: th.bg, rotate: t.axis === 'y' ? -90 : 0 });
+    }
+  }
+  // puntales
+  stm.struts.forEach((st) => {
+    const q = res.pts[st.i];
+    const p = view.toSvg(q.x, q.y);
+    const col = st.ratio > 1 ? th.bad : th.concreteStroke;
+    g += line(cs.x, cs.y, p.x, p.y, col, 1.6 + (5 * st.C) / maxC, '7 4');
+    g += text((cs.x + p.x) / 2, (cs.y + p.y) / 2 - 5, `${o.fmt.n('force', st.C, 0)}`, { size: 11, fill: col, weight: 600, anchor: 'middle', halo: th.bg });
+  });
+  res.pts.forEach((q, i) => {
+    const p = view.toSvg(q.x, q.y);
+    g += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${((res.props.Dp / 2) * view.s).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.8" stroke="${th.concreteStroke}" stroke-width="1.5"/>`;
+    g += text(p.x, p.y + 4, String(i + 1), { size: 12, fill: th.ink, anchor: 'middle', weight: 700 });
+  });
+  g += poly(colPoly.map((q) => view.toSvg(q.x, q.y)), th.col, th.ink, 1.4, 'fill-opacity="0.85"');
+  g += `<circle cx="${cs.x.toFixed(1)}" cy="${cs.y.toFixed(1)}" r="5" fill="${th.bg}" stroke="${th.ink}" stroke-width="2"/>`;
+  g += text(12, 20, `Planta del modelo — puntales (discontinuo, ${o.fmt.l('force')}) y tirantes (rojo) — ${stm.combo}`, { size: 12.5, fill: th.muted });
+  return svgWrap(W, H, g, th.bg);
+}
+
+// ---------------------------------------------------------------- suelo: perfil, licuación y asentamiento
+/** Perfil estratigráfico con el pilote, la zona de fricción negativa, el plano neutro y los estratos licuables. */
+export function pileProfileSvg(inp: PileInput, res: PileResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+  const W = o.W ?? 640, H = o.H ?? 520;
+  const th = o.theme ?? LIGHT;
+  const g0 = inp.geo;
+  const p = inp.pile;
+  const layers = g0.layers;
+  const total = Math.max(layers.reduce((s, l) => s + l.thk, 0), p.L) + g0.Df;
+  const top = 36, bot = H - 24;
+  const sy = (bot - top) / total;
+  const Y = (zg: number) => top + zg * sy; // zg desde el terreno
+  const x0 = 110, x1 = W - 190;
+  let s = '';
+  const palette = ['#e9c58f', '#cfd9a8', '#b8c9dd', '#d9b8a0', '#c4b8d9'];
+  let z = 0;
+  layers.forEach((l, i) => {
+    const za = g0.Df + z, zb = g0.Df + z + l.thk;
+    const liq = res.liq.enabled && res.liq.liquefied[i];
+    s += `<rect x="${x0}" y="${Y(za).toFixed(1)}" width="${x1 - x0}" height="${((zb - za) * sy).toFixed(1)}" fill="${palette[i % palette.length]}" fill-opacity="0.75" stroke="${th.soilStroke}"/>`;
+    if (liq) s += `<rect x="${x0}" y="${Y(za).toFixed(1)}" width="${x1 - x0}" height="${((zb - za) * sy).toFixed(1)}" fill="${th.water}" fill-opacity="0.35"/>`;
+    s += text(x1 + 8, Y(za) + 14, `${l.name}${liq ? ' — LICUA' : ''}`, { size: 11, fill: liq ? th.bad : th.ink, weight: liq ? 700 : 500 });
+    s += text(x1 + 8, Y(za) + 28, `${l.kind === 'cohesive' ? `su = ${o.fmt.n('press', l.su, 0)}` : l.kind === 'granular' ? `φ = ${l.phi}°` : `fs = ${o.fmt.n('press', l.fs, 0)}`}${l.downdrag ? ' · arrastre' : ''}`, { size: 10.5, fill: th.muted });
+    z += l.thk;
+  });
+  s += line(x0 - 20, Y(0), x1, Y(0), th.soilStroke, 2);
+  s += text(x0 - 24, Y(0) - 4, 'Terreno', { size: 10.5, fill: th.muted, anchor: 'end' });
+  if (g0.liqOn) {
+    s += line(x0 - 20, Y(g0.gwt), x1, Y(g0.gwt), th.water, 1.6, '6 4');
+    s += text(x0 - 24, Y(g0.gwt) + 4, 'N.F.', { size: 10.5, fill: th.water, anchor: 'end', weight: 600 });
+  }
+  // cabezal y pilote
+  const pxc = (x0 + x1) / 2;
+  const pw = 26;
+  s += `<rect x="${pxc - 50}" y="${Y(0).toFixed(1)}" width="100" height="${(Y(g0.Df) - Y(0)).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="1.6"/>`;
+  s += `<rect x="${pxc - pw / 2}" y="${Y(g0.Df).toFixed(1)}" width="${pw}" height="${(p.L * sy).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  // plano neutro y arrastre
+  if (res.geo.Qneg > 0) {
+    const zn = g0.Df + g0.neutralFrac * p.L;
+    s += line(x0, Y(zn), x1, Y(zn), th.bad, 1.6, '7 4');
+    s += text(x0 + 4, Y(zn) - 4, `Plano neutro (${(g0.neutralFrac * 100).toFixed(0)}% L)`, { size: 10.5, fill: th.bad, weight: 600 });
+    let zz = 0;
+    layers.forEach((l) => {
+      const za = g0.Df + zz, zb = Math.min(g0.Df + zz + l.thk, zn);
+      if (l.downdrag && zb > za) {
+        for (let y = za + 0.4; y < zb; y += 0.8) s += arrow(pxc - pw / 2 - 18, Y(y) - 8, pxc - pw / 2 - 18, Y(y) + 8, th.bad, 2, 7);
+        s += text(pxc - pw / 2 - 26, (Y(za) + Y(zb)) / 2, `Qneg`, { size: 10.5, fill: th.bad, anchor: 'end', weight: 700 });
+      }
+      zz += l.thk;
+    });
+  }
+  s += dimLine(x0 - 52, Y(g0.Df), x0 - 52, Y(g0.Df + p.L), `L = ${o.fmt.n('len', p.L, 1)}`, th.dim, 0, 11);
+  s += text(12, 20, 'Perfil geotécnico y pilote', { size: 12.5, fill: th.muted });
+  return svgWrap(W, H, s, th.bg);
+}
+
+export function liquefactionChartSvg(res: PileResults, o: { W?: number; H?: number; theme?: Theme }): string {
+  const th = o.theme ?? LIGHT;
+  const pr = res.liq.profile;
+  if (!pr.length) return svgWrap(o.W ?? 560, 60, text(12, 30, 'Licuación no evaluada.', { size: 12, fill: th.muted }), th.bg);
+  const zmax = Math.max(...pr.map((q) => q.zGround));
+  const xs = pr.map((q) => Math.min(q.FS, 4));
+  return lineChart({
+    w: o.W ?? 560, h: o.H ?? 420, theme: th, xLabel: 'Factor de seguridad FS (CRR·MSF/CSR)', yLabel: 'Profundidad desde el terreno (m)', invertY: true, zeroLine: false,
+    title: 'Potencial de licuación', series: [
+      { name: 'FS', xs, ys: pr.map((q) => q.zGround), color: th.concreteStroke },
+      { name: 'FS = 1', xs: [1, 1], ys: [0, zmax], color: th.bad, dash: '5 4' },
+    ],
+  });
+}
+
+export function settlementChartSvg(res: PileResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+  const th = o.theme ?? LIGHT;
+  const st = res.settle;
+  if (!st || !st.group.slices.length) return svgWrap(o.W ?? 560, 60, text(12, 30, 'Sin datos de asentamiento.', { size: 12, fill: th.muted }), th.bg);
+  const sl = st.group.slices;
+  let acc = 0;
+  const cum = sl.map((q) => (acc += q.dH * 1000));
+  return lineChart({
+    w: o.W ?? 560, h: o.H ?? 420, theme: th, xLabel: 'Asentamiento acumulado del grupo (mm)', yLabel: 'Profundidad bajo la zapata equivalente (m)', invertY: true, zeroLine: false,
+    title: 'Asentamiento del grupo', series: [{ name: 'S acum.', xs: cum, ys: sl.map((q) => q.zBelow), color: th.accent }],
+  });
+}

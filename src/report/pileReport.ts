@@ -9,7 +9,7 @@ import { Fmt } from '../core/units';
 import { ProjectInfo } from '../state';
 import { DocBuilder, ReportDoc } from './model';
 import { LIGHT, lineChart } from '../draw/svg';
-import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg } from '../draw/pileDraw';
+import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
 
 export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBuilder) {
   const u = fmt.u;
@@ -43,7 +43,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     'La fuerza horizontal se reparte por igual entre los pilotes (cabezal rígido, mismo comportamiento lateral).',
     'La capacidad geotécnica a compresión es Qa = (Qs + Qb)/FS; en tracción solo interviene la fricción lateral reducida más el peso del pilote.',
     'El diseño del cabezal usa las reacciones producidas por las cargas mayoradas de la columna (sin peso propio). Se aplica la regla de ACI 318 de contribución fraccionada de los pilotes que cruzan la sección crítica.',
-    'No se consideran asentamientos del grupo ni efectos de pandeo del pilote por licuación; la flexión del pilote se estima con el modelo lineal de Matlock y Reese.',
+    'La flexión del pilote se estima con el modelo lineal de Matlock y Reese, con reducción de la reacción del suelo por efecto de grupo (p-múltiples).',
   ]);
   d.h2('Convención de signos y unidades');
   d.p(`Unidades: ${fmt.sys === 'SI' ? 'kN, m, kPa, MPa' : 'tonf, m, tonf/m², kgf/cm²'}. P positiva hacia abajo; Mx (My) aumenta la reacción de los pilotes con y (x) positiva. R positiva = compresión en el pilote; negativa = tracción.`);
@@ -248,6 +248,121 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     { align: ['l', 'r', 'r', 'r', 'l'], caption: 'Tabla. Longitud de desarrollo desde la cara de la columna hasta el borde del cabezal' },
   );
 
+  const stm = res.stm;
+  if (stm) {
+    d.h2('Método de puntales y tirantes (ACI 318-19, cap. 23)');
+    d.p(
+      res.deep
+        ? `El cabezal es profundo (luz de cortante a/d = ${f(stm.aOverD, 2)} < 2): ACI 318 exige diseñarlo con puntales y tirantes; los chequeos de cortante como viga se muestran solo como referencia.`
+        : `El cabezal no es profundo (a/d = ${f(stm.aOverD, 2)} ≥ 2); el modelo de puntales y tirantes se presenta como verificación complementaria.`,
+      { align: 'justify' },
+    );
+    d.eq(
+      [
+        'Modelo espacial: un puntal desde el nodo de la columna hasta el nodo de cada pilote; tirantes horizontales a nivel del acero inferior.',
+        'Brazo interno:  z = d − wt/2,   wt = profundidad del nodo superior (hidrostático): wt = lb · l / z   (lb = √(Acol·Ri/ΣR),  l = distancia horizontal columna–pilote)',
+        'Ángulo y fuerza del puntal:  θi = atan(z / li),   Ci = Ri / sen θi',
+        'Tirante en la sección del eje de la columna:  Tx = Σ (Ri · |xi − xc| / z)  (un lado),  Ty análogo;   As = T / (φ·fy),  φ = 0.75',
+        'Resistencia del puntal:  φ·Fns = φ·fce·Acs,   fce = 0.85·βc·βs·f′c,   βc = 1.0,   βs = ' + f(stm.betaS, 2) + (res.stm && inp.cap.crackMesh ? ' (con armadura de control de fisuración ΣAs·senγ/(b·s) ≥ 0.003)' : ' (puntal en botella sin armadura de control)'),
+        'Anchura del puntal en cada extremo:  ws = lb·senθ + wt·cosθ   (nodo CCC en la columna; nodo CCT/CTT en el pilote con wt = 2·recubrimiento al centroide del acero)',
+        `Zonas nodales:  fcu = 0.85·βn·f′c;  βn = 1.0 (columna, CCC) y ${f(stm.betaNPile, 1)} (pilote, ${stm.betaNPile === 0.6 ? 'CTT: tirantes en dos direcciones' : 'CCT: tirante en una dirección'});  φ = 0.75`,
+      ],
+      'Planteamiento',
+    );
+    d.kv(
+      [
+        ['Combinación gobernante', stm.combo],
+        ['Brazo interno z', u('len', stm.z, 3)],
+        ['Profundidad del nodo superior wt', u('len', stm.ay, 3)],
+        ['fce del puntal', u('stress', stm.fce, 1)],
+        ['Límite nodal en la columna', u('stress', stm.nodeColLimit, 1)],
+        ['Límite nodal en el pilote', u('stress', stm.nodePileLimit, 1)],
+      ],
+      2,
+    );
+    d.table(
+      ['Pilote', `R (${fmt.l('force')})`, 'l (m)', 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación'],
+      stm.struts.map((q) => [String(q.i + 1), n('force', q.R, 0), f(q.l, 2), f((q.theta * 180) / Math.PI, 1), n('force', q.C, 0), f(q.AcsCol, 3), f(q.AcsPile, 3), n('force', q.phiFns, 0), f(q.ratio, 2)]),
+      { align: ['c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Puntales' },
+    );
+    const tr: string[][] = [];
+    for (const t of [stm.tieX, stm.tieY]) {
+      t.bands.forEach((b) => tr.push([`Tirante ${t.axis.toUpperCase()}`, f(b.pos, 2), n('force', b.T, 0), f(b.width, 2), f(b.asProv, 1), n('force', b.phiTn, 0), f(b.ratio, 2)]));
+    }
+    d.table(['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho de banda (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación'], tr, { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Tirantes por banda de pilotes (As = barras inferiores dentro del ancho de la banda)' });
+    d.img(pileStmElevationSvg(inp, res, { axis: 'x', W: 800, H: 470, theme: th, fmt }), 'Figura. Modelo de puntales y tirantes, proyección sobre el eje X.', 0.95);
+    d.img(pileStmElevationSvg(inp, res, { axis: 'y', W: 800, H: 470, theme: th, fmt }), 'Figura. Modelo de puntales y tirantes, proyección sobre el eje Y.', 0.95);
+    d.img(pileStmPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt }), 'Figura. Planta del modelo de puntales y tirantes.');
+  }
+
+  // ------------------------------------------------------------------ efectos del suelo
+  d.h1('Efectos del suelo y del grupo');
+  d.h2('Efecto de grupo en la carga lateral (p-múltiples)');
+  d.p('La fuerza horizontal se reparte entre los pilotes con el mismo desplazamiento (cabezal rígido). La resistencia lateral del suelo de cada pilote se reduce con el multiplicador p de Brown et al. (1988): fila delantera 0.8, segunda 0.4 y siguientes 0.3 para s = 3D; 1.0, 0.85 y 0.7 para s = 5D; sin reducción para s ≥ 8D. Rigidez lateral ∝ (p·nh)^0.6.', { align: 'justify' });
+  const lat = res.ultimate.filter((q) => q.H > 0).reduce<ComboRes | null>((a, b) => (!a || b.Mmax > a.Mmax ? b : a), null);
+  if (lat) {
+    d.table(
+      ['Pilote', 'Multiplicador p', `H (${fmt.l('force')})`],
+      lat.pm.map((m, i) => [String(i + 1), f(m, 2), n('force', lat.Hi[i], 1)]),
+      { align: ['c', 'r', 'r'], widths: [4, 6, 6], caption: `Tabla. Reparto lateral — ${lat.combo.name}: H total = ${n('force', lat.H, 1)} ${fmt.l('force')}, Mu máx = ${n('moment', lat.Mmax, 1)} ${fmt.l('moment')}` },
+    );
+  } else d.p('No hay cargas horizontales en las combinaciones últimas.');
+
+  d.h2('Perfil geotécnico');
+  d.img(pileProfileSvg(inp, res, { W: 640, H: 520, theme: th, fmt }), 'Figura. Perfil geotécnico con el pilote, plano neutro y estratos licuables.', 0.7);
+
+  d.h2('Fricción negativa');
+  if (res.geo.mode === 'static' && res.geo.Qneg > 1e-6) {
+    d.eq(['Qneg = Σ fs · p · Δz   en los estratos marcados como «arrastre», desde la cabeza hasta el plano neutro (z_n = ' + f(inp.geo.neutralFrac, 2) + '·L)', 'Qa,dd = (Qs − Qneg + Qb) / FS      Condición:  R + Qneg ≤ Qa,dd', 'Estructural:  Pu + Qneg (carga axial máxima en el plano neutro)'], 'Ecuaciones');
+    d.kv([['Fricción negativa Qneg', u('force', res.geo.Qneg, 0)], ['Capacidad bajo el plano neutro Qa,dd', u('force', res.geo.QaDD, 0)], ['Plano neutro', u('len', inp.geo.neutralFrac * inp.pile.L, 2) + ' bajo el cabezal']], 1);
+  } else d.p('No se marcó ningún estrato con fricción negativa: no se considera arrastre.');
+
+  d.h2('Licuación');
+  if (res.liq.enabled && res.liq.rows.length) {
+    d.eq(
+      [
+        'CSR = 0.65·(amax/g)·(σv/σ′v)·rd      rd = 1 − 0.00765·z (z ≤ 9.15 m);  1.174 − 0.0267·z (9.15 < z ≤ 23 m)',
+        '(N1)60cs = α + β·(N1)60   (α, β según contenido de finos FC);   CRR7.5 = 1/(34−N) + N/135 + 50/(10N+45)² − 1/200',
+        'MSF = 10^2.24 / Mw^2.56;      FS = CRR7.5·MSF / CSR;   licúa si FS < ' + f(inp.geo.fsLiq, 2),
+        'Asentamiento del terreno: Σ εv·Δz con εv(N1cs) de Ishihara–Yoshimine en franjas con FS < 1',
+      ],
+      'Procedimiento simplificado (Seed–Idriss; Youd et al. 2001)',
+    );
+    d.table(
+      ['Estrato (franja crítica)', 'z (m)', 'σv (kPa)', 'σ′v (kPa)', 'rd', 'CSR', '(N1)60cs', 'CRR·MSF', 'FS', 'Resultado'],
+      res.liq.rows.map((r) => [r.name, f(r.zGround, 1), f(r.sv, 0), f(r.svEff, 0), f(r.rd, 2), f(r.CSR, 3), f(r.N1cs, 1), f(r.CRR * r.MSF, 3), f(r.FS, 2), r.liquefies ? 'Licúa' : 'No licúa'],
+      ),
+      { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'c'], small: true, caption: `Tabla. amax = ${f(inp.geo.amax, 2)} g, Mw = ${f(inp.geo.Mw, 1)}, nivel freático a ${f(inp.geo.gwt, 1)} m` },
+    );
+    d.p(`Espesor licuable: ${f(res.liq.Lliq, 1)} m. Asentamiento del terreno por licuación ≈ ${f(res.liq.settlement * 1000, 0)} mm. En los estratos que licúan la fricción lateral se reduce a ${f(inp.geo.liqResid * 100, 0)} % y se supone sin apoyo lateral para el pandeo y la flexión del pilote.`);
+    d.img(liquefactionChartSvg(res, { W: 620, H: 420, theme: th }), 'Figura. Factor de seguridad frente a la licuación con la profundidad.', 0.75);
+  } else d.p('No se evaluó la licuación (desactivada o sin estratos susceptibles).');
+
+  d.h2('Asentamiento');
+  if (res.settle) {
+    const st = res.settle;
+    d.eq(
+      [
+        'Pilote individual (Vesic):  δ = δe + δp + δs;   δe = (Qp + ξ·Qs)·L/(Ap·Ep),  ξ = 0.5;   δp = Cp·Qp/(D·qb);   δs = Cs·Qs/(L·qb),  Cs = (0.93 + 0.16·√(L/D))·Cp',
+        'Grupo: zapata equivalente a la profundidad zr = L·(1 − Qs/(3·Qu)) con distribución 2V:1H;   Δσ = Q / ((B′ + z)(L′ + z))',
+        'Estratos con Cc:  ΔH = Cc·H/(1 + e0)·log[(σ′v + Δσ)/σ′v];   resto:  ΔH = Δσ·H/Es',
+      ],
+      'Ecuaciones',
+    );
+    d.kv(
+      [
+        ['Carga sostenida del grupo Q', u('force', st.group.Q, 0)],
+        ['Pilote: acortamiento / punta / fuste', `${f(st.pile.de * 1000, 1)} / ${f(st.pile.dp * 1000, 1)} / ${f(st.pile.ds * 1000, 1)} mm`],
+        ['Pilote individual', `${f(st.pile.total * 1000, 1)} mm`],
+        ['Zapata equivalente', `${f(st.group.Beq, 2)} × ${f(st.group.Leq, 2)} m a ${f(st.group.zRaft, 1)} m`],
+        ['Asentamiento del grupo', `${f(st.group.total * 1000, 1)} mm`],
+        ['Admisible', `${f(inp.geo.sAllow * 1000, 0)} mm`],
+      ],
+      2,
+    );
+    d.img(settlementChartSvg(res, { W: 620, H: 420, theme: th, fmt }), 'Figura. Asentamiento acumulado del grupo con la profundidad.', 0.75);
+  } else d.p('No se calculó el asentamiento (faltan estratos).');
+
   // ------------------------------------------------------------------ 7
   d.h1('Cuadro de armado y planos');
   const arm: string[][] = [];
@@ -258,6 +373,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   if (p.kind === 'concrete') {
     arm.push(['Pilote — longitudinal', `${p.nBars} ${p.bar}`, f(res.conc!.ratio.Ast, 1)], ['Pilote — transversal', `${p.tieBar} @ ${f(p.tieS * 100, 0)} cm (${p.spiral ? 'espiral' : 'estribos'})`, '—']);
   } else arm.push(['Pilote', res.props.label, f(res.props.A * 1e4, 1)]);
+  if (cap.crackMesh) arm.push(['Cabezal — control de fisuración (STM)', 'Malla en caras laterales: ΣAs·senγ/(b·s) ≥ 0.003', '—']);
   d.table(['Elemento', 'Armado', 'As (cm²) / cm² por m'], arm, { align: ['l', 'l', 'r'], caption: 'Tabla. Cuadro de armado' });
   d.img(pileRebarPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt }), 'Figura. Planta de armado inferior del cabezal.');
   if (cap.topSteel) d.img(pileRebarPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt, layer: 'top' }), 'Figura. Planta de armado superior del cabezal.');
@@ -274,9 +390,9 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   d.h2('Limitaciones');
   d.bullets([
     'La capacidad geotécnica es una estimación estática con parámetros ingresados; debe contrastarse con el estudio geotécnico y, de ser posible, con pruebas de carga.',
-    'No se calculan asentamientos del grupo, fricción negativa ni licuación.',
-    'La interacción lateral entre pilotes (efecto sombra) no se incluye; para separaciones menores de 8D conviene reducir la reacción lateral con factores p-múltiples.',
-    'El método de flexión y cortante del cabezal es el de viga; para cabezales profundos (a/d < 2) debe verificarse con puntales y tirantes.',
+    'El modelo de puntales y tirantes es espacial simplificado (un puntal por pilote, tirantes ortogonales); en geometrías muy irregulares conviene un modelo detallado.',
+    'El asentamiento del grupo usa la zapata equivalente y parámetros de deformabilidad ingresados; es una estimación, no un análisis suelo–estructura.',
+    'La licuación se evalúa con el procedimiento simplificado de (N1)60; no incluye desplazamientos laterales (lateral spreading) ni cargas cinemáticas sobre los pilotes.',
   ]);
 }
 

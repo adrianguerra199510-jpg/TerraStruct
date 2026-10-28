@@ -1,0 +1,28 @@
+import { chromium } from 'playwright';
+const out = process.argv[2], file = process.argv[3];
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
+await page.goto('file://' + file);
+await page.waitForTimeout(400);
+await page.getByText('Cabezal de 4 pilotes de concreto').click();
+await page.waitForTimeout(600);
+// activar licuación y arrastre
+await page.getByText('Suelo y capacidad del pilote').click();
+await page.getByText('Evaluar licuación (Seed–Idriss)').click();
+await page.getByText('Arrastre (fricción negativa)').first().click();
+await page.waitForTimeout(300);
+await page.getByRole('tab', { name: /Puntales/ }).click();
+await page.waitForTimeout(500);
+await page.screenshot({ path: out + '/stm1.png' });
+await page.locator('.right').evaluate((e) => e.scrollTo(0, 700));
+await page.waitForTimeout(300);
+await page.screenshot({ path: out + '/stm2.png' });
+await page.getByRole('tab', { name: /Suelo y efectos/ }).click();
+await page.waitForTimeout(500);
+await page.screenshot({ path: out + '/suelo1.png' });
+await page.locator('.right').evaluate((e) => e.scrollTo(0, 800));
+await page.waitForTimeout(300);
+await page.screenshot({ path: out + '/suelo2.png' });
+await browser.close();

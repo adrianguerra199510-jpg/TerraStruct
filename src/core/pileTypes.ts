@@ -49,6 +49,8 @@ export interface PileDef {
   tc: number;
   /** eje de flexión del perfil H */
   axis: 'weak' | 'strong';
+  /** método de instalación (asentamiento por punta) */
+  install: 'driven' | 'bored';
   /** tapón de suelo en el extremo (tubo abierto o perfil H) */
   plug: boolean;
   /** longitud embebida bajo el cabezal, m */
@@ -82,6 +84,16 @@ export interface SoilLayer {
   /** directo: fricción lateral y resistencia de punta, kPa */
   fs: number;
   qb: number;
+  /** deformabilidad: módulo de elasticidad (kPa) y, si Cc > 0, consolidación (Cc, e0) */
+  Es: number;
+  Cc: number;
+  e0: number;
+  /** estrato que se consolida o rellena y genera fricción negativa sobre el pilote */
+  downdrag: boolean;
+  /** licuación: (N1)60, finos (%) y si se evalúa el estrato */
+  N160: number;
+  FC: number;
+  liq: boolean;
 }
 
 export interface PileGeo {
@@ -99,6 +111,17 @@ export interface PileGeo {
   layers: SoilLayer[];
   /** aplicar eficiencia de grupo (Converse–Labarre) a la compresión */
   groupEff: boolean;
+  /** fricción negativa: profundidad del plano neutro como fracción de L */
+  neutralFrac: number;
+  /** asentamiento admisible del grupo, m */
+  sAllow: number;
+  /** licuación: nivel freático desde el terreno (m), aceleración máx. (g), magnitud, FS mínimo y fricción residual (fracción) */
+  liqOn: boolean;
+  gwt: number;
+  amax: number;
+  Mw: number;
+  fsLiq: number;
+  liqResid: number;
 }
 
 export interface PileLayout {
@@ -136,10 +159,14 @@ export interface PileCap {
   lambda: number;
   code: ShearCode;
   gammaC: number;
+  /** armadura de control de fisuración en puntales (ΣAs·senγ/(b·s) ≥ 0.003): βs = 0.75 en vez de 0.60 */
+  crackMesh: boolean;
 }
 
 export interface PileCombo extends LoadCase {
   id: string;
+  /** combinación con sismo (se verifica la condición licuada) */
+  eq?: boolean;
   name: string;
   kind: 'service' | 'ultimate';
   qaFactor: number;
@@ -173,6 +200,7 @@ export function defaultPile(kind: PileKind = 'concrete'): PileDef {
     Fy: 250,
     tc: 0.0015,
     axis: 'weak',
+    install: kind === 'concrete' ? 'bored' : 'driven',
     plug: false,
     L: 18,
     Lu: 0,
@@ -187,16 +215,17 @@ export function defaultPile(kind: PileKind = 'concrete'): PileDef {
 
 export function defaultLayers(): SoilLayer[] {
   const l = (name: string, thk: number, kind: SoilLayer['kind'], p: Partial<SoilLayer>): SoilLayer => ({
-    name, thk, kind, su: 50, alpha: 0, gamma: 9, phi: 32, K: 1, Nq: 0, fsMax: 100, fs: 30, qb: 2000, ...p,
+    name, thk, kind, su: 50, alpha: 0, gamma: 9, phi: 32, K: 1, Nq: 0, fsMax: 100, fs: 30, qb: 2000, Es: 30000, Cc: 0, e0: 0.8, downdrag: false, N160: 20, FC: 10, liq: false, ...p,
   });
   return [
-    l('Arcilla blanda a media', 6, 'cohesive', { su: 40, gamma: 8 }),
-    l('Arena densa', 12, 'granular', { phi: 34, gamma: 10, K: 1, fsMax: 100 }),
+    l('Arcilla blanda a media', 6, 'cohesive', { su: 40, gamma: 8, Es: 8000, Cc: 0.3, e0: 1.0 }),
+    l('Arena densa', 12, 'granular', { phi: 34, gamma: 10, K: 1, fsMax: 100, Es: 45000, N160: 12, FC: 8, liq: true }),
+    l('Arcilla firme bajo la punta', 12, 'cohesive', { su: 120, gamma: 9, Es: 25000, Cc: 0.15, e0: 0.7 }),
   ];
 }
 
 export function defaultCombos(): PileCombo[] {
-  const s = (id: string, name: string, P: number, Vx: number, Vy: number, Mx: number, My: number, qaFactor: number): PileCombo => ({ id, name, kind: 'service', P, Vx, Vy, Mx, My, qaFactor });
+  const s = (id: string, name: string, P: number, Vx: number, Vy: number, Mx: number, My: number, qaFactor: number): PileCombo => ({ id, name, kind: 'service', P, Vx, Vy, Mx, My, qaFactor, eq: Vx !== 0 || Vy !== 0 });
   const u = (id: string, name: string, P: number, Vx: number, Vy: number, Mx: number, My: number): PileCombo => ({ id, name, kind: 'ultimate', P, Vx, Vy, Mx, My, qaFactor: 1 });
   return [
     s('S1', 'D + L', 1900, 0, 0, 0, 0, 1),
@@ -215,10 +244,10 @@ export function defaultPileInput(kind: PileKind = 'concrete'): PileInput {
     cap: {
       h: 1.1, edge: 0.5, manualSize: false, B: 2.5, L: 2.5, cover: 0.075, embed: 0.075, barSystem: 'astm', barX: '#8', barY: '#8', lowerLayer: 'x',
       topSteel: false, barTopX: '#5', barTopY: '#5', manual: { on: false, sBotX: 0.15, sBotY: 0.15, sTopX: 0.2, sTopY: 0.2 },
-      fc: 28, fy: 420, lambda: 1, code: 'ACI318_14', gammaC: 24,
+      fc: 28, fy: 420, lambda: 1, code: 'ACI318_14', gammaC: 24, crackMesh: true,
     },
     column: { geom: { ...defaultColumnGeom('rect'), b: 0.5, h: 0.5 }, x: 0, y: 0 },
-    geo: { mode: 'static', QaC: 700, QaT: 150, FS: 2.5, FSt: 3, etaT: 0.75, Df: 1.5, qbMax: 5000, layers: defaultLayers(), groupEff: false },
+    geo: { mode: 'static', QaC: 700, QaT: 150, FS: 2.5, FSt: 3, etaT: 0.75, Df: 1.5, qbMax: 5000, layers: defaultLayers(), groupEff: false, neutralFrac: 0.8, sAllow: 0.025, liqOn: false, gwt: 2, amax: 0.25, Mw: 7, fsLiq: 1.1, liqResid: 0 },
     combos: defaultCombos(),
   };
 }

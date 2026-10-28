@@ -1,9 +1,11 @@
 // Análisis y diseño de grupos de pilotes y cabezales (ACI 318 / AISC 360). Unidades: kN, m, MPa.
-import { Pt, bbox, convexHull, offsetConvex, perimeter, pointInPolygon } from './geometry';
+import { Pt, bbox, convexHull, offsetConvex, perimeter, pointInPolygon, polyProps } from './geometry';
 import { columnPoly } from './shapes';
 import { chooseSpacing, findBar, developmentLength, hookDevelopment, barList, Detailing } from './materials';
 import { flexureAs, flexureCapacity, oneWayVc, punchingVc, rhoMinSlab, PHI_FLEX, PHI_SHEAR } from './concrete';
 import { PileInput, PileCombo, PileDef, SoilLayer, pilePositions, standardLayout } from './pileTypes';
+import { stmDesign, StmResult } from './pileSTM';
+import { liquefaction, settlement, groupLateral, effectiveStressProfile, layerIndexAt, LiqResult, SettleResult, GroupLateral } from './pileExtra';
 import { PileProps, pileProps, concretePhiMn, concreteShear, concreteSteelRatio, steelCapacity, steelInteraction, lateralPile, SteelCap, Lateral } from './pileStruct';
 
 export interface PCheck {
@@ -72,6 +74,11 @@ export interface GeoResult {
   Wpile: number;
   perim: number;
   Atip: number;
+  /** fricción negativa total (kN) y su zona; capacidad con fricción negativa y post-licuación */
+  Qneg: number;
+  QaDD: number;
+  QaLiq: number;
+  QsLiq: number;
 }
 
 function nqOf(phi: number): number {
@@ -79,12 +86,12 @@ function nqOf(phi: number): number {
   return Math.exp(Math.PI * t) * Math.tan(Math.PI / 4 + (phi * Math.PI) / 360) ** 2;
 }
 
-export function geoCapacity(inp: PileInput, props: PileProps): GeoResult {
+export function geoCapacity(inp: PileInput, props: PileProps, liq?: LiqResult): GeoResult {
   const g = inp.geo;
   const p = inp.pile;
   const W = props.w * p.L;
   if (g.mode === 'user') {
-    return { mode: 'user', rows: [], Qs: 0, Qb: 0, qb: 0, qbNote: '', Qult: 0, QaC: g.QaC, QaT: g.QaT, Wpile: W, perim: props.perim, Atip: props.Atip };
+    return { mode: 'user', rows: [], Qs: 0, Qb: 0, qb: 0, qbNote: '', Qult: 0, QaC: g.QaC, QaT: g.QaT, Wpile: W, perim: props.perim, Atip: props.Atip, Qneg: 0, QaDD: g.QaC, QaLiq: g.QaC, QsLiq: 0 };
   }
   const layers = g.layers.length ? g.layers : [];
   const dz = 0.25;
@@ -106,18 +113,14 @@ export function geoCapacity(inp: PileInput, props: PileProps): GeoResult {
     }
     return layers.length - 1;
   };
-  const sv0 = g.Df * (layers[0]?.gamma ?? 18);
-  const sv: number[] = [];
-  let acc = sv0;
-  for (let k = 0; k < nS; k++) {
-    const gk = layerAt((k + 0.5) * dzz).gamma;
-    sv.push(acc + (gk * dzz) / 2);
-    acc += gk * dzz;
-  }
+  const sv = effectiveStressProfile(inp, nS * dzz, dzz).sv;
   const zc = 15 * props.Dp;
   const kc = Math.min(nS - 1, Math.max(0, Math.floor(zc / dzz)));
   const rowsMap = new Map<number, GeoRow>();
   let Qs = 0;
+  let Qdd = 0;
+  let QsLiq = 0;
+  const zn = g.neutralFrac * p.L;
   const deltaOf = (phi: number) => (p.kind === 'concrete' ? 0.75 * phi : Math.max(phi - 5, 1));
   for (let k = 0; k < nS; k++) {
     const z = (k + 0.5) * dzz;
@@ -140,6 +143,8 @@ export function geoCapacity(inp: PileInput, props: PileProps): GeoResult {
     }
     const qs = fs * props.perim * dzz;
     Qs += qs;
+    QsLiq += liq?.liquefied[li] ? qs * g.liqResid : qs;
+    if (l.downdrag && z <= zn) Qdd += qs;
     const r = rowsMap.get(li) ?? { layer: l.name, z0: z - dzz / 2, z1: z + dzz / 2, fs: 0, Qs: 0, note };
     r.z1 = z + dzz / 2;
     r.fs += (fs * dzz); // se normaliza abajo
@@ -166,7 +171,9 @@ export function geoCapacity(inp: PileInput, props: PileProps): GeoResult {
   const Qult = Qs + Qb;
   const QaC = Qult / g.FS;
   const QaT = (g.etaT * Qs) / g.FSt + W;
-  return { mode: 'static', rows, Qs, Qb, qb, qbNote, Qult, QaC, QaT, Wpile: W, perim: props.perim, Atip: props.Atip };
+  const QaDD = Math.max(Qs - Qdd + Qb, 0) / g.FS;
+  const QaLiq = (QsLiq + Qb) / 1.5;
+  return { mode: 'static', rows, Qs, Qb, qb, qbNote, Qult, QaC, QaT, Wpile: W, perim: props.perim, Atip: props.Atip, Qneg: Qdd, QaDD, QaLiq, QsLiq };
 }
 
 /** Eficiencia de grupo de Converse–Labarre (solo distribuciones en malla). */
@@ -194,6 +201,10 @@ export interface ComboRes {
   ratioC: number;
   ratioT: number;
   lat: Lateral;
+  /** efecto de grupo lateral: multiplicadores p, fuerza por pilote y momento máximo */
+  pm: number[];
+  Hi: number[];
+  Mmax: number;
   /** última: reacciones con peso propio factorizado para el pilote */
   Pu?: { max: number; min: number };
   Mu?: number;
@@ -285,6 +296,10 @@ export interface PileResults {
   shearY?: CapShear;
   punch?: CapPunch;
   pilePunch: PilePunch[];
+  stm?: StmResult;
+  liq: LiqResult;
+  settle?: SettleResult;
+  deep: boolean;
   dX: number;
   dY: number;
   concreteVolume: number;
@@ -324,7 +339,8 @@ export function analyzePile(inp: PileInput): PileResults {
   const props = pileProps(p);
   const rect = capRect(inp, pts);
   const Wcap = cap.gammaC * rect.B * rect.L * cap.h;
-  const geo = geoCapacity(inp, props);
+  const liq = liquefaction(inp);
+  const geo = geoCapacity(inp, props, liq);
   const Eg = groupEfficiency(inp, props.Dp);
   const QaCeff = geo.QaC * (inp.geo.groupEff && Eg.applicable ? Eg.Eg : 1);
   const fcap = { x: (rect.x0 + rect.x1) / 2, y: (rect.y0 + rect.y1) / 2 };
@@ -339,7 +355,16 @@ export function analyzePile(inp: PileInput): PileResults {
     const Pt0 = cb.P + Wcap;
     const sol = solveReactions(pts, Pt0, cb.P * col.x + Myb + Wcap * fcap.x, cb.P * col.y + Mxb + Wcap * fcap.y);
     const H = Math.hypot(cb.Vx, cb.Vy);
-    const Hpile = n ? H / n : 0;
+    // reparto lateral con efecto de grupo: mismo desplazamiento en todos los pilotes, rigidez ∝ (p·nh)^0.6
+    const gl = groupLateral(pts, props.Dp, cb.Vx, cb.Vy);
+    const wts = gl.pm.map((m) => Math.pow(m, 0.6));
+    const sw = wts.reduce((a, b) => a + b, 0) || 1;
+    const Hi = wts.map((w) => (H * w) / sw);
+    const lats = Hi.map((h, i) => lateralPile({ ...p, nh: p.nh * gl.pm[i] }, props.EI, h));
+    let kmax = 0;
+    lats.forEach((l, i) => { if (l.M > (lats[kmax]?.M ?? 0)) kmax = i; });
+    const latC = lats[kmax] ?? lateralPile(p, props.EI, 0);
+    const Hpile = n ? Math.max(...Hi, 0) : 0;
     const R = sol.R;
     const Rmax = n ? Math.max(...R) : 0;
     const Rmin = n ? Math.min(...R) : 0;
@@ -347,7 +372,7 @@ export function analyzePile(inp: PileInput): PileResults {
     return {
       combo: cb, Pcol: cb.P, Ptot: Pt0, R, Rmax, Rmin, H, Hpile, unresolved: sol.unresolved,
       ratioC: Rmax / Math.max(QaCeff * qf, 1e-9), ratioT: Math.max(-Rmin, 0) / Math.max(geo.QaT * qf, 1e-9),
-      lat: lateralPile(p, props.EI, Hpile),
+      lat: latC, pm: gl.pm, Hi, Mmax: latC.M,
     };
   };
   const service = inp.combos.filter((c) => c.kind === 'service').map(combine);
@@ -530,10 +555,29 @@ export function analyzePile(inp: PileInput): PileResults {
   };
   bw2('x', dx.flex);
   bw2('y', dy.flex);
-  checks.push({ name: 'Cabezal · cortante en dirección X', ratio: dx.sh.ratio, ok: dx.sh.ok, detail: `${dx.sh.combo}: Vu = ${dx.sh.Vu.toFixed(0)} kN ≤ φVc = ${dx.sh.phiVc.toFixed(0)} kN` });
-  checks.push({ name: 'Cabezal · cortante en dirección Y', ratio: dy.sh.ratio, ok: dy.sh.ok, detail: `${dy.sh.combo}: Vu = ${dy.sh.Vu.toFixed(0)} kN ≤ φVc = ${dy.sh.phiVc.toFixed(0)} kN` });
-  const deep = Math.min(dx.sh.aOverD, dy.sh.aOverD);
-  if (deep < 2) warnings.push(`Cabezal profundo (luz de cortante a/d = ${deep.toFixed(2)} < 2): ACI 318 (cap. 13 y 23) recomienda verificar con el método de puntales y tirantes; los resultados por flexión y cortante de viga son una aproximación.`);
+  const deep = Math.min(dx.sh.aOverD, dy.sh.aOverD) < 2;
+  checks.push({ name: 'Cabezal · cortante en dirección X', ratio: dx.sh.ratio, ok: dx.sh.ok, advisory: deep, detail: `${dx.sh.combo}: Vu = ${dx.sh.Vu.toFixed(0)} kN ≤ φVc = ${dx.sh.phiVc.toFixed(0)} kN${deep ? ' (cabezal profundo: rige puntal–tirante)' : ''}` });
+  checks.push({ name: 'Cabezal · cortante en dirección Y', ratio: dy.sh.ratio, ok: dy.sh.ok, advisory: deep, detail: `${dy.sh.combo}: Vu = ${dy.sh.Vu.toFixed(0)} kN ≤ φVc = ${dy.sh.phiVc.toFixed(0)} kN${deep ? ' (cabezal profundo: rige puntal–tirante)' : ''}` });
+
+  // puntales y tirantes (ACI 318-19 cap. 23): rige en cabezales profundos (a/d < 2) y se muestra siempre
+  const cpp = polyProps(colPoly);
+  const apile = p.kind === 'concrete' ? (p.shape === 'circle' ? (Math.PI * p.D ** 2) / 4 : p.D ** 2) : p.kind === 'pipe' ? (Math.PI * p.D ** 2) / 4 : props.Dp ** 2;
+  const stm = stmDesign({
+    pts, combos: ultimate.map((u) => ({ name: u.combo.name, R: rc(u.combo), P: u.combo.P })), col: { x: cpp.cx, y: cpp.cy, A: cpp.A }, Dp: props.Dp, Apile: apile, rect, h: cap.h,
+    dX, dY, asX: dx.flex.det.asProv, asY: dy.flex.det.asProv, fc: cap.fc, fy: cap.fy, lambda: cap.lambda, crackMesh: cap.crackMesh,
+    colW: { x: cbb.xmax - cbb.xmin, y: cbb.ymax - cbb.ymin }, cover: cap.cover, dbX: bX.db / 1000, dbY: bY.db / 1000,
+  });
+  stm.aOverD = Math.min(dx.sh.aOverD, dy.sh.aOverD);
+  stm.deep = deep;
+  if (ultimate.length) {
+    const adv = !deep;
+    const tag = deep ? '' : ' (informativo: cabezal no profundo)';
+    checks.push({ name: 'Cabezal · puntales (STM)', ratio: stm.ratioStrut, ok: stm.ratioStrut <= 1 + 1e-9, advisory: adv, detail: `${stm.combo}: C máx = ${Math.max(...stm.struts.map((q) => q.C), 0).toFixed(0)} kN; fce = ${stm.fce.toFixed(1)} MPa (βs = ${stm.betaS.toFixed(2)})${tag}` });
+    checks.push({ name: 'Cabezal · tirantes (STM)', ratio: stm.ratioTie, ok: stm.ratioTie <= 1 + 1e-9, advisory: adv, detail: `T x = ${stm.tieX.T.toFixed(0)} kN, T y = ${stm.tieY.T.toFixed(0)} kN; As req = ${stm.tieX.AsReq.toFixed(1)} / ${stm.tieY.AsReq.toFixed(1)} cm²${tag}` });
+    checks.push({ name: 'Cabezal · zonas nodales (STM)', ratio: Math.max(stm.ratioNodeCol, stm.ratioNodePile), ok: Math.max(stm.ratioNodeCol, stm.ratioNodePile) <= 1 + 1e-9, advisory: adv, detail: `columna ${(stm.ratioNodeCol).toFixed(2)}, pilote ${(stm.ratioNodePile).toFixed(2)} (βn pilote = ${stm.betaNPile})${tag}` });
+    if (stm.uplift) warnings.push('Hay pilotes en tracción: el modelo de puntales y tirantes del programa solo considera reacciones de compresión; revise el cabezal con un modelo propio.');
+  }
+  if (deep) warnings.push(`Cabezal profundo (a/d = ${stm.aOverD.toFixed(2)} < 2): el diseño se rige por el método de puntales y tirantes (ACI 318-19 cap. 23); el cortante como viga se muestra solo como referencia.`);
 
   // punzonamiento de la columna
   const dAvg = (dX + dY) / 2;
@@ -586,11 +630,66 @@ export function analyzePile(inp: PileInput): PileResults {
     checks.push({ name: 'Cabezal · punzonamiento por pilote', ratio: w.ratio, ok: w.ok, detail: `Pilote ${w.i + 1}: Ru = ${w.Ru.toFixed(0)} kN, vu = ${w.vu.toFixed(2)} MPa ≤ φvc = ${w.phivc.toFixed(2)} MPa` });
   }
 
+  // ---------- fricción negativa
+  const sustained = service.filter((x) => !x.combo.eq);
+  const sus = sustained.length ? sustained : service;
+  if (geo.mode === 'static' && geo.Qneg > 1e-6 && sus.length) {
+    const ws = sus.reduce((a, b) => (b.Rmax > a.Rmax ? b : a));
+    checks.push({ name: 'Pilotes · fricción negativa (servicio)', ratio: (ws.Rmax + geo.Qneg) / Math.max(geo.QaDD, 1e-9), ok: ws.Rmax + geo.Qneg <= geo.QaDD + 1e-9, detail: `${ws.combo.name}: R + Qneg = ${(ws.Rmax + geo.Qneg).toFixed(0)} kN ≤ Qa (bajo el plano neutro) = ${geo.QaDD.toFixed(0)} kN; Qneg = ${geo.Qneg.toFixed(0)} kN` });
+    if (worstC) {
+      const pu = worstC.Pu + geo.Qneg;
+      const e = evalPile(pu, worstC.Mu, 0);
+      checks.push({ name: 'Pilote · estructural con fricción negativa', ratio: e.ratio, ok: e.ratio <= 1 + 1e-9, detail: `Pu + Qneg = ${pu.toFixed(0)} kN con Mu = ${worstC.Mu.toFixed(1)} kN·m en el plano neutro` });
+    }
+  }
+
+  // ---------- licuación
+  if (liq.enabled && liq.rows.length) {
+    const minFS = Math.min(...liq.rows.map((r) => r.FS));
+    checks.push({ name: 'Suelo · potencial de licuación', ratio: inp.geo.fsLiq / Math.max(minFS, 1e-9), ok: minFS >= inp.geo.fsLiq, advisory: true, detail: `FS mín = ${minFS.toFixed(2)} (requerido ≥ ${inp.geo.fsLiq}); espesor licuable = ${liq.Lliq.toFixed(1)} m; asentamiento del terreno ≈ ${(liq.settlement * 1000).toFixed(0)} mm` });
+    const eqS = service.filter((x) => x.combo.eq);
+    if (geo.mode === 'static' && liq.Lliq > 0 && eqS.length) {
+      const w = eqS.reduce((a, b) => (b.Rmax > a.Rmax ? b : a));
+      checks.push({ name: 'Pilotes · compresión con suelo licuado', ratio: w.Rmax / Math.max(geo.QaLiq, 1e-9), ok: w.Rmax <= geo.QaLiq + 1e-9, detail: `${w.combo.name}: R máx = ${w.Rmax.toFixed(0)} kN ≤ (Qs,res + Qb)/1.5 = ${geo.QaLiq.toFixed(0)} kN` });
+    }
+    if (liq.Lliq > 0) {
+      const eqU = ultimate.filter((x) => x.combo.eq && x.Pu);
+      let wl: { r: number; name: string; Pu: number; M: number } | null = null;
+      for (const u of eqU) {
+        const pl = { ...p, Lu: p.Lu + liq.Lliq, nh: p.nh };
+        const lt = lateralPile(pl, props.EI, u.Hpile);
+        const c = evalPile(u.Pu!.max, lt.M, 0);
+        // pandeo en el tramo licuado
+        let buck = 0;
+        if (p.kind === 'concrete') buck = u.Pu!.max / Math.max(0.25 * ((Math.PI ** 2 * props.EI) / (p.K * (p.Lu + liq.Lliq)) ** 2), 1e-9);
+        else buck = u.Pu!.max / Math.max(steelCapacity(pl, props, lt.T).phiPn, 1e-9);
+        const r = Math.max(c.ratio, buck);
+        if (!wl || r > wl.r) wl = { r, name: u.combo.name, Pu: u.Pu!.max, M: lt.M };
+      }
+      if (wl) checks.push({ name: 'Pilote · condición licuada (pandeo + flexión)', ratio: wl.r, ok: wl.r <= 1 + 1e-9, detail: `${wl.name}: Pu = ${wl.Pu.toFixed(0)} kN, Mu = ${wl.M.toFixed(1)} kN·m con ${liq.Lliq.toFixed(1)} m sin apoyo lateral` });
+    }
+  }
+
+  // ---------- asentamiento
+  let settle: SettleResult | undefined;
+  if (inp.geo.layers.length && sus.length) {
+    const wt = sus.reduce((a, b) => (b.Ptot > a.Ptot ? b : a));
+    const bbp = bbox(pts.length ? pts : [{ x: 0, y: 0 }]);
+    const Ep = (p.kind === 'concrete' ? 4700 * Math.sqrt(p.fc) : 200000) * 1000;
+    const tipL = inp.geo.layers[layerIndexAt(inp.geo.layers, p.L)];
+    const qbEst = geo.mode === 'static' ? geo.qb : (geo.QaC * inp.geo.FS * 0.5) / Math.max(props.Atip, 1e-9);
+    settle = settlement(inp, {
+      Qpile: wt.Ptot / Math.max(n, 1), Qgroup: wt.Ptot, Qs: geo.mode === 'static' ? geo.Qs : 0.5, Qult: geo.mode === 'static' ? geo.Qult : 1, qb: qbEst,
+      Ap: props.A, Ep, D: props.Dp, Bg: bbp.xmax - bbp.xmin + props.Dp, Lg: bbp.ymax - bbp.ymin + props.Dp, tipKind: tipL?.kind ?? 'granular',
+    });
+    checks.push({ name: 'Pilotes · asentamiento del grupo', ratio: settle.total / Math.max(inp.geo.sAllow, 1e-9), ok: settle.total <= inp.geo.sAllow + 1e-9, detail: `Grupo = ${(settle.group.total * 1000).toFixed(1)} mm, pilote = ${(settle.pile.total * 1000).toFixed(1)} mm ≤ ${(inp.geo.sAllow * 1000).toFixed(0)} mm (${wt.combo.name})` });
+  }
+
   const ok = checks.every((c) => c.ok || c.advisory);
   return {
     ok, checks, warnings, pts, n, capRect: rect, Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
     lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen },
-    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, dX, dY,
+    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, liq, settle, deep, dX, dY,
     concreteVolume: rect.B * rect.L * cap.h, pileLength: n * p.L,
   };
 }
@@ -599,14 +698,23 @@ export function analyzePile(inp: PileInput): PileResults {
 const isPileCheck = (c: PCheck) => /^Pilot/.test(c.name);
 const isCapCheck = (c: PCheck) => /^Cabezal/.test(c.name) && !/borde/.test(c.name);
 
-/** Menor espesor del cabezal (múltiplo de 5 cm) que cumple flexión, cortante y punzonamiento. */
-export function findCapThickness(inp: PileInput): number | null {
+/** Menor espesor del cabezal (múltiplo de 5 cm) y barra que cumplen flexión, cortante, punzonamiento y puntales y tirantes. */
+export function findCapDesign(inp: PileInput, tryBars = true): { h: number; bar: string } | null {
+  const order = inp.cap.barSystem === 'astm' ? ['#6', '#7', '#8', '#9', '#10', '#11'] : ['Ø16', 'Ø20', 'Ø25', 'Ø32', 'Ø36'];
+  const avail = barList(inp.cap.barSystem).map((b) => b.id);
+  const bars = tryBars ? order.filter((b) => avail.includes(b)) : [inp.cap.barX];
   for (let h = 0.5; h <= 3.5 + 1e-9; h += 0.05) {
-    const t = { ...inp, cap: { ...inp.cap, h: +h.toFixed(2), manual: { ...inp.cap.manual, on: false } } };
-    const r = analyzePile(t);
-    if (r.checks.filter((c) => isCapCheck(c) && !/desarrollo/.test(c.name)).every((c) => c.ok)) return +h.toFixed(2);
+    for (const bar of bars) {
+      const t = { ...inp, cap: { ...inp.cap, h: +h.toFixed(2), barX: bar, barY: bar, barTopX: bar, barTopY: bar, manual: { ...inp.cap.manual, on: false } } };
+      const r = analyzePile(t);
+      if (r.checks.filter((c) => isCapCheck(c) && !c.advisory && !/desarrollo/.test(c.name)).every((c) => c.ok) && (r.flexX?.det.ok ?? true) && (r.flexY?.det.ok ?? true)) return { h: +h.toFixed(2), bar };
+    }
   }
   return null;
+}
+
+export function findCapThickness(inp: PileInput): number | null {
+  return findCapDesign(inp, false)?.h ?? null;
 }
 
 export interface PileAutoResult {
@@ -621,29 +729,22 @@ export function autoSizePile(inp0: PileInput, minN = 1, maxN = 20): PileAutoResu
   const props = pileProps(inp.pile);
   const s = Math.ceil((3 * props.Dp) / 0.05 - 1e-9) * 0.05;
   const edge = Math.max(Math.ceil((props.Dp / 2 + 0.25) / 0.05 - 1e-9) * 0.05, 0.4);
-  let found: PileInput | null = null;
-  for (let n = minN; n <= maxN; n++) {
+  let done: PileInput | null = null;
+  let anyPilePass = false;
+  for (let n = minN; n <= maxN && !done; n++) {
     const t: PileInput = { ...inp, layout: standardLayout(n, s), cap: { ...inp.cap, edge, h: Math.max(inp.cap.h, 0.8) } };
     const r = analyzePile(t);
     if (r.warnings.some((w) => /no puede resistir/.test(w))) continue;
-    if (r.checks.filter((c) => isPileCheck(c) || /separación/.test(c.name)).every((c) => c.ok)) {
-      found = t;
-      break;
-    }
+    if (!r.checks.filter((c) => (isPileCheck(c) && !c.advisory) || /separación/.test(c.name)).every((c) => c.ok)) continue;
+    anyPilePass = true;
+    const des = findCapDesign(t, true);
+    if (!des) continue;
+    const t2: PileInput = { ...t, cap: { ...t.cap, h: des.h, barX: des.bar, barY: des.bar, barTopX: des.bar, barTopY: des.bar } };
+    // el mayor peso del cabezal puede exigir más pilotes: se acepta solo si todo cumple
+    if (analyzePile(t2).ok) done = t2;
   }
-  if (!found) return { input: inp, ok: false, note: `Con hasta ${maxN} pilotes no se cumplen las verificaciones de los pilotes: aumente la longitud o la sección.` };
-  inp = found;
-  const h = findCapThickness(inp);
-  if (h) inp = { ...inp, cap: { ...inp.cap, h } };
-  const order = inp.cap.barSystem === 'astm' ? ['#6', '#7', '#8', '#9', '#10', '#11'] : ['Ø16', 'Ø20', 'Ø25', 'Ø32', 'Ø36'];
-  const avail = barList(inp.cap.barSystem).map((b) => b.id);
-  for (const id of order) {
-    if (!avail.includes(id)) continue;
-    const t = { ...inp, cap: { ...inp.cap, barX: id, barY: id, barTopX: id, barTopY: id } };
-    inp = t;
-    const r = analyzePile(t);
-    if ((r.flexX?.det.ok ?? true) && (r.flexY?.det.ok ?? true)) break;
-  }
+  if (!done) return { input: inp, ok: false, note: anyPilePass ? `Con hasta ${maxN} pilotes no se logra un cabezal que cumpla: revise la sección del cabezal o las cargas.` : `Con hasta ${maxN} pilotes no se cumplen las verificaciones de los pilotes: aumente la longitud o la sección.` };
+  inp = done;
   const fin = analyzePile(inp);
   return { input: inp, ok: fin.ok, note: fin.ok ? `Cumple con ${fin.n} pilotes.` : `No cumple: ${fin.checks.filter((c) => !c.ok && !c.advisory).map((c) => c.name).join(', ')}` };
 }

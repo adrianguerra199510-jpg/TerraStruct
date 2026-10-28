@@ -1,17 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe } from 'lucide-react';
+import { Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves } from 'lucide-react';
 import { PileInput, PileKind, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
-import { analyzePile, autoSizePile, findCapThickness, PileResults } from '../core/pile';
+import { analyzePile, autoSizePile, findCapDesign, PileResults } from '../core/pile';
 import { barList } from '../core/materials';
 import { FootingColumn, defaultColumn } from '../core/footing';
 import { Acc, Alert, Card, Check, CheckCard, CellNum, CellText, Kpi, Num, Sel, Tabs, Tbl, Txt, useUnits } from './common';
 import { DARK, LIGHT } from '../draw/svg';
-import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg } from '../draw/pileDraw';
+import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
 import { ColumnEditor } from './FootingPage';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 
-type Tab = 'planta' | 'resultados' | 'armado' | 'memoria';
+type Tab = 'planta' | 'resultados' | 'stm' | 'suelo' | 'armado' | 'memoria';
 
 export function PilePage({ data, onChange, theme, info }: { data: PileInput; onChange: (f: PileInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const { fmt } = useUnits();
@@ -89,6 +89,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
                 </div>
               </>
             )}
+            <Sel label="Instalación" value={p.install} onChange={(v) => setPile({ install: v })} options={[{ id: 'bored', label: 'Preexcavado / vaciado in situ' }, { id: 'driven', label: 'Hincado' }]} />
             <Num label="Longitud embebida L" q="len" value={p.L} onChange={(v) => setPile({ L: v })} min={2} />
             <Num label="Longitud libre sobre el terreno" q="len" value={p.Lu} onChange={(v) => setPile({ Lu: v })} min={0} />
             {p.kind !== 'concrete' && <Num label="K (pandeo)" value={p.K} onChange={(v) => setPile({ K: v })} min={0.5} />}
@@ -187,6 +188,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
                 </div>
               </>
             )}
+            <div style={{ gridColumn: '1 / -1' }}><Check label="Armadura de control de fisuración en puntales (≥ 0.003)" value={data.cap.crackMesh} onChange={(v) => setCap({ crackMesh: v })} hint="Malla lateral que permite βs = 0.75 (si no, 0.60)" /></div>
             <Num label="f′c del cabezal" q="stress" value={data.cap.fc} onChange={(v) => setCap({ fc: v })} min={14} />
             <Num label="fy" q="stress" value={data.cap.fy} onChange={(v) => setCap({ fy: v })} min={240} />
             <Sel label="Norma de cortante" value={data.cap.code} onChange={(v) => setCap({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19' }]} />
@@ -213,6 +215,8 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
           items={[
             { id: 'planta', label: 'Planta y reacciones', icon: <Eye size={16} /> },
             { id: 'resultados', label: 'Resultados', icon: <ListChecks size={16} /> },
+            { id: 'stm', label: 'Puntales y tirantes', icon: <Network size={16} /> },
+            { id: 'suelo', label: 'Suelo y efectos', icon: <Waves size={16} /> },
             { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
             { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
           ]}
@@ -247,7 +251,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
               <button className="btn small primary" disabled={!!busy} title="Elige n.º de pilotes, espesor y acero" onClick={() => run('a', () => { const r = autoSizePile(data); onChange(r.input); if (!r.ok) alert(r.note); })}>
                 <Wand2 size={14} /> Dimensionar automáticamente
               </button>
-              <button className="btn small" disabled={!!busy} onClick={() => run('h', () => { const h = findCapThickness(data); if (h) set({ cap: { ...data.cap, h } }); else alert('No se encontró un espesor que cumpla hasta 3.5 m.'); })}>
+              <button className="btn small" disabled={!!busy} onClick={() => run('h', () => { const h = findCapDesign(data, true); if (h) set({ cap: { ...data.cap, h: h.h, barX: h.bar, barY: h.bar, barTopX: h.bar, barTopY: h.bar } }); else alert('No se encontró un espesor que cumpla hasta 3.5 m.'); })}>
                 <Wand2 size={14} /> Espesor mínimo del cabezal
               </button>
             </div>
@@ -256,6 +260,85 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
               <div className="checks">{res.checks.map((c, i) => <CheckCard key={i} name={c.name} ratio={c.ratio} ok={c.ok} detail={c.detail} advisory={c.advisory} />)}</div>
             </Card>
             <PileResultTables res={res} data={data} />
+          </>
+        )}
+        {res && tab === 'stm' && res.stm && (
+          <>
+            <div className={'banner ' + (res.deep ? 'ok' : 'ok')} style={{ background: res.deep ? undefined : undefined }}>
+              <Network />
+              {res.deep ? `Cabezal profundo (a/d = ${res.stm.aOverD.toFixed(2)} < 2): rige el método de puntales y tirantes (ACI 318-19, cap. 23).` : `Cabezal no profundo (a/d = ${res.stm.aOverD.toFixed(2)}): modelo de puntales y tirantes informativo.`}
+            </div>
+            <div className="grid3" style={{ gap: 12 }}>
+              <Kpi label="Brazo interno z" value={fmt.u('len', res.stm.z, 2)} sub={`nodo superior ${fmt.n('len', res.stm.ay, 2)} m`} />
+              <Kpi label="Tirantes Tx / Ty" value={`${fmt.n('force', res.stm.tieX.T, 0)} / ${fmt.n('force', res.stm.tieY.T, 0)}`} sub={fmt.l('force')} />
+              <Kpi label="Combinación" value={res.stm.combo} sub={`βs ${res.stm.betaS.toFixed(2)} · βn pilote ${res.stm.betaNPile}`} />
+            </div>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileStmElevationSvg(data, res, { axis: 'x', W: 820, H: 470, theme: th, fmt }) }} /></div>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileStmElevationSvg(data, res, { axis: 'y', W: 820, H: 470, theme: th, fmt }) }} /></div>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileStmPlanSvg(data, res, { W: 820, H: 560, theme: th, fmt }) }} /></div>
+            <Card title="Puntales" icon={<Network size={18} />}>
+              <Tbl
+                head={['Pilote', `R (${fmt.l('force')})`, 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación']}
+                align={['c', 'r', 'r', 'r', 'r', 'r', 'r', 'r']}
+                rows={res.stm.struts.map((q) => [String(q.i + 1), fmt.n('force', q.R, 0), ((q.theta * 180) / Math.PI).toFixed(1), fmt.n('force', q.C, 0), q.AcsCol.toFixed(3), q.AcsPile.toFixed(3), fmt.n('force', q.phiFns, 0), q.ratio.toFixed(2)])}
+              />
+            </Card>
+            <Card title="Tirantes (bandas de pilotes)" icon={<Grid3x3 size={18} />}>
+              <Tbl
+                head={['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación']}
+                align={['l', 'r', 'r', 'r', 'r', 'r', 'r']}
+                rows={[res.stm.tieX, res.stm.tieY].flatMap((t) => t.bands.map((b) => [t.axis.toUpperCase(), b.pos.toFixed(2), fmt.n('force', b.T, 0), b.width.toFixed(2), b.asProv.toFixed(1), fmt.n('force', b.phiTn, 0), b.ratio.toFixed(2)]))}
+              />
+            </Card>
+          </>
+        )}
+        {res && tab === 'suelo' && (
+          <>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileProfileSvg(data, res, { W: 760, H: 520, theme: th, fmt }) }} /></div>
+            <Card title="Asentamiento" icon={<Waves size={18} />}>
+              {res.settle ? (
+                <>
+                  <div className="grid3" style={{ gap: 12 }}>
+                    <Kpi label="Grupo" value={`${(res.settle.group.total * 1000).toFixed(1)} mm`} sub={`admisible ${(data.geo.sAllow * 1000).toFixed(0)} mm`} />
+                    <Kpi label="Pilote individual" value={`${(res.settle.pile.total * 1000).toFixed(1)} mm`} sub={`elást. ${(res.settle.pile.de * 1000).toFixed(1)} · punta ${(res.settle.pile.dp * 1000).toFixed(1)} · fuste ${(res.settle.pile.ds * 1000).toFixed(1)}`} />
+                    <Kpi label="Zapata equivalente" value={`${res.settle.group.Beq.toFixed(1)} × ${res.settle.group.Leq.toFixed(1)} m`} sub={`a ${res.settle.group.zRaft.toFixed(1)} m`} />
+                  </div>
+                  <div className="draw" style={{ marginTop: 10 }}><div dangerouslySetInnerHTML={{ __html: settlementChartSvg(res, { W: 640, H: 380, theme: th, fmt }) }} /></div>
+                </>
+              ) : <Alert>Agregue estratos para calcular el asentamiento.</Alert>}
+            </Card>
+            <Card title="Fricción negativa" icon={<Mountain size={18} />}>
+              {res.geo.mode === 'static' && res.geo.Qneg > 0 ? (
+                <div className="grid3" style={{ gap: 12 }}>
+                  <Kpi label="Qneg" value={fmt.u('force', res.geo.Qneg, 0)} sub={`plano neutro a ${(data.geo.neutralFrac * 100).toFixed(0)} % de L`} />
+                  <Kpi label="Qa bajo el plano neutro" value={fmt.u('force', res.geo.QaDD, 0)} sub={`Qa normal ${fmt.n('force', res.geo.QaC, 0)}`} />
+                </div>
+              ) : <span className="hint">Marque «arrastre» en los estratos que se consolidan o rellenan para considerar la fricción negativa.</span>}
+            </Card>
+            <Card title="Licuación" icon={<Waves size={18} />}>
+              {res.liq.enabled && res.liq.rows.length ? (
+                <>
+                  <Tbl
+                    head={['Estrato', 'z (m)', 'CSR', '(N1)60cs', 'CRR·MSF', 'FS', 'Resultado']}
+                    align={['l', 'r', 'r', 'r', 'r', 'r', 'c']}
+                    rows={res.liq.rows.map((r) => [r.name, r.zGround.toFixed(1), r.CSR.toFixed(3), r.N1cs.toFixed(1), (r.CRR * r.MSF).toFixed(3), r.FS.toFixed(2), r.liquefies ? 'Licúa' : 'No licúa'])}
+                  />
+                  <div className="hint" style={{ margin: '8px 0' }}>Espesor licuable {res.liq.Lliq.toFixed(1)} m · asentamiento del terreno ≈ {(res.liq.settlement * 1000).toFixed(0)} mm</div>
+                  <div className="draw"><div dangerouslySetInnerHTML={{ __html: liquefactionChartSvg(res, { W: 640, H: 400, theme: th }) }} /></div>
+                </>
+              ) : <span className="hint">Active «Evaluar licuación» en «Suelo y capacidad del pilote» y marque los estratos susceptibles.</span>}
+            </Card>
+            <Card title="Efecto de grupo lateral (p-múltiples)" icon={<Layers size={18} />}>
+              {(() => {
+                const lat = res.ultimate.filter((q) => q.H > 0).reduce<any>((a, b) => (!a || b.Mmax > a.Mmax ? b : a), null);
+                return lat ? (
+                  <>
+                    <div className="hint" style={{ marginBottom: 6 }}>{lat.combo.name}: H = {fmt.u('force', lat.H, 1)} · Mu máx = {fmt.u('moment', lat.Mmax, 1)}</div>
+                    <Tbl head={['Pilote', 'p', `H (${fmt.l('force')})`]} align={['c', 'r', 'r']} rows={lat.pm.map((m: number, i: number) => [String(i + 1), m.toFixed(2), fmt.n('force', lat.Hi[i], 1)])} />
+                  </>
+                ) : <span className="hint">Sin cargas horizontales.</span>;
+              })()}
+            </Card>
           </>
         )}
         {res && tab === 'armado' && (
@@ -331,7 +414,7 @@ function CombosEditor({ data, onChange }: { data: PileInput; onChange: (f: PileI
       <div className="tbl-wrap">
         <table className="tbl">
           <thead>
-            <tr><th>Combinación</th><th>Tipo</th><th className="r">P ({fmt.l('force')})</th><th className="r">Vx</th><th className="r">Vy</th><th className="r">Mx ({fmt.l('moment')})</th><th className="r">My</th><th className="r">Qa×</th><th /></tr>
+            <tr><th>Combinación</th><th>Tipo</th><th className="r">P ({fmt.l('force')})</th><th className="r">Vx</th><th className="r">Vy</th><th className="r">Mx ({fmt.l('moment')})</th><th className="r">My</th><th className="r">Qa×</th><th title="Combinación con sismo (condición licuada)">Sismo</th><th /></tr>
           </thead>
           <tbody>
             {data.combos.map((c) => (
@@ -349,6 +432,7 @@ function CombosEditor({ data, onChange }: { data: PileInput; onChange: (f: PileI
                 <td><CellNum q="moment" value={c.Mx} onChange={(v) => upd(c.id, { Mx: v })} decimals={1} /></td>
                 <td><CellNum q="moment" value={c.My} onChange={(v) => upd(c.id, { My: v })} decimals={1} /></td>
                 <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => upd(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
+                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!c.eq} onChange={(e) => upd(c.id, { eq: e.target.checked })} /></td>
                 <td><button className="icon-btn danger" onClick={() => onChange({ ...data, combos: data.combos.filter((x) => x.id !== c.id) })}><Trash2 size={14} /></button></td>
               </tr>
             ))}
@@ -384,7 +468,19 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
             <Num label="η fricción en tracción" value={g.etaT} onChange={(v) => set({ etaT: v })} min={0} max={1} />
             <Num label="Prof. base del cabezal Df" q="len" value={g.Df} onChange={(v) => set({ Df: v })} min={0} />
             <Num label="qb máximo" q="press" value={g.qbMax} onChange={(v) => set({ qbMax: v })} min={100} />
+            <Num label="Asentamiento admisible del grupo" unit="mm" value={+(g.sAllow * 1000).toFixed(1)} onChange={(v) => set({ sAllow: v / 1000 })} min={5} />
+            <Num label="Plano neutro (fracción de L)" value={g.neutralFrac} onChange={(v) => set({ neutralFrac: v })} min={0.3} max={1} hint="Fricción negativa en estratos marcados «arrastre»" />
           </div>
+          <Check label="Evaluar licuación (Seed–Idriss)" value={g.liqOn} onChange={(v) => set({ liqOn: v })} hint="Marque los estratos arenosos susceptibles e ingrese (N1)60 y finos" />
+          {g.liqOn && (
+            <div className="grid3">
+              <Num label="Nivel freático (desde el terreno)" q="len" value={g.gwt} onChange={(v) => set({ gwt: v })} min={0} />
+              <Num label="amax" unit="g" value={g.amax} onChange={(v) => set({ amax: v })} min={0.05} max={1} />
+              <Num label="Magnitud Mw" value={g.Mw} onChange={(v) => set({ Mw: v })} min={5} max={9} />
+              <Num label="FS mínimo" value={g.fsLiq} onChange={(v) => set({ fsLiq: v })} min={1} />
+              <Num label="Fricción residual licuada" value={g.liqResid} onChange={(v) => set({ liqResid: v })} min={0} max={1} hint="Fracción de fs que se conserva" />
+            </div>
+          )}
           {g.layers.map((l, i) => (
             <div key={i} className="card" style={{ padding: 10 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -415,6 +511,19 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                   </>
                 )}
                 <Num label="fs máx" q="press" value={l.fsMax} onChange={(v) => updL(i, { fsMax: v })} min={5} />
+                <Num label="Es (deformación)" q="press" value={l.Es} onChange={(v) => updL(i, { Es: v })} min={500} />
+                <Num label="Cc (0 = usar Es)" value={l.Cc} onChange={(v) => updL(i, { Cc: v })} min={0} />
+                <Num label="e0" value={l.e0} onChange={(v) => updL(i, { e0: v })} min={0.2} />
+                {g.liqOn && l.liq && (
+                  <>
+                    <Num label="(N1)60" value={l.N160} onChange={(v) => updL(i, { N160: v })} min={0} />
+                    <Num label="Finos FC" unit="%" value={l.FC} onChange={(v) => updL(i, { FC: v })} min={0} max={100} />
+                  </>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
+                <Check label="Arrastre (fricción negativa)" value={l.downdrag} onChange={(v) => updL(i, { downdrag: v })} />
+                {g.liqOn && <Check label="Susceptible a licuación" value={l.liq} onChange={(v) => updL(i, { liq: v })} />}
               </div>
             </div>
           ))}

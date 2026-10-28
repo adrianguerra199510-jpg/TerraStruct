@@ -97,3 +97,90 @@ describe('memoria de pilotes', () => {
     expect(reportForProject(q, makeFmt('TEC')).blocks.some((b) => b.t === 'h1' && /Pilotes y cabezal/.test((b as any).text))).toBe(true);
   });
 });
+
+import { pMultiplier, groupLateral, liquefaction, settlement } from '../src/core/pileExtra';
+import { defaultLayers } from '../src/core/pileTypes';
+describe('efectos adicionales', () => {
+  it('multiplicadores p (AASHTO)', () => {
+    expect(pMultiplier(0, 3)).toBeCloseTo(0.8, 9);
+    expect(pMultiplier(1, 3)).toBeCloseTo(0.4, 9);
+    expect(pMultiplier(2, 5)).toBeCloseTo(0.7, 9);
+    expect(pMultiplier(1, 8)).toBe(1);
+    const gl = groupLateral([{ x: -0.75, y: 0 }, { x: 0.75, y: 0 }], 0.5, 100, 0);
+    expect(gl.pm[1]).toBeCloseTo(0.8, 9); // delantero en +x
+    expect(gl.pm[0]).toBeCloseTo(0.4, 9);
+  });
+  it('el efecto de grupo aumenta el momento del pilote delantero respecto a no considerarlo', () => {
+    const inp = defaultPileInput();
+    const r = analyzePile(inp);
+    const u = r.ultimate.find((x) => x.Hpile > 0)!;
+    expect(Math.max(...u.Hi)).toBeGreaterThanOrEqual(u.H / r.n - 1e-9);
+    expect(u.Hi.reduce((a, b) => a + b, 0)).toBeCloseTo(u.H, 6);
+  });
+  it('licuación: arena suelta con sismo fuerte licúa y densa no', () => {
+    const inp = defaultPileInput();
+    inp.geo.liqOn = true;
+    inp.geo.amax = 0.35;
+    inp.geo.layers = [
+      { ...defaultLayers()[1], name: 'arena suelta', thk: 8, N160: 8, FC: 5, liq: true },
+      { ...defaultLayers()[1], name: 'arena densa', thk: 10, N160: 35, FC: 5, liq: true },
+    ];
+    const l = liquefaction(inp);
+    expect(l.liquefied[0]).toBe(true);
+    expect(l.liquefied[1]).toBe(false);
+    expect(l.settlement).toBeGreaterThan(0.02);
+    expect(l.Lliq).toBe(8);
+    inp.geo.liqOn = false;
+    expect(liquefaction(inp).enabled).toBe(false);
+  });
+  it('fricción negativa reduce la capacidad útil', () => {
+    const inp = defaultPileInput();
+    inp.geo.layers[0].downdrag = true;
+    const r = analyzePile(inp);
+    expect(r.geo.Qneg).toBeGreaterThan(50);
+    expect(r.geo.QaDD).toBeLessThan(r.geo.QaC);
+    expect(r.checks.some((c) => /fricción negativa/.test(c.name))).toBe(true);
+  });
+  it('asentamiento crece con la carga', () => {
+    const inp = defaultPileInput();
+    const base = { Qs: 800, Qult: 1300, qb: 2000, Ap: 0.196, Ep: 25e6, D: 0.5, Bg: 2, Lg: 2, tipKind: 'granular' as const };
+    const a = settlement(inp, { ...base, Qpile: 300, Qgroup: 1200 });
+    const b = settlement(inp, { ...base, Qpile: 600, Qgroup: 2400 });
+    expect(b.group.total).toBeGreaterThan(a.group.total);
+    expect(b.pile.total).toBeGreaterThan(a.pile.total);
+  });
+});
+
+describe('puntales y tirantes', () => {
+  it('equilibrio vertical y tirante simétrico', () => {
+    const r = analyzePile(defaultPileInput());
+    const s = r.stm!;
+    for (const st of s.struts) expect(st.C * Math.sin(st.theta)).toBeCloseTo(st.R, 6);
+    const R = s.struts[0].R;
+    // 2×2 con moments nulos en el combo gobernante: Tx = 2·R·0.75/z
+    expect(s.tieX.T).toBeGreaterThan(0);
+    expect(s.tieX.T).toBeLessThanOrEqual((2 * Math.max(...s.struts.map((q) => q.R)) * 0.75) / s.z + 1e-6);
+    expect(R).toBeGreaterThan(0);
+    expect(r.deep).toBe(true);
+  });
+  it('un cabezal esbelto no es profundo', () => {
+    const inp = defaultPileInput();
+    inp.cap.h = 0.5;
+    inp.layout = { ...inp.layout, mode: 'grid', nx: 2, ny: 1, sx: 3 };
+    inp.combos = inp.combos.map((c) => ({ ...c, P: c.P / 4, Mx: 0, My: 0, Vx: 0, Vy: 0 }));
+    inp.cap.edge = 0.5;
+    const r = analyzePile(inp);
+    expect(r.deep).toBe(false);
+  });
+});
+
+describe('memoria con todos los efectos', () => {
+  it('genera la memoria con licuación, arrastre y asentamiento', () => {
+    const inp = defaultPileInput('hpile');
+    inp.geo.liqOn = true;
+    inp.geo.layers[0].downdrag = true;
+    const doc = reportForPile(inp, makeFmt('TEC'), newProject().info);
+    const txt = JSON.stringify(doc.blocks);
+    for (const k of ['puntales y tirantes', 'Licuación', 'Asentamiento', 'Fricción negativa', 'p-múltiples']) expect(txt.toLowerCase()).toContain(k.toLowerCase());
+  });
+});
