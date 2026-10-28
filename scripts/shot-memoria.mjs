@@ -1,0 +1,18 @@
+import { chromium } from 'playwright';
+const out = process.argv[2];
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await b.newPage({ viewport: { width: 1500, height: 950 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:4173/');
+await page.getByText('Diseñar una fundación').click();
+await page.getByRole('tab', { name: /Memoria/ }).click(); await page.waitForTimeout(800);
+await page.screenshot({ path: `${out}/mem-top.png` });
+await page.locator('.split > .right').evaluate((e) => e.scrollTo(0, 3600)); await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/mem-mid.png` });
+await page.locator('.nav-btn', { hasText: 'Muro M-1' }).click();
+await page.getByRole('tab', { name: /Memoria/ }).click(); await page.waitForTimeout(800);
+await page.locator('.split > .right').evaluate((e) => e.scrollTo(0, 5200)); await page.waitForTimeout(300);
+await page.screenshot({ path: `${out}/mem-wall.png` });
+await page.locator('.nav-btn', { hasText: 'Proyecto y memoria' }).click(); await page.waitForTimeout(800);
+console.log('project paper present:', await page.locator('.paper').count());
+await b.close();

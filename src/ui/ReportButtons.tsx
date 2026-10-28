@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { FileText, FileDown, Loader2, FileType2, Eye, X } from 'lucide-react';
 import { FootingInput } from '../core/footing';
 import { WallInput } from '../core/wallTypes';
 import { Project, ProjectInfo } from '../state';
 import { Card, Alert, useUnits } from './common';
+import { ReportView } from './ReportView';
 import { reportForFooting, reportForProject, reportForWall, renderReport, downloadBlob, safeFile, Format } from '../report';
 
 export function ReportButtons({ kind, footing, wall, project, info: infoProp }: { kind: 'footing' | 'wall' | 'project'; footing?: FootingInput; wall?: WallInput; project?: Project; info: ProjectInfo }) {
@@ -38,15 +39,24 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
       : kind === 'wall'
         ? 'datos, coeficientes de empuje, fuerzas y momentos, verificaciones de estabilidad, diseño estructural de cada elemento con fórmulas y valores, figuras y cuadro de armado.'
         : 'carátula con los datos del proyecto, resumen y la memoria de todas las fundaciones y muros del proyecto.';
+  const view = useMemo(() => {
+    try {
+      return kind === 'footing' ? reportForFooting(footing!, fmt, info) : kind === 'wall' ? reportForWall(wall!, fmt, info) : reportForProject(project!, fmt);
+    } catch (e: any) {
+      console.error(e);
+      return null;
+    }
+  }, [kind, footing, wall, project, fmt, info]);
   const closePreview = () => {
     if (preview) URL.revokeObjectURL(preview.url);
     setPreview(null);
   };
   return (
+    <>
     <Card title="Memoria de cálculo" icon={<FileText size={18} />}>
       <div className="stack">
         <p style={{ margin: 0 }}>
-          Genera un documento profesional con carátula, contenido, {what} Se usan las unidades seleccionadas ({fmt.sys === 'SI' ? 'kN · kPa · MPa' : 'tonf · kgf/cm²'}). Complete antes los datos del proyecto en «Proyecto y memoria».
+          Debajo ve la memoria completa tal como se exportará. Genera un documento profesional con carátula, contenido, {what} Se usan las unidades seleccionadas ({fmt.sys === 'SI' ? 'kN · kPa · MPa' : 'tonf · kgf/cm²'}). Complete antes los datos del proyecto en «Proyecto y memoria».
         </p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <button className="btn primary" disabled={!!busy} onClick={() => make('pdf')}>
@@ -76,5 +86,7 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
         {error && <Alert>No se pudo generar el documento: {error}</Alert>}
       </div>
     </Card>
+    {view && <ReportView doc={view} />}
+    </>
   );
 }

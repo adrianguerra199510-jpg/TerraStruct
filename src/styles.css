@@ -953,3 +953,217 @@ table.tbl {
 .split > .right > * {
   flex-shrink: 0;
 }
+
+/* ---------- Vista de la memoria de cálculo (igual que el documento exportado) ---------- */
+.paper {
+  background: #ffffff;
+  color: #14213d;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 34px 42px 40px;
+  font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+}
+.paper-cover {
+  background: linear-gradient(120deg, #0b2545, #1b5a99);
+  color: #fff;
+  border-radius: 8px;
+  padding: 26px 28px;
+  margin-bottom: 18px;
+}
+.paper-kicker {
+  letter-spacing: 2px;
+  font-size: 12px;
+  color: #cfe0f6;
+}
+.paper-cover h1 {
+  font-size: 24px;
+  margin: 6px 0 4px;
+}
+.paper-sub {
+  color: #cfe0f6;
+  margin-bottom: 14px;
+}
+.paper-info {
+  border-collapse: collapse;
+  background: rgba(255, 255, 255, 0.95);
+  color: #14213d;
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 560px;
+}
+.paper-info th {
+  text-align: left;
+  padding: 5px 10px;
+  width: 34%;
+  color: #0b2545;
+}
+.paper-info td {
+  padding: 5px 10px;
+}
+.paper-toc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #f3f6fb;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+}
+.paper-toc a {
+  color: #1d63c7;
+  text-decoration: none;
+}
+.paper-toc a.sub {
+  margin-left: 16px;
+  color: #5a6b85;
+}
+.paper-toc a:hover {
+  text-decoration: underline;
+}
+.rp-h1 {
+  font-size: 19px;
+  color: #0b2545;
+  margin: 28px 0 10px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid #1d63c7;
+  scroll-margin-top: 8px;
+}
+.rp-h2 {
+  font-size: 15px;
+  color: #1d63c7;
+  margin: 18px 0 6px;
+  scroll-margin-top: 8px;
+}
+.rp-h3 {
+  font-size: 13.5px;
+  color: #0b2545;
+  margin: 12px 0 4px;
+}
+.rp-p {
+  margin: 0 0 8px;
+}
+.rp-p.small {
+  font-size: 12px;
+  color: #5a6b85;
+}
+.rp-ul {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+.rp-ul li {
+  margin-bottom: 3px;
+}
+.rp-scroll {
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+.rp-cap {
+  font-size: 12px;
+  font-style: italic;
+  color: #5a6b85;
+  margin: 4px 0;
+}
+.rp-tbl {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.3px;
+}
+.rp-tbl th,
+.rp-tbl td {
+  border: 1px solid #c9d4e4;
+  padding: 4px 8px;
+  vertical-align: top;
+}
+.rp-tbl thead th {
+  background: #e8eef8;
+  color: #0b2545;
+  text-align: left;
+  white-space: nowrap;
+}
+.rp-tbl tbody tr:nth-child(even) td {
+  background: #f6f8fc;
+}
+.rp-tbl .r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rp-tbl .c {
+  text-align: center;
+}
+.rp-tbl tr.last td {
+  font-weight: 700;
+}
+.rp-tbl.kv th {
+  background: #f6f8fc;
+  color: #0b2545;
+  text-align: left;
+  width: 22%;
+}
+.rp-tbl .st {
+  font-weight: 700;
+}
+.rp-tbl .st.ok {
+  color: #138a48;
+}
+.rp-tbl .st.bad {
+  color: #c62a2f;
+}
+.rp-tbl .st.warn {
+  color: #b86e00;
+}
+.rp-eq {
+  background: #f1f5fb;
+  border-left: 4px solid #1d63c7;
+  padding: 8px 14px;
+  margin: 6px 0 12px;
+  font-family: 'Cambria Math', Cambria, 'Times New Roman', serif;
+  font-style: italic;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.rp-eq > div {
+  white-space: pre-wrap;
+}
+.rp-eq-t {
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 12px;
+  color: #1d63c7;
+  margin-bottom: 2px;
+}
+.rp-fig {
+  margin: 8px auto 12px;
+  text-align: center;
+}
+.rp-fig svg {
+  width: 100%;
+  height: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.rp-fig figcaption {
+  font-size: 12px;
+  font-style: italic;
+  color: #5a6b85;
+  margin-top: 3px;
+}
+.rp-break {
+  border: 0;
+  border-top: 1px dashed #c9d4e4;
+  margin: 24px 0;
+}
+@media (max-width: 700px) {
+  .paper {
+    padding: 18px 14px;
+  }
+}
