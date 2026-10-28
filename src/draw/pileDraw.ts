@@ -7,11 +7,13 @@ import { Fmt } from '../core/units';
 import { Pt } from '../core/geometry';
 import { Theme, LIGHT, dimLine, line, poly, svgWrap, text, niceStep } from './svg';
 import { makePlanView, PlanView } from './footingDraw';
+import { lineSpan } from '../core/pileCap';
 
 export function pilePlanPoints(inp: PileInput, res: PileResults): Pt[] {
-  const r = res.capRect;
-  return [{ x: r.x0, y: r.y0 }, { x: r.x1, y: r.y1 }, ...columnPoly(inp.column.geom, inp.column.x, inp.column.y)];
+  return [...res.capPoly, ...columnPoly(inp.column.geom, inp.column.x, inp.column.y)];
 }
+
+const pathOf = (res: PileResults, view: PlanView) => res.capPoly.map((q) => { const t = view.toSvg(q.x, q.y); return `${t.x.toFixed(1)},${t.y.toFixed(1)}`; }).join(' ');
 
 function pileGlyph(inp: PileInput, res: PileResults, view: PlanView, c: Pt, th: Theme, fill: string): string {
   const p = inp.pile;
@@ -51,7 +53,7 @@ export function pilePlanSvg(inp: PileInput, res: PileResults, o: { W?: number; H
     const a = view.toSvg(x, r.y0 - 1), b = view.toSvg(x, r.y1 + 1);
     s += line(a.x, a.y, b.x, b.y, th.grid, 1);
   }
-  s += `<rect x="${A.x.toFixed(1)}" y="${A.y.toFixed(1)}" width="${(B.x - A.x).toFixed(1)}" height="${(B.y - A.y).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.55" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  s += `<polygon points="${pathOf(res, view)}" fill="${th.concrete}" fill-opacity="0.55" stroke="${th.concreteStroke}" stroke-width="2" stroke-linejoin="round"/>`;
   const combo = o.combo ?? null;
   const Rs = combo?.R ?? [];
   const rmax = Math.max(...Rs.map((v) => Math.abs(v)), 1e-9);
@@ -83,7 +85,7 @@ export function pileRebarPlanSvg(inp: PileInput, res: PileResults, o: { W?: numb
   const r = res.capRect;
   const A = view.toSvg(r.x0, r.y1), B = view.toSvg(r.x1, r.y0);
   const top = o.layer === 'top';
-  let s = `<rect x="${A.x.toFixed(1)}" y="${A.y.toFixed(1)}" width="${(B.x - A.x).toFixed(1)}" height="${(B.y - A.y).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.35" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  let s = `<polygon points="${pathOf(res, view)}" fill="${th.concrete}" fill-opacity="0.35" stroke="${th.concreteStroke}" stroke-width="2" stroke-linejoin="round"/>`;
   res.pts.forEach((p) => {
     const q = view.toSvg(p.x, p.y);
     s += `<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="${((res.props.Dp / 2) * view.s).toFixed(1)}" fill="none" stroke="${th.muted}" stroke-dasharray="4 3"/>`;
@@ -98,8 +100,10 @@ export function pileRebarPlanSvg(inp: PileInput, res: PileResults, o: { W?: numb
     let out = '';
     for (let k = 0; k < n; k++) {
       const v = start + k * spacing;
-      const a = axis === 'x' ? view.toSvg(r.x0 + cv, v) : view.toSvg(v, r.y0 + cv);
-      const b = axis === 'x' ? view.toSvg(r.x1 - cv, v) : view.toSvg(v, r.y1 - cv);
+      const sp = lineSpan(res.capPoly, axis, v, axis === 'x' ? (r.x0 + r.x1) / 2 : (r.y0 + r.y1) / 2);
+      if (sp[1] - sp[0] < 2 * cv) continue;
+      const a = axis === 'x' ? view.toSvg(sp[0] + cv, v) : view.toSvg(v, sp[0] + cv);
+      const b = axis === 'x' ? view.toSvg(sp[1] - cv, v) : view.toSvg(v, sp[1] - cv);
       out += line(a.x, a.y, b.x, b.y, axis === 'x' ? th.rebar : th.accent, 1.6);
     }
     const m = axis === 'x' ? view.toSvg(r.x1, (r.y0 + r.y1) / 2) : view.toSvg((r.x0 + r.x1) / 2, r.y1);
@@ -116,7 +120,7 @@ export function pileRebarPlanSvg(inp: PileInput, res: PileResults, o: { W?: numb
 export function pileSectionSvg(inp: PileInput, res: PileResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
   const W = o.W ?? 820, H = o.H ?? 520;
   const th = o.theme ?? LIGHT;
-  const r = res.capRect;
+  const r = { x0: res.spanX[0], x1: res.spanX[1], B: res.spanX[1] - res.spanX[0] };
   const p = inp.pile;
   const cap = inp.cap;
   const Lshow = Math.min(p.L, Math.max(5 * res.props.Dp, 4));
@@ -182,8 +186,8 @@ export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis:
   const W = o.W ?? 820, H = o.H ?? 470;
   const th = o.theme ?? LIGHT;
   const ax = o.axis;
-  const r = res.capRect;
-  const lo = ax === 'x' ? r.x0 : r.y0, hi = ax === 'x' ? r.x1 : r.y1;
+  const sp = ax === 'x' ? res.spanX : res.spanY;
+  const lo = sp[0], hi = sp[1];
   const cap = inp.cap;
   const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
   const cc = ax === 'x' ? colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length : colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
@@ -245,9 +249,7 @@ export function pileStmPlanSvg(inp: PileInput, res: PileResults, o: { W?: number
   const W = o.W ?? 820, H = o.H ?? 560;
   const th = o.theme ?? LIGHT;
   const view = makePlanView(pilePlanPoints(inp, res), W, H, 70);
-  const r = res.capRect;
-  const A = view.toSvg(r.x0, r.y1), B = view.toSvg(r.x1, r.y0);
-  let g = `<rect x="${A.x.toFixed(1)}" y="${A.y.toFixed(1)}" width="${(B.x - A.x).toFixed(1)}" height="${(B.y - A.y).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.3" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  let g = `<polygon points="${pathOf(res, view)}" fill="${th.concrete}" fill-opacity="0.3" stroke="${th.concreteStroke}" stroke-width="2" stroke-linejoin="round"/>`;
   const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
   const cx = colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length, cy = colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
   const cs = view.toSvg(cx, cy);

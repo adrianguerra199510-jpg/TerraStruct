@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves } from 'lucide-react';
-import { PileInput, PileKind, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
+import { PileInput, PileKind, CAP_SHAPES, CapShape, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
 import { analyzePile, autoSizePile, findCapDesign, PileResults } from '../core/pile';
 import { barList } from '../core/materials';
 import { FootingColumn, defaultColumn } from '../core/footing';
@@ -148,13 +148,65 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
         <Acc title="Cabezal" icon={<Layers size={18} />} open>
           <div className="grid2">
             <Num label="Espesor h" q="len" value={data.cap.h} onChange={(v) => setCap({ h: v })} min={0.4} />
-            <Num label="Vuelo desde el eje del pilote" q="len" value={data.cap.edge} onChange={(v) => setCap({ edge: v })} min={0.2} />
-            <div style={{ gridColumn: '1 / -1' }}><Check label="Dimensiones del cabezal manuales" value={data.cap.manualSize} onChange={(v) => setCap({ manualSize: v, B: res?.capRect.B ?? data.cap.B, L: res?.capRect.L ?? data.cap.L })} /></div>
-            {data.cap.manualSize && (
+            <Sel label="Forma del cabezal" value={data.cap.shape} onChange={(v: CapShape) => setCap({ shape: v })} options={CAP_SHAPES.map((c) => ({ id: c.id, label: c.label }))} />
+            {CAP_SHAPES.find((c) => c.id === data.cap.shape)?.auto ? (
               <>
-                <Num label="B (x)" q="len" value={data.cap.B} onChange={(v) => setCap({ B: v })} min={0.5} />
-                <Num label="L (y)" q="len" value={data.cap.L} onChange={(v) => setCap({ L: v })} min={0.5} />
+                <Num label="Vuelo desde el eje del pilote" q="len" value={data.cap.edge} onChange={(v) => setCap({ edge: v })} min={0.2} />
+                {data.cap.shape === 'ngon' && <Num label="Lados" value={data.cap.nSides} onChange={(v) => setCap({ nSides: Math.max(3, Math.round(v)) })} min={3} max={24} />}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Check label="Dimensiones manuales" value={data.cap.manualSize} onChange={(v) => setCap({ manualSize: v, B: res?.capRect.B ?? data.cap.B, L: res?.capRect.L ?? data.cap.L, preset: { ...data.cap.preset, D: Math.max(res?.capRect.B ?? 2, res?.capRect.L ?? 2) } })} />
+                </div>
+                {data.cap.manualSize && (data.cap.shape === 'circle' || data.cap.shape === 'ngon') && <Num label="Diámetro circunscrito" q="len" value={data.cap.preset.D} onChange={(v) => setCap({ preset: { ...data.cap.preset, D: v } })} min={0.5} />}
+                {data.cap.manualSize && data.cap.shape === 'rect' && (
+                  <>
+                    <Num label="B (x)" q="len" value={data.cap.B} onChange={(v) => setCap({ B: v })} min={0.5} />
+                    <Num label="L (y)" q="len" value={data.cap.L} onChange={(v) => setCap({ L: v })} min={0.5} />
+                  </>
+                )}
               </>
+            ) : (
+              <>
+                {data.cap.shape !== 'poly' && (
+                  <>
+                    <Num label="Ancho B (x)" q="len" value={data.cap.preset.B} onChange={(v) => setCap({ preset: { ...data.cap.preset, B: v } })} min={0.5} />
+                    <Num label="Largo L (y)" q="len" value={data.cap.preset.L} onChange={(v) => setCap({ preset: { ...data.cap.preset, L: v } })} min={0.5} />
+                    {(data.cap.shape === 'L' || data.cap.shape === 'T') && <Num label={data.cap.shape === 'L' ? 'Espesor ala x' : 'Espesor alma'} q="len" value={data.cap.preset.t1} onChange={(v) => setCap({ preset: { ...data.cap.preset, t1: v } })} min={0.3} />}
+                    {(data.cap.shape === 'L' || data.cap.shape === 'T') && <Num label={data.cap.shape === 'L' ? 'Espesor ala y' : 'Espesor ala'} q="len" value={data.cap.preset.t2} onChange={(v) => setCap({ preset: { ...data.cap.preset, t2: v } })} min={0.3} />}
+                    {data.cap.shape === 'trapezoid' && <Num label="Ancho superior" q="len" value={data.cap.preset.b2} onChange={(v) => setCap({ preset: { ...data.cap.preset, b2: v } })} min={0.3} />}
+                  </>
+                )}
+                <Num label="Desplazamiento en x" q="len" value={data.cap.dx} onChange={(v) => setCap({ dx: v })} hint="del centro de la forma" />
+                <Num label="Desplazamiento en y" q="len" value={data.cap.dy} onChange={(v) => setCap({ dy: v })} />
+                {data.cap.shape === 'poly' && (
+                  <div className="tbl-wrap" style={{ gridColumn: '1 / -1' }}>
+                    <table className="tbl">
+                      <thead><tr><th>#</th><th className="r">x ({fmt.l('len')})</th><th className="r">y ({fmt.l('len')})</th><th /></tr></thead>
+                      <tbody>
+                        {data.cap.vertices.map((q, i) => (
+                          <tr key={i}>
+                            <td>{i + 1}</td>
+                            <td><CellNum q="len" value={q.x} onChange={(x) => setCap({ vertices: data.cap.vertices.map((w, j) => (j === i ? { ...w, x } : w)) })} /></td>
+                            <td><CellNum q="len" value={q.y} onChange={(y) => setCap({ vertices: data.cap.vertices.map((w, j) => (j === i ? { ...w, y } : w)) })} /></td>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              <button className="icon-btn" title="Insertar vértice después" onClick={() => { const a = data.cap.vertices[i], b = data.cap.vertices[(i + 1) % data.cap.vertices.length]; const nv = [...data.cap.vertices]; nv.splice(i + 1, 0, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }); setCap({ vertices: nv }); }}><Plus size={14} /></button>
+                              {data.cap.vertices.length > 3 && <button className="icon-btn danger" title="Quitar vértice" onClick={() => setCap({ vertices: data.cap.vertices.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn small" title="Convierte el contorno actual en vértices que puede editar" onClick={() => res && setCap({ shape: 'poly', vertices: simplifyPoly(res.capPoly).map((q) => ({ x: +q.x.toFixed(3), y: +q.y.toFixed(3) })), dx: 0, dy: 0 })}><Shapes size={14} /> Convertir a vértices editables</button>
+            </div>
+            {res && (
+              <div className="kpis" style={{ gridColumn: '1 / -1' }}>
+                <Kpi label="Área del cabezal" value={`${res.capArea.toFixed(2)} m²`} sub={`caja ${res.capRect.B.toFixed(2)} × ${res.capRect.L.toFixed(2)} m`} />
+                <Kpi label="Volumen / peso" value={`${res.concreteVolume.toFixed(2)} m³`} sub={fmt.u('force', res.Wcap, 0)} />
+              </div>
             )}
             <Num label="Recubrimiento" q="lencm" value={data.cap.cover} onChange={(v) => setCap({ cover: v })} min={0.05} />
             <Num label="Penetración del pilote" q="lencm" value={data.cap.embed} onChange={(v) => setCap({ embed: v })} min={0.05} />
@@ -399,6 +451,19 @@ function TensionCard({ res, data }: { res: PileResults; data: PileInput }) {
       )}
     </Card>
   );
+}
+
+/** Elimina vértices colineales o casi colineales (p. ej. al convertir un círculo). */
+function simplifyPoly(p: { x: number; y: number }[]): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  const n = p.length;
+  for (let i = 0; i < n; i++) {
+    const a = p[(i + n - 1) % n], b = p[i], c = p[(i + 1) % n];
+    const cr = Math.abs((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x));
+    if (cr > 1e-6) out.push(b);
+  }
+  if (out.length > 24) return out.filter((_, i) => i % Math.ceil(out.length / 24) === 0);
+  return out.length >= 3 ? out : p;
 }
 
 function PileResultTables({ res, data }: { res: PileResults; data: PileInput }) {

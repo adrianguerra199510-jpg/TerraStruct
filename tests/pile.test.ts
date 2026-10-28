@@ -260,3 +260,74 @@ describe('socket en roca', () => {
     expect(JSON.stringify(doc.blocks)).toContain('Socket en roca');
   });
 });
+
+import { capGeometry } from '../src/core/pileCap';
+import { examplePiles } from '../src/state';
+import { pilePositions, standardLayout } from '../src/core/pileTypes';
+describe('geometría del cabezal', () => {
+  it('rect igual que antes: área = B·L', () => {
+    const i = defaultPileInput();
+    const g = capGeometry(i, pilePositions(i.layout));
+    expect(g.area).toBeCloseTo(2.5 * 2.5, 9);
+    expect(analyzePile(i).concreteVolume).toBeCloseTo(2.5 * 2.5 * 1.1, 9);
+  });
+  it('todas las formas producen contornos válidos que contienen los pilotes', () => {
+    for (const shape of ['rect', 'hull', 'miter', 'circle', 'ngon'] as const) {
+      const i = defaultPileInput();
+      i.layout = standardLayout(3, 1.5);
+      i.cap.shape = shape;
+      i.cap.edge = 0.6;
+      const r = analyzePile(i);
+      expect(r.capArea).toBeGreaterThan(2);
+      const edge = r.checks.find((c) => /distancia al borde/.test(c.name))!;
+      expect(edge.ok).toBe(true);
+    }
+  });
+  it('la forma envolvente con esquinas vivas tiene menos área que el rectángulo para 3 pilotes', () => {
+    const i = defaultPileInput();
+    i.layout = standardLayout(3, 1.5);
+    i.cap.edge = 0.6;
+    const rect = capGeometry(i, pilePositions(i.layout)).area;
+    i.cap.shape = 'miter';
+    const mit = capGeometry(i, pilePositions(i.layout)).area;
+    i.cap.shape = 'hull';
+    const hul = capGeometry(i, pilePositions(i.layout)).area;
+    expect(mit).toBeLessThan(rect);
+    expect(hul).toBeLessThan(mit + 1);
+  });
+  it('hexágono regular: área exacta', () => {
+    const i = defaultPileInput();
+    i.layout = standardLayout(7, 1.5);
+    i.cap.shape = 'ngon';
+    i.cap.nSides = 6;
+    i.cap.edge = 0.5;
+    const R = (1.5 + 0.5) / Math.cos(Math.PI / 6);
+    expect(capGeometry(i, pilePositions(i.layout)).area).toBeCloseTo((3 * Math.sqrt(3) / 2) * R * R, 6);
+  });
+  it('L y forma libre; pilotes fuera del contorno se detectan', () => {
+    const i = examplePiles().find((e) => /en L/.test(e.title))!.make();
+    const r = analyzePile(i);
+    const A = 4 * 4 - (4 - 1.6) * (4 - 1.6);
+    expect(r.capArea).toBeCloseTo(A, 6);
+    i.cap.dx = 3; // se desplaza el contorno y los pilotes quedan fuera
+    const r2 = analyzePile(i);
+    expect(r2.checks.find((c) => /distancia al borde/.test(c.name))!.ok).toBe(false);
+    const j = defaultPileInput();
+    j.cap.shape = 'poly';
+    j.cap.vertices = [{ x: -1.6, y: -1.6 }, { x: 1.6, y: -1.6 }, { x: 1.6, y: 1.6 }, { x: 0, y: 2.2 }, { x: -1.6, y: 1.6 }];
+    expect(analyzePile(j).capPoly.length).toBe(5);
+  });
+  it('todos los ejemplos con formas especiales se analizan y generan memoria', () => {
+    for (const e of examplePiles()) {
+      const r = analyzePile(e.make());
+      expect(isFinite(r.Wcap)).toBe(true);
+      expect(reportForPile(e.make(), makeFmt('SI'), newProject().info).blocks.length).toBeGreaterThan(40);
+    }
+  });
+});
+
+describe('ejemplos de pilotes', () => {
+  it('todos los ejemplos cumplen las verificaciones', () => {
+    for (const e of examplePiles()) expect(analyzePile(e.make()).ok, e.title).toBe(true);
+  });
+});

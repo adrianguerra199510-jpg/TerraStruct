@@ -1,6 +1,7 @@
 import { FootingInput, defaultFooting, defaultColumn } from './core/footing';
 import { WallInput, WallType, defaultWall } from './core/wallTypes';
-import { PileInput, PileKind, defaultPileInput, defaultLayers } from './core/pileTypes';
+import { findCapDesign, analyzePile } from './core/pile';
+import { PileInput, PileKind, defaultPileInput, defaultLayers, standardLayout } from './core/pileTypes';
 import { UnitSystem } from './core/units';
 import { footingPresetPoly, defaultPresetParams } from './core/shapes';
 
@@ -95,8 +96,20 @@ export function normalizePile(raw: any): PileInput {
   return deepMerge(defaultPileInput(k), raw);
 }
 
+/** Ajusta espesor y barra del cabezal para que el ejemplo cumpla. */
+function fitCap(i: PileInput): PileInput {
+  try {
+    if (analyzePile(i).ok) return i;
+    const d = findCapDesign(i, true);
+    if (d) return { ...i, cap: { ...i.cap, h: d.h, barX: d.bar, barY: d.bar, barTopX: d.bar, barTopY: d.bar } };
+  } catch {
+    /* se deja el ejemplo tal cual */
+  }
+  return i;
+}
+
 export function examplePiles(): { title: string; desc: string; make: () => PileInput }[] {
-  return [
+  const raw = [
     { title: 'Cabezal de 4 pilotes de concreto', desc: 'Pilotes preexcavados Ø50 cm de 18 m, columna 50×50 cm con momento sísmico.', make: () => defaultPileInput('concrete') },
     {
       title: 'Cabezal con pilotes preexcavados en roca (socket)',
@@ -119,6 +132,48 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
       },
     },
     {
+      title: 'Cabezal triangular de 3 pilotes',
+      desc: 'Contorno envolvente con esquinas vivas para 3 pilotes en triángulo.',
+      make: () => {
+        const i = defaultPileInput('concrete');
+        i.name = 'Cabezal CP-3';
+        i.layout = standardLayout(3, 1.5);
+        i.cap.shape = 'miter';
+        i.cap.edge = 0.6;
+        i.combos = i.combos.map((c) => ({ ...c, P: c.P * 0.6, My: c.My * 0.6, Vx: c.Vx * 0.6 }));
+        return i;
+      },
+    },
+    {
+      title: 'Cabezal circular de 7 pilotes',
+      desc: 'Anillo de 6 pilotes más uno central en un cabezal circular.',
+      make: () => {
+        const i = defaultPileInput('concrete');
+        i.name = 'Cabezal CP-C7';
+        i.layout = standardLayout(7, 1.5);
+        i.cap.shape = 'circle';
+        i.cap.edge = 0.6;
+        i.cap.h = 1.2;
+        i.combos = i.combos.map((c) => ({ ...c, P: c.P * 1.2, My: c.My * 1.0, Vx: c.Vx * 1.0 }));
+        return i;
+      },
+    },
+    {
+      title: 'Cabezal en L de esquina',
+      desc: 'Cabezal en forma de L con 5 pilotes junto a un lindero.',
+      make: () => {
+        const i = defaultPileInput('concrete');
+        i.name = 'Cabezal CP-L';
+        i.layout = { ...i.layout, mode: 'custom', pts: [{ x: -1.5, y: -1.5 }, { x: 0, y: -1.5 }, { x: 1.5, y: -1.5 }, { x: -1.5, y: 0 }, { x: -1.5, y: 1.5 }] };
+        i.cap.edge = 0.6;
+        i.cap.shape = 'L';
+        i.cap.preset = { ...i.cap.preset, B: 4, L: 4, t1: 1.6, t2: 1.6 };
+        i.column = { ...i.column, x: -0.9, y: -0.9 };
+        i.combos = i.combos.map((c) => ({ ...c, P: c.P * 0.45, My: c.My * 0.3, Vx: c.Vx * 0.3 }));
+        return i;
+      },
+    },
+    {
       title: 'Cabezal con pilotes de tubo de acero',
       desc: 'Tubo Ø356 mm (e = 9.5 mm), 10 pilotes hincados.',
       make: () => {
@@ -127,6 +182,7 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
         i.layout = { ...i.layout, mode: 'custom', pts: [0, 1].flatMap((j) => [0, 1, 2, 3, 4].map((k) => ({ x: (k - 2) * 1.1, y: (j - 0.5) * 1.1 }))) };
         i.cap.h = 0.9;
         i.cap.edge = 0.5;
+        i.combos = i.combos.map((c) => ({ ...c, P: c.P * 0.85, My: c.My * 0.85, Vx: c.Vx * 0.85 }));
         return i;
       },
     },
@@ -146,6 +202,7 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
       },
     },
   ];
+  return raw.map((e) => ({ ...e, make: () => fitCap(e.make()) }));
 }
 
 export function normalizeWall(raw: any): WallInput {

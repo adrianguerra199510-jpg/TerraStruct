@@ -1,6 +1,6 @@
 import { PileInput } from '../core/pileTypes';
 import { PileResults, ComboRes } from '../core/pile';
-import { PILE_KINDS } from '../core/pileTypes';
+import { PILE_KINDS, CAP_SHAPES } from '../core/pileTypes';
 import { concreteCurve, hpShape } from '../core/pileStruct';
 import { COLUMN_SHAPES, columnPoly } from '../core/shapes';
 import { findBar } from '../core/materials';
@@ -43,6 +43,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     'La fuerza horizontal se reparte por igual entre los pilotes (cabezal rígido, mismo comportamiento lateral).',
     'La capacidad geotécnica a compresión es Qa = (Qs + Qb)/FS; en tracción solo interviene la fricción lateral reducida más el peso del pilote.',
     'El diseño del cabezal usa las reacciones producidas por las cargas mayoradas de la columna (sin peso propio). Se aplica la regla de ACI 318 de contribución fraccionada de los pilotes que cruzan la sección crítica.',
+    'El cabezal puede tener cualquier contorno poligonal; las secciones de flexión y cortante usan el ancho real (cuerda) del cabezal en cada sección crítica y el punzonamiento recorta el perímetro con el contorno.',
     'La flexión del pilote se estima con el modelo lineal de Matlock y Reese, con reducción de la reacción del suelo por efecto de grupo (p-múltiples).',
   ]);
   d.h2('Convención de signos y unidades');
@@ -70,7 +71,9 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   );
   d.kv(
     [
-      ['Dimensiones del cabezal B × L', `${u('len', rect.B, 2)} × ${u('len', rect.L, 2)}`],
+      ['Forma del cabezal', CAP_SHAPES.find((c) => c.id === cap.shape)?.label ?? cap.shape],
+      [cap.shape === 'rect' ? 'Dimensiones B × L' : 'Caja envolvente B × L', `${u('len', rect.B, 2)} × ${u('len', rect.L, 2)}`],
+      ['Área en planta', `${f(res.capArea, 3)} m²`],
       ['Espesor h', u('len', cap.h, 2)],
       ['f′c / fy del cabezal', `${u('stress', cap.fc, 1)} / ${u('stress', cap.fy, 0)}`],
       ['Recubrimiento / penetración del pilote', `${u('lencm', cap.cover, 1)} / ${u('lencm', cap.embed, 1)}`],
@@ -79,6 +82,13 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     ],
     2,
   );
+  if (cap.shape !== 'rect') {
+    d.table(
+      ['Vértice', `x (${fmt.l('len')})`, `y (${fmt.l('len')})`],
+      res.capPoly.map((q, i) => [String(i + 1), n('len', q.x, 3), n('len', q.y, 3)]),
+      { align: ['c', 'r', 'r'], widths: [4, 8, 8], small: true, caption: 'Tabla. Vértices del contorno del cabezal' },
+    );
+  }
   const cg = inp.column.geom;
   const cb = bbox(columnPoly(cg, inp.column.x, inp.column.y));
   d.p(`Columna: ${COLUMN_SHAPES.find((c) => c.id === cg.shape)?.label ?? cg.shape}, de ${f((cb.xmax - cb.xmin) * 100, 0)} × ${f((cb.ymax - cb.ymin) * 100, 0)} cm, ubicada en (${n('len', inp.column.x, 2)}; ${n('len', inp.column.y, 2)}) ${fmt.l('len')}.`);

@@ -1,9 +1,10 @@
 // Análisis y diseño de grupos de pilotes y cabezales (ACI 318 / AISC 360). Unidades: kN, m, MPa.
-import { Pt, bbox, convexHull, offsetConvex, perimeter, pointInPolygon, polyProps } from './geometry';
+import { Pt, Poly, bbox, convexHull, offsetConvex, perimeter, pointInPolygon, polyProps, chordLength } from './geometry';
 import { columnPoly } from './shapes';
 import { chooseSpacing, findBar, developmentLength, hookDevelopment, barList, Detailing } from './materials';
 import { flexureAs, flexureCapacity, oneWayVc, punchingVc, rhoMinSlab, PHI_FLEX, PHI_SHEAR } from './concrete';
 import { PileInput, PileCombo, PileDef, SoilLayer, pilePositions, standardLayout } from './pileTypes';
+import { capGeometry, lineSpan } from './pileCap';
 import { stmDesign, StmResult } from './pileSTM';
 import { liquefaction, settlement, groupLateral, effectiveStressProfile, layerIndexAt, LiqResult, SettleResult, GroupLateral } from './pileExtra';
 import { PileProps, pileProps, concretePhiMn, concreteShear, concreteSteelRatio, steelCapacity, steelInteraction, lateralPile, SteelCap, Lateral } from './pileStruct';
@@ -324,6 +325,13 @@ export interface PileResults {
   pts: Pt[];
   n: number;
   capRect: { x0: number; x1: number; y0: number; y1: number; B: number; L: number };
+  /** contorno real del cabezal, área y centroide */
+  capPoly: Poly;
+  capArea: number;
+  capCentroid: Pt;
+  /** luz del cabezal sobre una recta por el centroide de la columna, en X y en Y */
+  spanX: [number, number];
+  spanY: [number, number];
   Wcap: number;
   props: PileProps;
   geo: GeoResult;
@@ -368,15 +376,8 @@ function distToEdges(pt: Pt, poly: Pt[]): number {
   }
   return m;
 }
+const sdistPoly = (pt: Pt, poly: Pt[]) => (pointInPolygon(pt, poly) ? -distToEdges(pt, poly) : distToEdges(pt, poly));
 const sdist = (pt: Pt, poly: Pt[]) => (pointInPolygon(pt, poly) ? -distToEdges(pt, poly) : distToEdges(pt, poly));
-
-function capRect(inp: PileInput, pts: Pt[]) {
-  const bb = bbox(pts.length ? pts : [{ x: 0, y: 0 }]);
-  const cx = (bb.xmin + bb.xmax) / 2, cy = (bb.ymin + bb.ymax) / 2;
-  const B = inp.cap.manualSize ? inp.cap.B : bb.xmax - bb.xmin + 2 * inp.cap.edge;
-  const L = inp.cap.manualSize ? inp.cap.L : bb.ymax - bb.ymin + 2 * inp.cap.edge;
-  return { x0: cx - B / 2, x1: cx + B / 2, y0: cy - L / 2, y1: cy + L / 2, B, L };
-}
 
 export function analyzePile(inp: PileInput): PileResults {
   const p = inp.pile;
@@ -386,13 +387,15 @@ export function analyzePile(inp: PileInput): PileResults {
   const warnings: string[] = [];
   const checks: PCheck[] = [];
   const props = pileProps(p);
-  const rect = capRect(inp, pts);
-  const Wcap = cap.gammaC * rect.B * rect.L * cap.h;
+  const geom = capGeometry(inp, pts);
+  const rect = geom.bb;
+  const capPoly = geom.poly;
+  const Wcap = cap.gammaC * geom.area * cap.h;
   const liq = liquefaction(inp);
   const geo = geoCapacity(inp, props, liq);
   const Eg = groupEfficiency(inp, props.Dp);
   const QaCeff = geo.QaC * (inp.geo.groupEff && Eg.applicable ? Eg.Eg : 1);
-  const fcap = { x: (rect.x0 + rect.x1) / 2, y: (rect.y0 + rect.y1) / 2 };
+  const fcap = { x: geom.cx, y: geom.cy };
   const col = inp.column;
   const colPoly = columnPoly(col.geom, col.x, col.y);
   const cbb = bbox(colPoly);
@@ -433,7 +436,8 @@ export function analyzePile(inp: PileInput): PileResults {
   for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) minSp = Math.min(minSp, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y));
   if (n > 1) checks.push({ name: 'Pilotes · separación mínima', ratio: (2.5 * props.Dp) / minSp, ok: minSp >= 2.5 * props.Dp - 1e-9, detail: `s mín = ${minSp.toFixed(2)} m ≥ 2.5·D = ${(2.5 * props.Dp).toFixed(2)} m` });
   const edgeMin = props.Dp / 2 + 0.15;
-  checks.push({ name: 'Cabezal · distancia al borde', ratio: edgeMin / Math.max(inp.cap.manualSize ? Math.min(...pts.flatMap((q) => [q.x - rect.x0, rect.x1 - q.x, q.y - rect.y0, rect.y1 - q.y])) : cap.edge, 1e-9), ok: (inp.cap.manualSize ? Math.min(...pts.flatMap((q) => [q.x - rect.x0, rect.x1 - q.x, q.y - rect.y0, rect.y1 - q.y])) : cap.edge) >= edgeMin - 1e-9, detail: `≥ D/2 + 15 cm = ${edgeMin.toFixed(2)} m` });
+  const edgeDist = Math.min(...pts.map((q) => -sdistPoly(q, capPoly)));
+  checks.push({ name: 'Cabezal · distancia al borde', ratio: edgeMin / Math.max(edgeDist, 1e-9), ok: edgeDist >= edgeMin - 1e-9, detail: edgeDist < 0 ? 'hay pilotes fuera del cabezal' : `distancia mínima del eje al borde = ${edgeDist.toFixed(2)} m ≥ D/2 + 15 cm = ${edgeMin.toFixed(2)} m` });
 
   // ---------- socket en roca
   if (geo.rock) {
@@ -525,18 +529,23 @@ export function analyzePile(inp: PileInput): PileResults {
   const half = (n2: number) => n2;
   void half;
 
+  const cpp0 = polyProps(colPoly);
   type Side = 'pos' | 'neg';
   const dir = (axis: 'x' | 'y') => {
     const bar = axis === 'x' ? bX : bY;
     const d = axis === 'x' ? dX : dY;
-    const b = axis === 'x' ? rect.L : rect.B;
+    const chordAt = (v: number) => Math.max(chordLength(capPoly, axis === 'x' ? 'x' : 'y', v), 0.25);
     const c0 = axis === 'x' ? cbb.xmin : cbb.ymin;
     const c1 = axis === 'x' ? cbb.xmax : cbb.ymax;
-    const lo = axis === 'x' ? rect.x0 : rect.y0;
-    const hi = axis === 'x' ? rect.x1 : rect.y1;
+    const colC = axis === 'x' ? cpp0.cx : cpp0.cx;
+    void colC;
+    const span = axis === 'x' ? lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx) : lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy);
+    const lo = span[0];
+    const hi = span[1];
     const coord = (q: Pt) => (axis === 'x' ? q.x : q.y);
     let Mpos = 0, Mneg = 0, xsPos = c1;
     let Vu = 0, comboV = ultimate[0]?.combo.name ?? '', xsV = 0;
+    let bV = chordAt((c0 + c1) / 2);
     let aMin = Infinity;
     for (const u of ultimate) {
       const R = rc(u.combo);
@@ -556,10 +565,11 @@ export function analyzePile(inp: PileInput): PileResults {
         }
         if (M > Mpos) { Mpos = M; xsPos = face; }
         if (-M > Mneg) Mneg = -M;
-        if (Math.abs(V) > Math.abs(Vu)) { Vu = V; comboV = u.combo.name; xsV = xv; }
+        if (Math.abs(V) > Math.abs(Vu)) { Vu = V; comboV = u.combo.name; xsV = xv; bV = chordAt(xv); }
       }
     }
-    // flexión
+    // flexión: ancho del cabezal en la sección crítica (cara de la columna con mayor momento)
+    const b = chordAt(xsPos);
     const fc = cap.fc, fy = cap.fy;
     const fl = flexureAs(Mpos, b, d, fc, fy);
     const AsMin = rhoMinSlab(fy) * b * cap.h * 1e4;
@@ -601,10 +611,10 @@ export function analyzePile(inp: PileInput): PileResults {
     }
     const flex: CapFlex = { Mpos, Mneg, b, d, dTop: dTopDepth, AsReq, AsMin, det, asProv, phiMn, ratio, ok: sectionOk && (top ? top.ok : true), bar: bar.id, xs: xsPos, top, ld, ldh, la: laMin, devOk, devText };
     // cortante en una dirección
-    const rho = asProv / (b * d * 1e4);
-    const vc = oneWayVc(b, d, fc, rho, cap.code, cap.lambda);
+    const rho = asProv / (bV * d * 1e4);
+    const vc = oneWayVc(bV, d, fc, rho, cap.code, cap.lambda);
     const phiVc = PHI_SHEAR * vc.Vc;
-    const sh: CapShear = { Vu: Math.abs(Vu), phiVc, ratio: Math.abs(Vu) / Math.max(phiVc, 1e-9), bw: b, d, Vc: vc.Vc, rho, xs: xsV, combo: comboV, ok: Math.abs(Vu) <= phiVc + 1e-9, aOverD: isFinite(aMin) ? aMin / d : Infinity };
+    const sh: CapShear = { Vu: Math.abs(Vu), phiVc, ratio: Math.abs(Vu) / Math.max(phiVc, 1e-9), bw: bV, d, Vc: vc.Vc, rho, xs: xsV, combo: comboV, ok: Math.abs(Vu) <= phiVc + 1e-9, aOverD: isFinite(aMin) ? aMin / d : Infinity };
     return { flex, sh };
   };
   const dx = dir('x');
@@ -624,7 +634,7 @@ export function analyzePile(inp: PileInput): PileResults {
   const cpp = polyProps(colPoly);
   const apile = p.kind === 'concrete' ? (p.shape === 'circle' ? (Math.PI * p.D ** 2) / 4 : p.D ** 2) : p.kind === 'pipe' ? (Math.PI * p.D ** 2) / 4 : props.Dp ** 2;
   const stm = stmDesign({
-    pts, combos: ultimate.map((u) => ({ name: u.combo.name, R: rc(u.combo), P: u.combo.P })), col: { x: cpp.cx, y: cpp.cy, A: cpp.A }, Dp: props.Dp, Apile: apile, rect, h: cap.h,
+    pts, combos: ultimate.map((u) => ({ name: u.combo.name, R: rc(u.combo), P: u.combo.P })), col: { x: cpp.cx, y: cpp.cy, A: cpp.A }, Dp: props.Dp, Apile: apile, rect: { ...rect, B: Math.max(chordLength(capPoly, 'y', cpp.cy), 0.25), L: Math.max(chordLength(capPoly, 'x', cpp.cx), 0.25) }, h: cap.h,
     dX, dY, asX: dx.flex.det.asProv, asY: dy.flex.det.asProv, fc: cap.fc, fy: cap.fy, lambda: cap.lambda, crackMesh: cap.crackMesh,
     colW: { x: cbb.xmax - cbb.xmin, y: cbb.ymax - cbb.ymin }, cover: cap.cover, dbX: bX.db / 1000, dbY: bY.db / 1000,
   });
@@ -668,7 +678,7 @@ export function analyzePile(inp: PileInput): PileResults {
     for (const u of ultimate) Ru = Math.max(Ru, rc(u.combo)[i]);
     const e = props.Dp + dAvg;
     const sideCut = [
-      pts[i].x + e / 2 > rect.x1 + 1e-9, pts[i].x - e / 2 < rect.x0 - 1e-9, pts[i].y + e / 2 > rect.y1 + 1e-9, pts[i].y - e / 2 < rect.y0 - 1e-9,
+      !pointInPolygon({ x: pts[i].x + e / 2, y: pts[i].y }, capPoly), !pointInPolygon({ x: pts[i].x - e / 2, y: pts[i].y }, capPoly), !pointInPolygon({ x: pts[i].x, y: pts[i].y + e / 2 }, capPoly), !pointInPolygon({ x: pts[i].x, y: pts[i].y - e / 2 }, capPoly),
     ].filter(Boolean).length;
     // longitud efectiva dentro del cabezal (muestreo del contorno circular o cuadrado equivalente)
     const Pcirc = p.kind === 'concrete' && p.shape === 'circle' || p.kind === 'pipe' ? Math.PI * e : 4 * e;
@@ -677,7 +687,7 @@ export function analyzePile(inp: PileInput): PileResults {
     for (let k = 0; k < NS; k++) {
       const a = (2 * Math.PI * (k + 0.5)) / NS;
       const q = { x: pts[i].x + (e / 2) * Math.cos(a), y: pts[i].y + (e / 2) * Math.sin(a) };
-      if (q.x <= rect.x1 && q.x >= rect.x0 && q.y <= rect.y1 && q.y >= rect.y0) inside++;
+      if (pointInPolygon(q, capPoly)) inside++;
     }
     const boE = (Pcirc * inside) / NS;
     const alphaS = Math.max(40 - 10 * sideCut, 20);
@@ -741,13 +751,13 @@ export function analyzePile(inp: PileInput): PileResults {
       const i = worstIdx;
       const e = props.Dp + dPull;
       const circ = (p.kind === 'concrete' && p.shape === 'circle') || p.kind === 'pipe';
-      const sideCut = [pts[i].x + e / 2 > rect.x1, pts[i].x - e / 2 < rect.x0, pts[i].y + e / 2 > rect.y1, pts[i].y - e / 2 < rect.y0].filter(Boolean).length;
+      const sideCut = [{ x: pts[i].x + e / 2, y: pts[i].y }, { x: pts[i].x - e / 2, y: pts[i].y }, { x: pts[i].x, y: pts[i].y + e / 2 }, { x: pts[i].x, y: pts[i].y - e / 2 }].filter((q) => !pointInPolygon(q, capPoly)).length;
       let inside = 0;
       const NS = 72;
       for (let k = 0; k < NS; k++) {
         const a = (2 * Math.PI * (k + 0.5)) / NS;
         const q = { x: pts[i].x + (e / 2) * Math.cos(a), y: pts[i].y + (e / 2) * Math.sin(a) };
-        if (q.x <= rect.x1 && q.x >= rect.x0 && q.y <= rect.y1 && q.y >= rect.y0) inside++;
+        if (pointInPolygon(q, capPoly)) inside++;
       }
       const bo = ((circ ? Math.PI * e : 4 * e) * inside) / NS;
       const alphaS = Math.max(40 - 10 * sideCut, 20);
@@ -845,14 +855,15 @@ export function analyzePile(inp: PileInput): PileResults {
 
   const ok = checks.every((c) => c.ok || c.advisory);
   return {
-    ok, checks, warnings, pts, n, capRect: rect, Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
+    ok, checks, warnings, pts, n, capRect: rect, capPoly, capArea: geom.area, capCentroid: { x: geom.cx, y: geom.cy }, spanX: lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx), spanY: lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy), Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
     lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen },
     minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, tension, liq, settle, deep, dX, dY,
-    concreteVolume: rect.B * rect.L * cap.h, pileLength: n * p.L,
+    concreteVolume: geom.area * cap.h, pileLength: n * p.L,
   };
 }
 
 // ---------------------------------------------------------------- dimensionamiento automático
+const CAP_AUTO: string[] = ['rect', 'hull', 'miter', 'circle', 'ngon'];
 const isPileCheck = (c: PCheck) => /^Pilot/.test(c.name);
 const isCapCheck = (c: PCheck) => /^Cabezal/.test(c.name) && !/borde/.test(c.name);
 
@@ -883,7 +894,7 @@ export interface PileAutoResult {
 
 /** Elige el número de pilotes (distribución usual con s = 3D), el espesor del cabezal y el acero. */
 export function autoSizePile(inp0: PileInput, minN = 1, maxN = 20): PileAutoResult {
-  let inp: PileInput = { ...inp0, cap: { ...inp0.cap, manual: { ...inp0.cap.manual, on: false }, manualSize: false } };
+  let inp: PileInput = { ...inp0, cap: { ...inp0.cap, manual: { ...inp0.cap.manual, on: false }, manualSize: false, shape: CAP_AUTO.includes(inp0.cap.shape) ? inp0.cap.shape : 'rect' } };
   const props = pileProps(inp.pile);
   const s = Math.ceil((3 * props.Dp) / 0.05 - 1e-9) * 0.05;
   const edge = Math.max(Math.ceil((props.Dp / 2 + 0.25) / 0.05 - 1e-9) * 0.05, 0.4);
