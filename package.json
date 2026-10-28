@@ -2,7 +2,7 @@
   "name": "terrastruct",
   "version": "1.0.0",
   "private": true,
-  "description": "TerraStruct: an\u00e1lisis y dise\u00f1o de fundaciones y muros de retenci\u00f3n con memoria de c\u00e1lculo en PDF y Word",
+  "description": "TerraStruct: análisis y diseño de fundaciones y muros de retención con memoria de cálculo en PDF y Word",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,7 +20,8 @@
     "lucide-react": "^1.62.0",
     "pdfmake": "^0.3.13",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/pdfmake": "^0.3.3",

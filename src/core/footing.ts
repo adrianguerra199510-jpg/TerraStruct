@@ -36,6 +36,8 @@ export interface FootingColumn {
   x: number;
   y: number;
   loads: Record<CaseKey, LoadCase>;
+  /** modo envolvente: cargas por combinación (clave = id de la combinación) */
+  env?: Record<string, LoadCase>;
 }
 
 export interface LoadCombo {
@@ -65,6 +67,10 @@ export interface FootingInput {
   barY: string;
   /** barras de la capa inferior */
   lowerLayer: 'x' | 'y';
+  /** forma de ingresar las cargas: por casos (D, L, W, E + combinaciones) o directamente la envolvente de servicio y última */
+  loadMode: 'cases' | 'envelope';
+  /** acero ajustado manualmente (separaciones en m) */
+  manual: { on: boolean; sBotX: number; sBotY: number; sTopX: number; sTopY: number };
   /** parrilla superior opcional */
   topSteel: boolean;
   barTopX: string;
@@ -138,6 +144,8 @@ export function defaultFooting(): FootingInput {
     barX: '#6',
     barY: '#6',
     lowerLayer: 'x',
+    loadMode: 'cases',
+    manual: { on: false, sBotX: 0.2, sBotY: 0.2, sTopX: 0.2, sTopY: 0.2 },
     topSteel: false,
     barTopX: '#5',
     barTopY: '#5',
@@ -326,7 +334,8 @@ export interface FootingResults {
 // ---------------------------------------------------------------------------
 // Utilidades
 // ---------------------------------------------------------------------------
-export function combineLoad(col: FootingColumn, combo: LoadCombo): LoadCase {
+export function combineLoad(col: FootingColumn, combo: LoadCombo, mode: 'cases' | 'envelope' = 'cases'): LoadCase {
+  if (mode === 'envelope') return { ...zeroLoad(), ...(col.env?.[combo.id] ?? {}) };
   const f: Record<CaseKey, number> = { D: combo.D, L: combo.L, W: combo.W, E: combo.E };
   const out = zeroLoad();
   for (const k of CASE_KEYS) {
@@ -382,7 +391,7 @@ function analyzeService(inp: FootingInput, poly: Poly, combo: LoadCombo): Servic
   const pp = polyProps(poly);
   const A = pp.A;
   const cols = inp.columns.map((col) => {
-    const l = combineLoad(col, combo);
+    const l = combineLoad(col, combo, inp.loadMode);
     return { col, ...l } as ColumnLoadsResult;
   });
   const colPolys = inp.columns.map((c) => polyProps(columnPoly(c.geom, c.x, c.y)));
@@ -623,7 +632,7 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
 
   // --- Últimas: presión neta con cargas mayoradas de las columnas solamente
   const ultimate: UltimateResult[] = ultimateCombos.map((combo) => {
-    const cols = inp.columns.map((col) => ({ col, ...combineLoad(col, combo) }) as ColumnLoadsResult);
+    const cols = inp.columns.map((col) => ({ col, ...combineLoad(col, combo, inp.loadMode) }) as ColumnLoadsResult);
     let Pu = 0, Qx = 0, Qy = 0;
     for (const c of cols) {
       Pu += c.P;
@@ -739,14 +748,19 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
       const asMin = rhoMinSlab(inp.fy) * 1 * inp.h * 1e4; // cm²/m
       const asReq = isFinite(fr.As) ? fr.As / ch : Infinity;
       const asDes = Math.max(isFinite(asReq) ? asReq : 0, asMin);
-      const det = chooseSpacing(asDes, bar, Math.min(3 * inp.h, 0.45));
+      const sMaxF = Math.min(3 * inp.h, 0.45);
+      let det: Detailing = chooseSpacing(asDes, bar, sMaxF);
+      if (inp.manual.on) {
+        const mS = face === 'inferior' ? (dir === 'x' ? inp.manual.sBotX : inp.manual.sBotY) : dir === 'x' ? inp.manual.sTopX : inp.manual.sTopY;
+        det = { text: `${bar.id} @ ${(mS * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing: mS, asProv: bar.area / mS, ok: mS <= sMaxF + 1e-9, note: mS > sMaxF + 1e-9 ? `Separación mayor que ${(sMaxF * 100).toFixed(0)} cm.` : undefined };
+      }
       const phiMn = flexureCapacity(det.asProv * ch, ch, dUse, inp.fc, inp.fy);
       const side = b0.sf.hasColumns ? 'int' : b0.sf.side;
       const ldReq = developmentLength(bar.db, inp.fy, inp.fc, { lambda: inp.lambda });
       const ldAvail = side === 'int' ? Infinity : Math.abs(b0.pos - b0.sf.partMin) - inp.cover;
       return {
         dir, d: dUse, bar, comboName: b0.u.combo.name, pos: b0.pos, side, Mu: b0.Mu, face, chord: ch,
-        AsReq: asReq, AsMin: asMin, AsDesign: asDes, det, phiMn, rho: fr.rho, cOverD: fr.cOverD, sectionOk: fr.ok && isFinite(fr.As),
+        AsReq: asReq, AsMin: asMin, AsDesign: asDes, det, phiMn, rho: fr.rho, cOverD: fr.cOverD, sectionOk: fr.ok && isFinite(fr.As) && det.asProv + 1e-9 >= asMin && det.ok,
         ratio: phiMn > 0 ? b0.Mu / phiMn : Infinity,
         ldReq, ldAvail, hookNeeded: ldAvail < ldReq, hookLen: hookDevelopment(bar.db, inp.fy, inp.fc, inp.lambda),
         diagram, steelVolume: det.asProv * 1e-4 * pp.A,
@@ -870,4 +884,17 @@ export function findScaleForPressure(inp: FootingInput, maxScale = 3): number | 
     if (c.length && c.every((k) => k.ok)) return s;
   }
   return null;
+}
+
+/** Convierte las cargas por casos + combinaciones en la envolvente equivalente (cargas por combinación). */
+export function casesToEnvelope(inp: FootingInput): FootingInput {
+  return {
+    ...inp,
+    loadMode: 'envelope',
+    columns: inp.columns.map((c) => {
+      const env: Record<string, LoadCase> = { ...(c.env ?? {}) };
+      for (const cb of inp.combos) env[cb.id] = combineLoad(c, cb, 'cases');
+      return { ...c, env };
+    }),
+  };
 }

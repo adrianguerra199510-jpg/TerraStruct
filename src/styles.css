@@ -638,6 +638,7 @@ table.tbl {
   background: var(--warn);
 }
 .banner {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 12px;

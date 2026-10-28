@@ -83,6 +83,20 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
     }),
     { align: ['l', 'l', 'l', 'r', 'r', 'r'], caption: 'Tabla 2. Columnas' },
   );
+  if (inp.loadMode === 'envelope') {
+    d.h2('Envolvente de cargas por columna (nivel del terreno)');
+    d.p('Las cargas se ingresaron directamente como envolvente de servicio (ES) y última (EU); no se aplican factores de combinación.');
+    for (const c of inp.columns) {
+      d.table(
+        ['Combinación', 'Tipo', `P (${fmt.l('force')})`, `Vx (${fmt.l('force')})`, `Vy (${fmt.l('force')})`, `Mx (${fmt.l('moment')})`, `My (${fmt.l('moment')})`, 'Aum. de qa'],
+        inp.combos.map((cb) => {
+          const l = c.env?.[cb.id] ?? { P: 0, Vx: 0, Vy: 0, Mx: 0, My: 0 };
+          return [cb.name, cb.kind === 'service' ? 'ES' : 'EU', n('force', l.P, 2), n('force', l.Vx, 2), n('force', l.Vy, 2), n('moment', l.Mx, 2), n('moment', l.My, 2), cb.kind === 'service' ? f(cb.qaFactor, 2) : '—'];
+        }),
+        { align: ['l', 'l', 'r', 'r', 'r', 'r', 'r', 'r'], caption: `Tabla. Envolvente de la columna ${c.name}` },
+      );
+    }
+  } else {
   d.h2('Cargas de servicio por columna (nivel del terreno)');
   for (const c of inp.columns) {
     d.table(
@@ -90,6 +104,7 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
       CASE_KEYS.map((k) => [CASE_LABEL[k], n('force', c.loads[k].P, 2), n('force', c.loads[k].Vx, 2), n('force', c.loads[k].Vy, 2), n('moment', c.loads[k].Mx, 2), n('moment', c.loads[k].My, 2)]),
       { align: ['l', 'r', 'r', 'r', 'r', 'r'], caption: `Tabla. Cargas de la columna ${c.name}` },
     );
+  }
   }
   d.h2('Materiales y suelo');
   d.kv(
@@ -111,12 +126,15 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
     ],
     2,
   );
+  if (inp.loadMode !== 'envelope') {
   d.h2('Combinaciones de carga');
   d.table(
     ['Combinación', 'Tipo', 'D', 'L', 'W', 'E', 'Aum. de qa'],
     inp.combos.map((c) => [c.name, c.kind === 'service' ? 'Servicio' : 'Última', f(c.D, 3), f(c.L, 3), f(c.W, 3), f(c.E, 3), c.kind === 'service' ? f(c.qaFactor, 2) : '—']),
     { align: ['l', 'l', 'r', 'r', 'r', 'r', 'r'], caption: 'Tabla 3. Combinaciones de carga' },
   );
+  }
+  if (inp.manual.on) d.p(`Armado definido por el usuario: separaciones inferiores ${f(inp.manual.sBotX * 100, 1)} cm (X) y ${f(inp.manual.sBotY * 100, 1)} cm (Y)${inp.topSteel ? `; superiores ${f(inp.manual.sTopX * 100, 1)} cm (X) y ${f(inp.manual.sTopY * 100, 1)} cm (Y)` : ''}. El programa verifica la resistencia, el acero mínimo y la separación máxima.`);
 
   // ------------------------------------------------------------------ 3
   d.h1('Presiones sobre el suelo y estabilidad (servicio)');

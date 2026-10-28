@@ -1,7 +1,7 @@
 import { ICON_PNG } from '../report/iconData';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Home as HomeIcon, Building2, BrickWall, Plus, Copy, Trash2, Moon, Sun, FileText, FolderOpen, Download, ClipboardList,
+  Home as HomeIcon, Building2, BrickWall, Plus, Copy, Trash2, Moon, Sun, FileText, FolderOpen, Download, ClipboardList, FileSpreadsheet,
 } from 'lucide-react';
 import { Project, Item, loadProject, saveProject, newProject, normalizeProject, uid } from '../state';
 import { FootingInput, defaultFooting } from '../core/footing';
@@ -11,6 +11,7 @@ import { makeFmt } from '../core/units';
 import { Home } from './Home';
 import { FootingPage } from './FootingPage';
 import { WallPage } from './WallPage';
+import { ImportDialog } from './ImportDialog';
 import { ReportButtons } from './ReportButtons';
 
 type Route = { m: 'home' } | { m: 'project' } | { m: 'footing'; id: string } | { m: 'wall'; id: string };
@@ -19,6 +20,7 @@ export function App() {
   const [project, setProject] = useState<Project>(() => loadProject());
   const [route, setRoute] = useState<Route>({ m: 'home' });
   const fileRef = useRef<HTMLInputElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const toast = useToast();
 
   useEffect(() => saveProject(project), [project]);
@@ -36,6 +38,18 @@ export function App() {
     const it: Item<FootingInput> = { id: uid(), data: { ...data, name: uniqueName(data.name, project.footings.map((f) => f.data.name)) } };
     setProject((p) => ({ ...p, footings: [...p.footings, it] }));
     setRoute({ m: 'footing', id: it.id });
+  };
+  const addMany = (list: FootingInput[]) => {
+    const names = project.footings.map((f) => f.data.name);
+    const its: Item<FootingInput>[] = list.map((d) => {
+      const nm = uniqueName(d.name, names);
+      names.push(nm);
+      return { id: uid(), data: { ...d, name: nm } };
+    });
+    if (!its.length) return;
+    setProject((p) => ({ ...p, footings: [...p.footings, ...its] }));
+    setRoute({ m: 'footing', id: its[0].id });
+    toast.show(`${its.length} zapata(s) creadas`);
   };
   const addWall = (data: WallInput = defaultWall('cantilever')) => {
     const it: Item<WallInput> = { id: uid(), data: { ...data, name: uniqueName(data.name, project.walls.map((w) => w.data.name)) } };
@@ -81,6 +95,7 @@ export function App() {
 
   return (
     <UnitsContext.Provider value={ctx}>
+      {importOpen && <ImportDialog onClose={() => setImportOpen(false)} onCreate={addMany} />}
       <div className="app">
         <aside className="side">
           <div className="brand" onClick={() => setRoute({ m: 'home' })}>
@@ -96,6 +111,7 @@ export function App() {
 
           <div className="nav-title">
             <span>Fundaciones</span>
+            <button className="nav-mini" title="Importar zapatas desde Excel (por paquete)" onClick={() => setImportOpen(true)}><FileSpreadsheet size={15} /></button>
             <button className="nav-mini" title="Nueva fundación" onClick={() => addFooting()}><Plus size={15} /></button>
           </div>
           {project.footings.map((f) => (

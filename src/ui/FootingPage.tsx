@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Shapes, Columns3, Mountain, Layers, Settings2, Ruler, CheckCircle2, XCircle, Wand2, MoveDiagonal, Grid3x3, Eye, FileText, ListChecks, RotateCcw, Copy,
 } from 'lucide-react';
 import {
-  FootingInput, FootingColumn, LoadCombo, CASE_KEYS, CASE_LABEL, CaseKey, analyzeFooting, defaultColumn, defaultCombos, findMinThickness, findScaleForPressure, FootingResults,
+  FootingInput, FootingColumn, LoadCombo, CASE_KEYS, CASE_LABEL, CaseKey, analyzeFooting, defaultColumn, defaultCombos, findMinThickness, findScaleForPressure, FootingResults, casesToEnvelope, zeroLoad, LoadCase,
 } from '../core/footing';
 import {
   COLUMN_SHAPES, ColumnShape, FOOTING_PRESETS, FootingPreset, footingPresetPoly, defaultColumnGeom, columnPoly,
@@ -14,6 +14,7 @@ import { Pt, polyProps, ccw } from '../core/geometry';
 import { Acc, Alert, Card, Check, CheckCard, CellNum, CellText, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
 import { PlanView, footingPlanSvg, footingRebarPlanSvg, footingSectionSvg, makePlanView, planPoints } from '../draw/footingDraw';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
+import { autoSizeFooting } from '../core/footingAuto';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 
@@ -68,6 +69,33 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
                 <Sel label="Barras superiores en Y" value={data.barTopY} onChange={(v) => set({ barTopY: v })} options={barList(data.barSystem).map((b) => ({ id: b.id, label: b.label }))} />
               </>
             )}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <Check label="Ajustar el acero manualmente (separaciones)" value={data.manual.on} onChange={(v) => set({ manual: { ...data.manual, on: v } })} hint="Elige las barras y la separación; el programa verifica resistencia, acero mínimo y separación máxima" />
+            </div>
+            {data.manual.on && (
+              <>
+                <Num label="Separación inf. en X" q="lencm" value={data.manual.sBotX} onChange={(v) => set({ manual: { ...data.manual, sBotX: v } })} min={0.05} />
+                <Num label="Separación inf. en Y" q="lencm" value={data.manual.sBotY} onChange={(v) => set({ manual: { ...data.manual, sBotY: v } })} min={0.05} />
+                {data.topSteel && (
+                  <>
+                    <Num label="Separación sup. en X" q="lencm" value={data.manual.sTopX} onChange={(v) => set({ manual: { ...data.manual, sTopX: v } })} min={0.05} />
+                    <Num label="Separación sup. en Y" q="lencm" value={data.manual.sTopY} onChange={(v) => set({ manual: { ...data.manual, sTopY: v } })} min={0.05} />
+                  </>
+                )}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <button
+                    className="btn small"
+                    onClick={() => {
+                      const r = analyzeFooting({ ...data, manual: { ...data.manual, on: false } });
+                      const rd = (v?: number, d = data.manual.sBotX) => (v && isFinite(v) ? Math.round(v * 200) / 200 : d);
+                      set({ manual: { ...data.manual, sBotX: rd(r.flexX?.det.spacing), sBotY: rd(r.flexY?.det.spacing), sTopX: rd(r.flexTopX?.det.spacing, data.manual.sTopX), sTopY: rd(r.flexTopY?.det.spacing, data.manual.sTopY) } });
+                    }}
+                  >
+                    <Wand2 size={14} /> Copiar valores del cálculo automático
+                  </button>
+                </div>
+              </>
+            )}
             <Num label="f′c" q="stress" value={data.fc} onChange={(v) => set({ fc: v })} min={14} />
             <Num label="fy" q="stress" value={data.fy} onChange={(v) => set({ fy: v })} min={240} />
           </div>
@@ -110,7 +138,17 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
             )}
           </div>
           <ColumnEditor col={col} setCol={setCol} />
-          <LoadsEditor col={col} setCol={setCol} />
+          <Sel
+            label="Ingreso de cargas"
+            value={data.loadMode}
+            onChange={(v) => {
+              if (v === 'envelope' && data.loadMode === 'cases') onChange(casesToEnvelope(data));
+              else set({ loadMode: v });
+            }}
+            options={[{ id: 'cases', label: 'Por casos (D, L, W, E) + combinaciones' }, { id: 'envelope', label: 'Envolvente de servicio y última' }]}
+            hint={data.loadMode === 'envelope' ? 'Cargas finales por combinación; no se aplican factores' : undefined}
+          />
+          {data.loadMode === 'envelope' ? <EnvelopeEditor data={data} col={col} onChange={onChange} /> : <LoadsEditor col={col} setCol={setCol} />}
         </Acc>
 
         <Acc title="Suelo y estabilidad" icon={<Mountain size={18} />}>
@@ -126,9 +164,11 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
           </div>
         </Acc>
 
-        <Acc title="Combinaciones de carga" icon={<Layers size={18} />}>
-          <CombosEditor data={data} onChange={onChange} />
-        </Acc>
+        {data.loadMode === 'cases' && (
+          <Acc title="Combinaciones de carga" icon={<Layers size={18} />}>
+            <CombosEditor data={data} onChange={onChange} />
+          </Acc>
+        )}
       </div>
 
       <div className="stack right" style={{ minWidth: 0 }}>
@@ -403,6 +443,69 @@ function LoadsEditor({ col, setCol }: { col: FootingColumn; setCol: (p: Partial<
   );
 }
 
+function EnvelopeEditor({ data, col, onChange }: { data: FootingInput; col: FootingColumn; onChange: (f: FootingInput) => void }) {
+  const { fmt } = useUnits();
+  const updCombo = (id: string, patch: Partial<LoadCombo>) => onChange({ ...data, combos: data.combos.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const updLoad = (id: string, f: keyof LoadCase, v: number) =>
+    onChange({ ...data, columns: data.columns.map((c) => (c.id === col.id ? { ...c, env: { ...(c.env ?? {}), [id]: { ...zeroLoad(), ...(c.env?.[id] ?? {}), [f]: v } } } : c)) });
+  const add = (kind: 'service' | 'ultimate') => {
+    const id = 'E' + Date.now().toString(36);
+    onChange({ ...data, combos: [...data.combos, { id, name: kind === 'service' ? 'ES nueva' : 'EU nueva', kind, D: 0, L: 0, W: 0, E: 0, qaFactor: 1 }] });
+  };
+  const del = (id: string) => onChange({ ...data, combos: data.combos.filter((c) => c.id !== id) });
+  return (
+    <div>
+      <div className="hint" style={{ marginBottom: 6 }}>
+        Columna {col.name}. Una fila por combinación de la envolvente: <b>ES</b> (servicio: suelo, deslizamiento, volcamiento) y <b>EU</b> (última: diseño del concreto). Cargas en el nivel del terreno; P positiva hacia abajo.
+      </div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Combinación</th>
+              <th>Tipo</th>
+              <th className="r">P ({fmt.l('force')})</th>
+              <th className="r">Vx ({fmt.l('force')})</th>
+              <th className="r">Vy ({fmt.l('force')})</th>
+              <th className="r">Mx ({fmt.l('moment')})</th>
+              <th className="r">My ({fmt.l('moment')})</th>
+              <th className="r">qa×</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {data.combos.map((c) => {
+              const l = col.env?.[c.id] ?? zeroLoad();
+              return (
+                <tr key={c.id}>
+                  <td><CellText value={c.name} onChange={(v) => updCombo(c.id, { name: v })} /></td>
+                  <td>
+                    <select value={c.kind} onChange={(e) => updCombo(c.id, { kind: e.target.value as any })} style={{ border: 0, background: 'transparent' }}>
+                      <option value="service">ES</option>
+                      <option value="ultimate">EU</option>
+                    </select>
+                  </td>
+                  <td><CellNum q="force" value={l.P} onChange={(v) => updLoad(c.id, 'P', v)} decimals={2} /></td>
+                  <td><CellNum q="force" value={l.Vx} onChange={(v) => updLoad(c.id, 'Vx', v)} decimals={2} /></td>
+                  <td><CellNum q="force" value={l.Vy} onChange={(v) => updLoad(c.id, 'Vy', v)} decimals={2} /></td>
+                  <td><CellNum q="moment" value={l.Mx} onChange={(v) => updLoad(c.id, 'Mx', v)} decimals={2} /></td>
+                  <td><CellNum q="moment" value={l.My} onChange={(v) => updLoad(c.id, 'My', v)} decimals={2} /></td>
+                  <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => updCombo(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
+                  <td><button className="icon-btn danger" onClick={() => del(c.id)}><Trash2 size={14} /></button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+        <button className="btn small" onClick={() => add('service')}><Plus size={14} /> ES (servicio)</button>
+        <button className="btn small" onClick={() => add('ultimate')}><Plus size={14} /> EU (última)</button>
+      </div>
+    </div>
+  );
+}
+
 function CombosEditor({ data, onChange }: { data: FootingInput; onChange: (f: FootingInput) => void }) {
   const upd = (id: string, patch: Partial<LoadCombo>) => onChange({ ...data, combos: data.combos.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   return (
@@ -481,6 +584,22 @@ function FootingResultsView({ data, res, onChange, theme }: { data: FootingInput
         {res.ok ? <CheckCircle2 /> : <XCircle />}
         {res.ok ? 'La fundación cumple todas las verificaciones.' : 'La fundación NO cumple alguna verificación. Aumente el espesor o las dimensiones.'}
         <span className="spacer" />
+        <button
+          className="btn small primary"
+          disabled={!!busy}
+          title="Calcula dimensiones, espesor y acero (columna 1)"
+          onClick={() => {
+            setBusy('a');
+            setTimeout(() => {
+              const r = autoSizeFooting(data);
+              setBusy('');
+              onChange(r.input);
+              if (!r.ok) alert(r.note);
+            }, 20);
+          }}
+        >
+          <Wand2 size={14} /> Dimensionar automáticamente
+        </button>
         <button
           className="btn small"
           disabled={!!busy}
