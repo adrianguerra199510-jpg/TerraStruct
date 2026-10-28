@@ -109,8 +109,8 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
         i.pile.L = 10;
         i.layout = { ...i.layout, sx: 2.4, sy: 2.4 };
         i.cap.edge = 0.7;
-        i.cap.barX = '#10';
-        i.cap.barY = '#10';
+        i.cap.barX = '#6';
+        i.cap.barY = '#6';
         i.geo.layers = [
           { ...defaultLayers()[0], name: 'Arcilla blanda', thk: 6, su: 35, gamma: 8 },
           { ...defaultLayers()[0], name: 'Roca sana (socket)', kind: 'rock', thk: 12, qu: 25, rqd: 80, rough: true, jointS: 0.4, aperture: 1, Es: 2000000, fsMax: 3000, gamma: 14, Cc: 0 },
