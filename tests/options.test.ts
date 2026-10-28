@@ -123,3 +123,48 @@ describe('armadura de la pantalla elegible', () => {
     expect(r.design.stem!.horizRatio).toBeGreaterThan(1);
   });
 });
+
+import { isCounterfort, isMasonry, cfInternal } from '../src/core/wallTypes';
+import { stemHookSide } from '../src/core/wallGeom';
+import { reportForWall } from '../src/report';
+import { makeFmt } from '../src/core/units';
+import { newProject } from '../src/state';
+
+describe('muros de bloque con contrafuertes', () => {
+  for (const t of ['masonryCfInt', 'masonryCfExt'] as const) {
+    it(`${t}: se analiza, diseña el contrafuerte con mampostería y la memoria se genera`, () => {
+      const w = defaultWall(t);
+      expect(isCounterfort(t) && isMasonry(t)).toBe(true);
+      const r = analyzeWall(w);
+      expect(r.ok).toBe(true);
+      const c = r.design.counterfort!;
+      expect(c.kind).toBe(cfInternal(t) ? 'interno' : 'externo');
+      expect(c.notes.some((n) => /Mampostería/.test(n))).toBe(true);
+      // el espesor de la pantalla es el del bloque de 8″
+      expect(r.inp.tBot).toBeCloseTo(0.2, 9);
+      // separación del acero horizontal en múltiplos de 20 cm
+      expect(c.stemNegDet.spacing / 0.2).toBeCloseTo(Math.round(c.stemNegDet.spacing / 0.2), 9);
+      const doc = reportForWall(w, makeFmt('SI'), newProject().info);
+      expect(JSON.stringify(doc.blocks)).toContain('TMS 402');
+    });
+  }
+  it('menos acero horizontal en la pantalla empeora la relación', () => {
+    const a = analyzeWall(defaultWall('masonryCfInt')).design.counterfort!;
+    const w = defaultWall('masonryCfInt');
+    w.cf.rb.stemHS = 0.6;
+    const b = analyzeWall(w).design.counterfort!;
+    expect(b.ratios.stemNeg).toBeGreaterThan(a.ratios.stemNeg);
+  });
+});
+
+describe('gancho de las barras de la pantalla', () => {
+  it('hacia el pie por defecto; hacia el talón si no hay pie; hacia el pie si no hay talón', () => {
+    const w = defaultWall('cantilever');
+    expect(stemHookSide(analyzeWall(w).geom)).toBe(-1);
+    w.Lt = 0;
+    expect(stemHookSide(analyzeWall(w).geom)).toBe(1);
+    const v = defaultWall('cantilever');
+    v.Lh = 0;
+    expect(stemHookSide(analyzeWall(v).geom)).toBe(-1);
+  });
+});

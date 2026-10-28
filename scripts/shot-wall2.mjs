@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const out = process.argv[2], file = process.argv[3];
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE', m.text()); });
+await page.goto('file://' + file);
+await page.waitForTimeout(400);
+await page.getByText('Mampostería reforzada con contrafuertes internos').first().click();
+await page.waitForTimeout(700);
+await page.screenshot({ path: out + '/mcf1.png' });
+await page.getByRole('tab', { name: /Armado/ }).click();
+await page.waitForTimeout(500);
+await page.locator('.right').evaluate((e) => e.scrollTo(0, 500));
+await page.waitForTimeout(300);
+await page.screenshot({ path: out + '/mcf2.png' });
+await browser.close();

@@ -3,7 +3,7 @@
 
 import { WallGeom, soilWeight } from './wallGeom';
 import { FaceThrust, faceThrust, kaCoulomb, kaRankine, kaeMononobe, kpRankine, passiveForce, rad, GAMMA_W, Thrust } from './earth';
-import { isGravity } from './wallTypes';
+import { isGravity, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
 import { clipHalfPlane, polyProps } from './geometry';
 
 export interface Factors {
@@ -196,12 +196,12 @@ export function evalCase(
   let heelW = hs.W;
   // El suelo desplazado por contrafuertes internos
   const cf = g.parts.find((p) => p.id === 'cf');
-  if (cf && inp.type === 'counterfortInt') heelW -= cf.W * (inp.fill.gamma / inp.mat.gammaC);
+  if (cf && cfInternal(inp.type)) heelW -= cf.W * (inp.fill.gamma / (isMasonryStem(inp.type) ? inp.mat.gammaM : inp.mat.gammaC));
   addV('Suelo sobre el talón', heelW * dead, hs.x);
   if (inp.includeToeSoil && g.toeSoilPoly) {
     const ts = soilWeight(g.toeSoilPoly, inp.found.gamma, inp.found.gamma, -Infinity);
     let toeW = ts.W;
-    if (cf && inp.type === 'counterfortExt') {
+    if (cf && cfExternal(inp.type)) {
       // descontar el suelo que ocupa el contrafuerte exterior (parte del contrafuerte bajo el terreno)
       const below = clipHalfPlane(cf.poly, 0, -1, Math.max(inp.Df, g.hb));
       toeW -= polyProps(below).A * (inp.cf.t / inp.cf.s) * inp.found.gamma;

@@ -48,7 +48,7 @@ export function Num({ label, value, onChange, q = 'none', unit, min, max, hint, 
   }, [shown, focus, dec]);
   return (
     <div className="field" title={title}>
-      {label && <label>{label}</label>}
+      {label && <label title={typeof label === "string" ? label : undefined}>{label}</label>}
       <div className="inp">
         <input
           inputMode="decimal"
@@ -84,7 +84,7 @@ export function Num({ label, value, onChange, q = 'none', unit, min, max, hint, 
 export function Sel<T extends string>({ label, value, onChange, options, hint }: { label?: string; value: T; onChange: (v: T) => void; options: { id: T; label: string }[]; hint?: string }) {
   return (
     <div className="field">
-      {label && <label>{label}</label>}
+      {label && <label title={typeof label === "string" ? label : undefined}>{label}</label>}
       <div className="inp">
         <select value={value} onChange={(e) => onChange(e.target.value as T)}>
           {options.map((o) => (
@@ -102,7 +102,7 @@ export function Sel<T extends string>({ label, value, onChange, options, hint }:
 export function Txt({ label, value, onChange, placeholder }: { label?: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <div className="field">
-      {label && <label>{label}</label>}
+      {label && <label title={typeof label === "string" ? label : undefined}>{label}</label>}
       <div className="inp">
         <input value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       </div>

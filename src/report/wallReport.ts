@@ -1,5 +1,5 @@
 import { WallResults } from '../core/wall';
-import { WALL_TYPES, WallInput, gabionGamma, gabionWidths, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { WALL_TYPES, WallInput, gabionGamma, gabionWidths, isCounterfort, isGravity, isMasonry, isMasonryStem } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { PHI_FLEX, PHI_SHEAR, PHI_PLAIN } from '../core/concrete';
 import { ProjectInfo } from '../state';
@@ -363,6 +363,12 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
         'Pantalla y losa de zapata: franjas continuas entre contrafuertes;  Mu(−) = wu·Ls²/12 (sobre el contrafuerte) ;  Mu(+) = wu·Ls²/16 (centro de la luz)',
         'Contrafuerte: viga en voladizo de profundidad variable;  Mcf(y) = s·∫ pu(z)·(zs − z) dz ;  As = Mcf/(φ·fy·z), aumentada por 1/cosθ por la inclinación de la barra',
         'Amarres: pantalla–contrafuerte  As = pu·s/(φ·fy) por metro de altura ;  zapata–contrafuerte  As = wu·s/(φ·fy) por metro',
+        ...(isMasonryStem(inp.type)
+          ? [
+              'Mampostería (TMS 402, diseño por resistencia):  φMn = 0.9·As·fy·(d − a/2),  a = As·fy/(0.8·f′m·b),  d = t/2 en la pantalla (barra al centro de la celda);  ancho de ala del contrafuerte ≤ tc + 12·t',
+              'Cortante:  φVn = 0.8·(Vnm + Vns),  Vnm = [4.0 − 1.75·(Mu/(Vu·dv))]·An·√f′m,  Vns = 0.5·(Av/s)·fy·dv;  acero mínimo 0.0007·b·t;  separación de las barras horizontales en múltiplos de 20 cm (hiladas)',
+            ]
+          : []),
       ],
       'Modelo',
     );

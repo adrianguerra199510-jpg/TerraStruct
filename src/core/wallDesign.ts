@@ -1,12 +1,12 @@
 // Diseño estructural de muros de retención: pantalla, zapata, llave, contrafuertes, concreto simple y mampostería.
 
-import { WallGeom, soilWeight } from './wallGeom';
+import { WallGeom, soilWeight, stemHookSide } from './wallGeom';
 import { CaseResult, Factors, evalCase, earthModel } from './wallStability';
 import { GAMMA_W, rad, sigmaV, passiveForce, kpRankine, faceThrust } from './earth';
 import { flexureAs, flexureCapacity, oneWayVc, PHI_FLEX, PHI_SHEAR, PHI_PLAIN, beta1 } from './concrete';
 import { Bar, Detailing, chooseSpacing, findBar, developmentLength, hookDevelopment } from './materials';
 import { polyProps, clipHalfPlane } from './geometry';
-import { isCounterfort, isGravity, isMasonry } from './wallTypes';
+import { isCounterfort, isGravity, isMasonry, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
 
 // ---------------------------------------------------------------------------
 // Utilidades numéricas
@@ -577,8 +577,7 @@ function chooseSpacingModule(asReq: number, bar: Bar, module = 0.2, maxS = 1.2):
   return { text: `${bar.id} @ ${(s * 100).toFixed(0)} cm`, spacing: s, asProv: bar.area / s, ok, note };
 }
 
-function masonryFlexure(Mu: number, d: number, fm: number, fy: number): { As: number; ok: boolean; aMax: number; a: number } {
-  const b = 1;
+function masonryFlexure(Mu: number, d: number, fm: number, fy: number, b = 1): { As: number; ok: boolean; aMax: number; a: number } {
   const k = 0.8 * fm * b * 1000; // kN/m por m de a
   const inner = d * d - (2 * Mu) / (PHI_FLEX * k);
   const epsY = fy / 200000;
@@ -588,6 +587,18 @@ function masonryFlexure(Mu: number, d: number, fm: number, fy: number): { As: nu
   const a = d - Math.sqrt(inner);
   const As = ((0.8 * fm * b * a) / fy) * 1e4;
   return { As, ok: a <= aMax + 1e-9, aMax, a };
+}
+
+/** Resistencia nominal a cortante de la mampostería Vnm (TMS 402 SD, simplificado), kN, para un ancho b y peralte d (m). */
+function masonryVn(b: number, d: number, Mu: number, Vu: number, fm: number): number {
+  const mvd = Math.min(1, Math.max(Mu, 1e-6) / Math.max(Vu * d, 1e-6));
+  const fmPsi = fm * 145.038;
+  const AnIn2 = b * d * 1550.0031;
+  const lbToKn = 4.44822 / 1000;
+  const mvdC = Math.min(Math.max(mvd, 0.25), 1);
+  const Vnm = (4.0 - 1.75 * mvd) * AnIn2 * Math.sqrt(fmPsi) * lbToKn;
+  const VnMax = (6 - (2 * (mvdC - 0.25)) / 0.75) * AnIn2 * Math.sqrt(fmPsi) * lbToKn;
+  return Math.min(Vnm, VnMax);
 }
 
 function stemDesignMasonry(g: WallGeom): StemDesign {
@@ -835,7 +846,10 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const inp = g.inp;
   const m = inp.mat;
   const f = inp.factors;
-  const internal = inp.type === 'counterfortInt';
+  const internal = cfInternal(inp.type);
+  const mas = isMasonryStem(inp.type);
+  const phiV = mas ? 0.8 : PHI_SHEAR;
+  const flex = (Mu: number, b: number, d: number) => (mas ? masonryFlexure(Mu, d, m.fm, m.fy, b) : flexureAs(Mu, b, d, m.fc, m.fy));
   const lat = stemLateral(g);
   const s = inp.cf.s;
   const tc = inp.cf.t;
@@ -861,13 +875,13 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
     const y = (H * k) / NS;
     const z = H - y;
     const t = tAt(y);
-    const d = t - m.cover - dBar / 2;
+    const d = mas ? t / 2 : t - m.cover - dBar / 2;
     const w = pu(z);
     const Mneg = (w * Ls * Ls) / 12;
     const Mpos = (w * Ls * Ls) / 16;
-    const fn = flexureAs(Mneg, 1, d, m.fc, m.fy);
-    const fp = flexureAs(Mpos, 1, d, m.fc, m.fy);
-    const asMinW = rhoHorizMin(barH.db, m.fy) * t * 1e4 / 2;
+    const fn = flex(Mneg, 1, d);
+    const fp = flex(Mpos, 1, d);
+    const asMinW = mas ? 0.0007 * t * 1e4 : rhoHorizMin(barH.db, m.fy) * t * 1e4 / 2;
     stemSlab.push({
       y, t, d, wu: w, MuNeg: Mneg, MuPos: Mpos,
       AsNeg: Math.max(isFinite(fn.As) ? fn.As : 1e6, asMinW), AsPos: Math.max(isFinite(fp.As) ? fp.As : 1e6, asMinW),
@@ -876,22 +890,22 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   // Cortante de la losa de la pantalla en el borde de los contrafuertes (a d de la cara)
   const sw = stemSlab[0];
   const stemVu = (sw.wu * (Ls / 2 - sw.d));
-  const stemCap = oneWayVc(1, sw.d, m.fc, 0.003, 'ACI318_14', m.lambda);
-  const stemShear = { Vu: stemVu, phiVc: PHI_SHEAR * stemCap.Vc, ratio: stemVu / (PHI_SHEAR * stemCap.Vc) };
+  const stemCapVc = mas ? masonryVn(1, sw.d, Math.max(sw.MuNeg, 1e-6), Math.max(stemVu, 1e-6), m.fm) : oneWayVc(1, sw.d, m.fc, 0.003, 'ACI318_14', m.lambda).Vc;
+  const stemShear = { Vu: stemVu, phiVc: phiV * stemCapVc, ratio: stemVu / (phiV * stemCapVc) };
   const tAvg = (inp.tTop + inp.tBot) / 2;
-  const vertDet = chooseSpacing(0.5 * rhoVertMin(barV.db, m.fy) * tAvg * 1e4, barV, 0.45);
-  const vertBottomDet = chooseSpacing(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.45);
+  const vertDet = mas ? chooseSpacingModule(0.0007 * tAvg * 1e4, barV, 0.2, 1.2) : chooseSpacing(0.5 * rhoVertMin(barV.db, m.fy) * tAvg * 1e4, barV, 0.45);
+  const vertBottomDet = mas ? chooseSpacingModule(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.2, 1.2) : chooseSpacing(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.45);
   const maxNeg = Math.max(...stemSlab.map((x) => x.AsNeg));
   const maxPos = Math.max(...stemSlab.map((x) => x.AsPos));
   const tMean = (inp.tTop + inp.tBot) / 2;
-  const stemNegDet = chooseSpacing(maxNeg, barH, Math.min(3 * tMean, 0.45));
-  const stemPosDet = chooseSpacing(maxPos, barH, Math.min(3 * tMean, 0.45));
+  const stemNegDet = mas ? chooseSpacingModule(maxNeg, barH, 0.2, 1.2) : chooseSpacing(maxNeg, barH, Math.min(3 * tMean, 0.45));
+  const stemPosDet = mas ? chooseSpacingModule(maxPos, barH, 0.2, 1.2) : chooseSpacing(maxPos, barH, Math.min(3 * tMean, 0.45));
 
   // Contrafuerte como viga en voladizo
   const projAt = (y: number) => inp.cf.projTop + ((inp.cf.proj - inp.cf.projTop) * (H - y)) / H;
   const slope = Math.atan2(inp.cf.proj - inp.cf.projTop, H);
   const sections: CounterfortSection[] = [];
-  const bf = Math.min(s, tc + 16 * tMean);
+  const bf = Math.min(s, tc + (mas ? 12 : 16) * tMean);
   for (let k = 0; k <= NS; k++) {
     const y = (H * k) / NS;
     const L = sectionLoad(g, lat, y);
@@ -905,13 +919,13 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
     const proj = projAt(y);
     const dcf = tAt(y) + proj - m.coverFound;
     const b = internal ? bf : tc;
-    const fr = flexureAs(Mcf, b, dcf, m.fc, m.fy);
+    const fr = flex(Mcf, b, dcf);
     const AsReq = isFinite(fr.As) ? fr.As : 1e6;
-    const cap = oneWayVc(tc, dcf, m.fc, 0.005, 'ACI318_14', m.lambda);
-    const Vs = Math.max(Vcf / PHI_SHEAR - cap.Vc, 0);
-    const AvMin = (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4; // cm²/m
-    const AvReq = Math.max((Vs / (m.fy * 1000 * dcf)) * 1e4, AvMin);
-    const tie = (pu(zs) * s * 1e4) / (PHI_SHEAR * m.fy * 1000);
+    const capVc = mas ? masonryVn(tc, dcf, Math.max(Mcf, 1e-6), Math.max(Vcf, 1e-6), m.fm) : oneWayVc(tc, dcf, m.fc, 0.005, 'ACI318_14', m.lambda).Vc;
+    const Vs = Math.max(Vcf / phiV - capVc, 0);
+    const AvMin = mas ? 0.0007 * tc * 1e4 : (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4; // cm²/m
+    const AvReq = Math.max((Vs / ((mas ? 0.5 : 1) * m.fy * 1000 * dcf)) * 1e4, AvMin);
+    const tie = (pu(zs) * s * 1e4) / (phiV * m.fy * 1000);
     sections.push({ y, proj, dcf, Mcf, Vcf, AsReq, AsIncl: AsReq / Math.cos(slope), AvReq, tiesStem: tie });
     void zs;
   }
@@ -923,7 +937,7 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const sSt = Math.min(Math.floor((2 * stirrup.area / Math.max(AvMax, 1e-6)) * 40) / 40, 0.30);
   const stirrupSpacing = Math.max(sSt, 0.1);
   const vc = sections[0];
-  const capc = oneWayVc(tc, vc.dcf, m.fc, 0.005, 'ACI318_14', m.lambda);
+  const capcVc = mas ? masonryVn(tc, vc.dcf, Math.max(vc.Mcf, 1e-6), Math.max(vc.Vcf, 1e-6), m.fm) : oneWayVc(tc, vc.dcf, m.fc, 0.005, 'ACI318_14', m.lambda).Vc;
   // Amarres entre pantalla y contrafuerte
   const tieMax = Math.max(...sections.map((x) => x.tiesStem));
   const tieStem = chooseSpacing(tieMax, findBar(inp.cf.rb.tieStemBar), 0.3);
@@ -973,10 +987,10 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const uStemH = barDet(findBar(rb.stemHBar), rb.stemHS);
   const uStemV = barDet(findBar(rb.stemVBar), rb.stemVS);
   const uLong = barDet(m.mesh.longOn ? findBar(m.mesh.longBar) : null, m.mesh.longS);
-  const phiVnUser = PHI_SHEAR * (capc.Vc + (2 * uStir.area * 1e-4 * m.fy * 1000 * vc.dcf) / Math.max(rb.stirS, 0.02));
-  const AvMinC = (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4;
+  const phiVnUser = phiV * (capcVc + ((mas ? 0.5 : 1) * 2 * uStir.area * 1e-4 * m.fy * 1000 * vc.dcf) / Math.max(rb.stirS, 0.02));
+  const AvMinC = mas ? 0.0007 * tc * 1e4 : (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4;
   const AvProv = (2 * uStir.area) / Math.max(rb.stirS, 0.02);
-  const reqVert = 0.5 * rhoVertMin(barH.db, m.fy) * tAvg * 1e4;
+  const reqVert = mas ? 0.0007 * tAvg * 1e4 : 0.5 * rhoVertMin(barH.db, m.fy) * tAvg * 1e4;
   const maxSlabNeg = Math.max(...slabArr.map((x) => x.AsNeg));
   const maxSlabPos = Math.max(...slabArr.map((x) => x.AsPos));
   const rt = (req: number, prov: number) => (prov > 0 ? req / prov : Infinity);
@@ -990,6 +1004,10 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const sMaxStem = Math.min(3 * tMean, 0.45);
   if (rb.stemHS > sMaxStem + 1e-9 || rb.stemVS > sMaxStem + 1e-9) notes.push(`Separación del acero de la pantalla mayor que ${(sMaxStem * 100).toFixed(0)} cm (máximo recomendado: menor de 3·t y 45 cm).`);
 
+  if (mas) {
+    notes.push('Mampostería: la pantalla de bloque trabaja como losa horizontal entre contrafuertes; el acero horizontal va en vigas de amarre (bond beams) o hiladas con escalerilla, y el contrafuerte es una pilastra de bloque con celdas inyectadas.');
+    notes.push('Resistencias por diseño por resistencia de TMS 402 (φ = 0.9 flexión, 0.8 cortante); la separación del acero horizontal es múltiplo de 20 cm (hiladas).');
+  }
   if (internal) {
     notes.push('Contrafuerte interno: el acero principal va a lo largo del borde inclinado (cara del relleno); la pantalla es el ala comprimida (sección T).');
     notes.push('La pantalla actúa como losa continua horizontal entre contrafuertes: acero inferior de la cara frontal al centro de la luz; acero en la cara del relleno sobre los contrafuertes.');
@@ -1076,13 +1094,13 @@ export function designWall(g: WallGeom): WallDesign {
       const mm = meshOf(face);
       return slabCheck(g, nm, e.label, face, e.M, e.V, mm.bar, mm.s, ld, botBar.db);
     };
-    if (g.xFb > 1e-6 && inp.type !== 'counterfortExt') {
+    if (g.xFb > 1e-6 && !cfExternal(inp.type)) {
       const isBot = env.toeBot.M >= env.toeTop.M;
       const ld = g.xFb - m.coverFound;
       out.toe = mk('Pie', isBot ? env.toeBot : env.toeTop, isBot ? 'inferior' : 'superior', ld);
       out.toe.opp = mk('Pie (cara opuesta)', isBot ? env.toeTop : env.toeBot, isBot ? 'superior' : 'inferior', ld);
     }
-    if (inp.Lh > 1e-6 && inp.type !== 'counterfortInt') {
+    if (inp.Lh > 1e-6 && !cfInternal(inp.type)) {
       const isTop = env.heelTop.M >= env.heelBot.M;
       const ld = inp.Lh - m.coverFound;
       out.heel = mk('Talón', isTop ? env.heelTop : env.heelBot, isTop ? 'superior' : 'inferior', ld);
@@ -1094,11 +1112,11 @@ export function designWall(g: WallGeom): WallDesign {
         const fr = flexureAs(M, 1, d, m.fc, m.fy);
         return isFinite(fr.As) ? fr.As : 1e3;
       };
-      const reqBot = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? reqAs(env.toeBot.M, dToe) : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? reqAs(env.heelBot.M, dToe) : 0, asMinSlab);
-      const reqTop = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? reqAs(env.toeTop.M, dToe) : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? reqAs(env.heelTop.M, dToe) : 0, asMinSlab);
+      const reqBot = Math.max(g.xFb > 1e-6 && !cfExternal(inp.type) ? reqAs(env.toeBot.M, dToe) : 0, inp.Lh > 1e-6 && !cfInternal(inp.type) ? reqAs(env.heelBot.M, dToe) : 0, asMinSlab);
+      const reqTop = Math.max(g.xFb > 1e-6 && !cfExternal(inp.type) ? reqAs(env.toeTop.M, dToe) : 0, inp.Lh > 1e-6 && !cfInternal(inp.type) ? reqAs(env.heelTop.M, dToe) : 0, asMinSlab);
       const sb = chooseSpacing(reqBot, botBar, sMax).spacing;
       const st = chooseSpacing(reqTop, findBar(mesh.topBar), sMax).spacing;
-      const needTop = Math.max(g.xFb > 1e-6 && inp.type !== 'counterfortExt' ? env.toeTop.M : 0, inp.Lh > 1e-6 && inp.type !== 'counterfortInt' ? env.heelTop.M : 0) > 0.01;
+      const needTop = Math.max(g.xFb > 1e-6 && !cfExternal(inp.type) ? env.toeTop.M : 0, inp.Lh > 1e-6 && !cfInternal(inp.type) ? env.heelTop.M : 0) > 0.01;
       const sl = chooseSpacing((0.0018 * g.hb * 1e4) / (needTop || mesh.topOn ? 2 : 1), findBar(mesh.longBar), sMax).spacing;
       out.suggest = { mesh: { botS: sb, topS: st, topOn: needTop, longS: sl }, cf: null };
     }
@@ -1111,6 +1129,7 @@ export function designWall(g: WallGeom): WallDesign {
       notes.push('En muros con contrafuertes la pantalla (y la zapata del lado de los contrafuertes) se diseñan como losas apoyadas en los contrafuertes; los valores del voladizo de la pantalla solo se usan como acero vertical de referencia.');
     }
   }
+  if (out.stem) notes.push(`Las barras verticales de la pantalla terminan en gancho estándar dentro de la zapata, orientado hacia el ${stemHookSide(g) === -1 ? 'pie' : 'talón'}${stemHookSide(g) === 1 ? ' (no hay pie, o no cabe el gancho)' : ''}.`);
   out.key = keyDesign(g);
   if (inp.hb > 1e-6 && inp.hb < 0.3 && !isGravity(inp.type)) warnings.push('El espesor de la zapata es menor que 0.30 m: verificar anclaje de las barras de la pantalla.');
   if (out.stem && !out.stem.anchorage.ok) warnings.push(`El espesor de la zapata no alcanza para el gancho estándar de las barras de la pantalla (${(out.stem.anchorage.ldh * 100).toFixed(0)} cm requeridos).`);

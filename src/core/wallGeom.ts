@@ -1,5 +1,5 @@
 import { Poly, Pt, polyProps, clipHalfPlane, ccw } from './geometry';
-import { WallInput, isCounterfort, gabionGamma, gabionWidths } from './wallTypes';
+import { WallInput, isCounterfort, cfInternal, cfExternal, isMasonryStem, gabionGamma, gabionWidths } from './wallTypes';
 import { rad } from './earth';
 
 export interface WallPart {
@@ -81,7 +81,7 @@ export function buildWallGeom(inp: WallInput): WallGeom {
   const psiDeg = (Math.atan2(xBb - xBt, inp.H) * 180) / Math.PI;
 
   const concreteGamma = inp.mat.gammaC;
-  const masonryStem = inp.type === 'gravityMasonry' || inp.type === 'masonryReinforced';
+  const masonryStem = inp.type === 'gravityMasonry' || isMasonryStem(inp.type);
   const isGab = inp.type === 'gabion';
   const stemGamma = isGab ? gabionGamma(inp.gab) : masonryStem ? inp.mat.gammaM : concreteGamma;
   const baseGamma = inp.type === 'gravityMasonry' ? inp.mat.gammaM : concreteGamma;
@@ -105,14 +105,14 @@ export function buildWallGeom(inp: WallInput): WallGeom {
     : null;
 
   let cfPoly: Poly | null = null;
-  if (inp.type === 'counterfortInt') {
+  if (cfInternal(inp.type)) {
     cfPoly = ccw([
       { x: xBb, y: hb },
       { x: xBb + inp.cf.proj, y: hb },
       { x: xBt + inp.cf.projTop, y: yTop },
       { x: xBt, y: yTop },
     ]);
-  } else if (inp.type === 'counterfortExt') {
+  } else if (cfExternal(inp.type)) {
     const p = Math.min(inp.cf.proj, xFb);
     cfPoly = ccw([
       { x: xFb - p, y: hb },
@@ -127,7 +127,7 @@ export function buildWallGeom(inp: WallInput): WallGeom {
   if (basePoly) parts.push(partOf('base', 'Zapata', basePoly, baseGamma));
   if (keyPoly) parts.push(partOf('key', 'Llave de corte', keyPoly, baseGamma));
   if (cfPoly && isCounterfort(inp.type)) {
-    parts.push(partOf('cf', inp.type === 'counterfortInt' ? 'Contrafuertes internos' : 'Contrafuertes externos', cfPoly, concreteGamma, inp.cf.t / inp.cf.s));
+    parts.push(partOf('cf', cfInternal(inp.type) ? 'Contrafuertes internos' : 'Contrafuertes externos', cfPoly, isMasonryStem(inp.type) ? inp.mat.gammaM : concreteGamma, inp.cf.t / inp.cf.s));
   }
 
   const coulomb = inp.theory === 'coulomb' && (inp.type === 'gravityConcrete' || inp.type === 'gravityMasonry' || inp.type === 'gabion');
@@ -177,4 +177,16 @@ export function soilWeight(poly: Poly | null, gamma: number, gammaSat: number, y
 
 export function pointsToString(p: Pt[]): string {
   return p.map((v) => `${v.x.toFixed(3)},${v.y.toFixed(3)}`).join(' ');
+}
+
+/**
+ * Lado hacia el que se dobla el gancho de las barras verticales de la pantalla dentro de la zapata:
+ * -1 = hacia el pie (lo normal); +1 = hacia el talón cuando no hay pie (o no cabe) y hay talón.
+ */
+export function stemHookSide(g: WallGeom): 1 | -1 {
+  const toeRoom = g.xFb - 0.03;
+  const heelRoom = g.B - g.xBb - 0.03;
+  if (toeRoom < 0.12 && heelRoom >= 0.12) return 1;
+  if (heelRoom < 0.12 && toeRoom >= 0.12) return -1;
+  return -1;
 }

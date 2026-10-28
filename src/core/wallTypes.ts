@@ -8,6 +8,8 @@ export type WallType =
   | 'masonryReinforced'
   | 'counterfortInt'
   | 'counterfortExt'
+  | 'masonryCfInt'
+  | 'masonryCfExt'
   | 'gabion';
 
 export const WALL_TYPES: { id: WallType; label: string; short: string; desc: string }[] = [
@@ -17,6 +19,8 @@ export const WALL_TYPES: { id: WallType; label: string; short: string; desc: str
   { id: 'gravityConcrete', label: 'Gravedad de concreto simple / ciclópeo', short: 'Gravedad concreto', desc: 'Muro macizo que resiste por peso propio; verificación de concreto simple.' },
   { id: 'gravityMasonry', label: 'Gravedad de mampostería', short: 'Gravedad mampostería', desc: 'Piedra, ladrillo o bloque sin refuerzo; esfuerzos admisibles y fricción en juntas.' },
   { id: 'masonryReinforced', label: 'Mampostería reforzada en voladizo', short: 'Mamp. reforzada', desc: 'Pantalla de bloque con celdas inyectadas sobre zapata de concreto.' },
+  { id: 'masonryCfInt', label: 'Mampostería reforzada con contrafuertes internos', short: 'Mamp. contrafuerte int.', desc: 'Pantalla de bloque con celdas inyectadas que trabaja como losa horizontal entre contrafuertes de bloque dentro del relleno.' },
+  { id: 'masonryCfExt', label: 'Mampostería reforzada con contrafuertes externos', short: 'Mamp. contrafuerte ext.', desc: 'Pantalla de bloque reforzada apoyada en contrafuertes (pilastras) de bloque inyectado en la cara visible.' },
   { id: 'gabion', label: 'Muro de gaviones', short: 'Gaviones', desc: 'Cuerpos de canastas de malla rellenas de piedra, apilados en escalones.' },
 ];
 
@@ -245,6 +249,21 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       base.cf.rb.tieSlabBar = '#5';
       base.cf.rb.tieSlabS = 0.1;
       break;
+    case 'masonryCfInt':
+    case 'masonryCfExt': {
+      const ext = type === 'masonryCfExt';
+      Object.assign(base, {
+        H: 4.0, tTop: 0.2, tBot: 0.2, Lt: ext ? 1.8 : 0.8, Lh: ext ? 2.4 : 2.6, hb: 0.5, hbTip: 0.5, block: '8', Df: ext ? 0.8 : 1.0,
+        cf: { s: 2.4, t: 0.2, proj: ext ? 1.6 : 2.2, projTop: 0, rb: { mainBar: '#7', nMain: 4, stirBar: '#4', stirS: 0.4, tieStemBar: '#4', tieStemS: 0.4, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.4 } },
+      });
+      base.mat.mesh = { botBar: '#5', botS: 0.2, topOn: true, topBar: '#5', topS: 0.2, longOn: true, longBar: '#5', longS: 0.1 };
+      base.mat.stemLayers = 1;
+      base.mat.horizS = 0.4;
+      base.mat.barStem = '#5';
+      base.cf.rb.tieSlabBar = '#5';
+      base.cf.rb.tieSlabS = 0.15;
+      break;
+    }
     case 'gravityConcrete':
       Object.assign(base, { H: 3.0, tTop: 0.6, tBot: 1.9, stemFace: 'front', Lt: 0.4, Lh: 0, hb: 0.5, hbTip: 0.5, theory: 'coulomb', Df: 0.8 });
       base.mat.fc = 21;
@@ -268,14 +287,19 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
   return base;
 }
 
-export const hasHeelSlab = (t: WallType) => t === 'cantilever' || t === 'counterfortInt' || t === 'counterfortExt' || t === 'masonryReinforced';
-export const isCounterfort = (t: WallType) => t === 'counterfortInt' || t === 'counterfortExt';
+export const hasHeelSlab = (t: WallType) => t === 'cantilever' || t === 'counterfortInt' || t === 'counterfortExt' || t === 'masonryReinforced' || t === 'masonryCfInt' || t === 'masonryCfExt';
+export const isCounterfort = (t: WallType) => t === 'counterfortInt' || t === 'counterfortExt' || t === 'masonryCfInt' || t === 'masonryCfExt';
+/** contrafuertes dentro del relleno / en la cara visible (concreto o mampostería) */
+export const cfInternal = (t: WallType) => t === 'counterfortInt' || t === 'masonryCfInt';
+export const cfExternal = (t: WallType) => t === 'counterfortExt' || t === 'masonryCfExt';
+/** pantalla de bloque reforzado (en voladizo o entre contrafuertes) */
+export const isMasonryStem = (t: WallType) => t === 'masonryReinforced' || t === 'masonryCfInt' || t === 'masonryCfExt';
 export const isGravity = (t: WallType) => t === 'gravityConcrete' || t === 'gravityMasonry' || t === 'gabion';
 export const isGabion = (t: WallType) => t === 'gabion';
 
 /** Para gaviones, deriva la geometría general (altura, anchos, sin zapata) a partir de los cuerpos. */
 export function normalizeWall(w: WallInput): WallInput {
-  if (w.type === 'masonryReinforced') {
+  if (isMasonryStem(w.type)) {
     const t = blockThickness(w.block);
     // con bloque de 6″ solo cabe una barra al centro de la celda
     return { ...w, tTop: t, tBot: t, stemFace: 'front', fb: 0, mat: { ...w.mat, stemLayers: w.block === '6' ? 1 : w.mat.stemLayers } };
@@ -305,4 +329,4 @@ export function gabionWidths(g: GabionInput): number[] {
   const n = Math.max(1, Math.round(g.n));
   return Array.from({ length: n }, (_, k) => Math.max(g.b0 - k * g.step, 0.5));
 }
-export const isMasonry = (t: WallType) => t === 'gravityMasonry' || t === 'masonryReinforced';
+export const isMasonry = (t: WallType) => t === 'gravityMasonry' || isMasonryStem(t);

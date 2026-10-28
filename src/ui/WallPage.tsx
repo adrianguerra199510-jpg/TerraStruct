@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
 } from 'lucide-react';
-import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry } from '../core/wallTypes';
+import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
@@ -89,7 +89,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             <>
           <div className="grid2">
             <Num label="Altura de la pantalla H" q="len" value={data.H} onChange={(v) => set({ H: v })} min={0.5} hint="De la cara superior de la zapata a la corona" />
- {t === 'masonryReinforced' ? (
+ {isMasonryStem(t) ? (
               <>
                 <Sel label="Tipo de bloque" value={data.block} onChange={(v) => set({ block: v })} options={BLOCKS.map((b) => ({ id: b.id, label: b.label }))} hint="El espesor de la pantalla es el del bloque" />
               </>
@@ -99,8 +99,8 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                 <Num label="Espesor en la base" q="len" value={data.tBot} onChange={(v) => set({ tBot: v })} min={0.1} />
               </>
             )}
-            {t !== 'masonryReinforced' && <Sel label="Cara que se mantiene vertical" value={data.stemFace} onChange={(v) => set({ stemFace: v })} options={[{ id: 'front', label: 'Frontal (talud en el dorso)' }, { id: 'back', label: 'Posterior (talud al frente)' }, { id: 'free', label: 'Ninguna (libre)' }]} />}
-            {t !== 'masonryReinforced' && data.stemFace === 'free' && <Num label="Desplazamiento de la cara frontal" q="len" value={data.fb} onChange={(v) => set({ fb: v })} hint="+ hacia el relleno" />}
+            {!isMasonryStem(t) && <Sel label="Cara que se mantiene vertical" value={data.stemFace} onChange={(v) => set({ stemFace: v })} options={[{ id: 'front', label: 'Frontal (talud en el dorso)' }, { id: 'back', label: 'Posterior (talud al frente)' }, { id: 'free', label: 'Ninguna (libre)' }]} />}
+            {!isMasonryStem(t) && data.stemFace === 'free' && <Num label="Desplazamiento de la cara frontal" q="len" value={data.fb} onChange={(v) => set({ fb: v })} hint="+ hacia el relleno" />}
             <Num label="Altura de terreno al frente Df" q="len" value={data.Df} onChange={(v) => set({ Df: v })} min={0} hint="Sobre la cara inferior de la zapata" />
           </div>
           <div className="grid2">
@@ -111,7 +111,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
           </div>
           {isCounterfort(t) && (
             <>
-              <div className="hint"><b>{t === 'counterfortInt' ? 'Contrafuertes internos (en el relleno)' : 'Contrafuertes externos (cara visible)'}</b></div>
+              <div className="hint"><b>{cfInternal(t) ? 'Contrafuertes internos (en el relleno)' : 'Contrafuertes externos (cara visible)'}{isMasonryStem(t) ? ' — de bloque con celdas inyectadas' : ''}</b></div>
               <div className="grid2">
                 <Num label="Separación entre ejes s" q="len" value={data.cf.s} onChange={(v) => set({ cf: { ...data.cf, s: v } })} min={1} />
                 <Num label="Espesor del contrafuerte" q="len" value={data.cf.t} onChange={(v) => set({ cf: { ...data.cf, t: v } })} min={0.15} />
@@ -182,7 +182,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
 
         {t !== 'gabion' && <Acc title="Materiales y armado" icon={<Boxes size={18} />}>
           <div className="grid2">
-            {!isMasonry(t) || t === 'masonryReinforced' ? (
+            {!isMasonry(t) || isMasonryStem(t) ? (
               <>
                 <Num label="f′c del concreto" q="stress" value={data.mat.fc} onChange={(v) => setMat({ fc: v })} min={10} />
                 <Num label="fy del acero" q="stress" value={data.mat.fy} onChange={(v) => setMat({ fy: v })} min={240} />
@@ -190,7 +190,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             ) : null}
             <Num label="Peso unit. concreto" q="uw" value={data.mat.gammaC} onChange={(v) => setMat({ gammaC: v })} />
             <Sel label="Norma de cortante" value={data.mat.code} onChange={(v) => setMat({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19' }]} />
-            {t !== 'masonryReinforced' && <Num label="Recubrimiento pantalla" q="lencm" value={data.mat.cover} onChange={(v) => setMat({ cover: v })} min={0.02} />}
+            {!isMasonryStem(t) && <Num label="Recubrimiento pantalla" q="lencm" value={data.mat.cover} onChange={(v) => setMat({ cover: v })} min={0.02} />}
             <Num label="Recubrimiento zapata" q="lencm" value={data.mat.coverFound} onChange={(v) => setMat({ coverFound: v })} min={0.04} />
           </div>
           {isMasonry(t) && (
@@ -242,7 +242,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                 <>
                   <div className="hint"><b>Armado del contrafuerte y de la pantalla (definido por usted)</b></div>
                   <div className="grid3">
-                    <Sel label="Acero principal: barra" value={data.cf.rb.mainBar} onChange={(v) => setRb({ mainBar: v })} options={bars} />
+                    <Sel label="Acero principal (barra)" value={data.cf.rb.mainBar} onChange={(v) => setRb({ mainBar: v })} options={bars} />
                     <Num label="Número de barras" value={data.cf.rb.nMain} onChange={(v) => setRb({ nMain: Math.max(1, Math.round(v)) })} min={1} />
                     <span />
                     <Sel label="Estribos (2 ramas)" value={data.cf.rb.stirBar} onChange={(v) => setRb({ stirBar: v })} options={bars} />
@@ -254,10 +254,10 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                     <Sel label="Amarres zapata–contrafuerte" value={data.cf.rb.tieSlabBar} onChange={(v) => setRb({ tieSlabBar: v })} options={bars} />
                     <Num label="Separación" q="lencm" value={data.cf.rb.tieSlabS} onChange={(v) => setRb({ tieSlabS: v })} min={0.05} />
                     <span />
-                    <Sel label="Pantalla horizontal (cada cara)" value={data.cf.rb.stemHBar} onChange={(v) => setRb({ stemHBar: v })} options={bars} />
+                    <Sel label={isMasonryStem(t) ? "Pantalla horizontal (vigas de amarre)" : "Pantalla horizontal (cada cara)"} value={data.cf.rb.stemHBar} onChange={(v) => setRb({ stemHBar: v })} options={bars} />
                     <Num label="Separación" q="lencm" value={data.cf.rb.stemHS} onChange={(v) => setRb({ stemHS: v })} min={0.05} />
                     <span />
-                    <Sel label="Pantalla vertical (cada cara)" value={data.cf.rb.stemVBar} onChange={(v) => setRb({ stemVBar: v })} options={bars} />
+                    <Sel label={isMasonryStem(t) ? "Pantalla vertical (celdas inyectadas)" : "Pantalla vertical (cada cara)"} value={data.cf.rb.stemVBar} onChange={(v) => setRb({ stemVBar: v })} options={bars} />
                     <Num label="Separación" q="lencm" value={data.cf.rb.stemVS} onChange={(v) => setRb({ stemVS: v })} min={0.05} />
                   </div>
                   {res?.design.counterfort && (
@@ -269,20 +269,20 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
               )}
               <div className="hint"><b>Malla de la zapata corrida (definida por usted)</b></div>
               <div className="grid3">
-                <Sel label="Transversal inferior: barra" value={data.mat.mesh.botBar} onChange={(v) => setMesh({ botBar: v })} options={bars} />
+                <Sel label="Transv. inf. (barra)" value={data.mat.mesh.botBar} onChange={(v) => setMesh({ botBar: v })} options={bars} />
                 <Num label="Separación" q="lencm" value={data.mat.mesh.botS} onChange={(v) => setMesh({ botS: v })} min={0.05} />
               </div>
               <Check label="Transversal superior" value={data.mat.mesh.topOn} onChange={(v) => setMesh({ topOn: v })} />
               {data.mat.mesh.topOn && (
                 <div className="grid3">
-                  <Sel label="Transversal superior: barra" value={data.mat.mesh.topBar} onChange={(v) => setMesh({ topBar: v })} options={bars} />
+                  <Sel label="Transv. sup. (barra)" value={data.mat.mesh.topBar} onChange={(v) => setMesh({ topBar: v })} options={bars} />
                   <Num label="Separación" q="lencm" value={data.mat.mesh.topS} onChange={(v) => setMesh({ topS: v })} min={0.05} />
                 </div>
               )}
               <Check label="Longitudinal (paralela al muro)" value={data.mat.mesh.longOn} onChange={(v) => setMesh({ longOn: v })} hint="En cada capa de la malla" />
               {data.mat.mesh.longOn && (
                 <div className="grid3">
-                  <Sel label="Longitudinal: barra" value={data.mat.mesh.longBar} onChange={(v) => setMesh({ longBar: v })} options={bars} />
+                  <Sel label="Longitudinal (barra)" value={data.mat.mesh.longBar} onChange={(v) => setMesh({ longBar: v })} options={bars} />
                   <Num label="Separación" q="lencm" value={data.mat.mesh.longS} onChange={(v) => setMesh({ longS: v })} min={0.05} />
                 </div>
               )}
@@ -372,7 +372,7 @@ function WallSection({ res, theme }: { res: WallResults; theme: typeof LIGHT }) 
         </div>
         <div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, seismic: useSeis }) }} />
       </div>
-      {(res.inp.type === 'counterfortInt' || res.inp.type === 'counterfortExt') && (
+      {isCounterfort(res.inp.type) && (
         <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>
       )}
       <Card title="Verificaciones" icon={<ListChecks size={18} />}>
@@ -626,7 +626,7 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
   return (
     <>
       <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, showRebar: true, showPressure: false, showLoads: false }) }} /></div>
-      {(res.inp.type === 'counterfortInt' || res.inp.type === 'counterfortExt') && <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>}
+      {isCounterfort(res.inp.type) && <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>}
       <Card title="Cuadro de armado (por metro de muro)" icon={<Grid3x3 size={18} />}>
         <Tbl head={['Elemento', 'Armado', 'As prov (cm²/m)', 'Observación']} align={['l', 'l', 'r', 'l']} rows={rows} />
       </Card>

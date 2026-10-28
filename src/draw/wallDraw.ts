@@ -1,5 +1,6 @@
 import { WallResults } from '../core/wall';
-import { WallType, gabionWidths } from '../core/wallTypes';
+import { stemHookSide } from '../core/wallGeom';
+import { WallType, gabionWidths, cfInternal, isMasonryStem } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { Pt } from '../core/geometry';
 import { Theme, LIGHT, arrow, dimLine, line, poly, polyline, svgWrap, text, heat } from './svg';
@@ -65,7 +66,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   }
 
   // Elementos
-  const masonryStem = inp.type === 'gravityMasonry' || inp.type === 'masonryReinforced';
+  const masonryStem = inp.type === 'gravityMasonry' || isMasonryStem(inp.type);
   if (g.basePoly) s += poly(g.basePoly.map(P), inp.type === 'gravityMasonry' ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
   if (g.keyPoly) s += poly(g.keyPoly.map(P), th.concrete, th.concreteStroke, 2);
   s += poly(g.stemPoly.map(P), inp.type === 'gabion' ? 'url(#wgab)' : masonryStem ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
@@ -84,7 +85,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += line(X(g.xFb) + 1.2, Y(g.hb), X(g.xBb) - 1.2, Y(g.hb), masonryStem ? 'url(#wmas)' : th.concrete, 2.6);
   }
   if (g.cfPoly) {
-    s += poly(g.cfPoly.map(P), 'none', th.accent, 2, 'stroke-dasharray="7 4"');
+    s += poly(g.cfPoly.map(P), isMasonryStem(inp.type) ? 'url(#wmas)' : 'none', th.accent, 2, 'stroke-dasharray="7 4"' + (isMasonryStem(inp.type) ? ' fill-opacity=".35"' : ''));
     const c = g.cfPoly;
     const cx = c.reduce((a, p) => a + p.x, 0) / c.length, cy = c.reduce((a, p) => a + p.y, 0) / c.length;
     s += text(X(cx), Y(cy), inp.type === 'counterfortInt' ? 'contrafuerte' : 'contrafuerte', { size: 11, fill: th.accent, anchor: 'middle', weight: 600 });
@@ -158,13 +159,20 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
       const fxs = (y: number) => g.stemFrontX(y) + c0;
       const mid = (y: number) => (g.stemBackX(y) + g.stemFrontX(y)) / 2;
       const xv = (y: number) => (st.centered ? mid(y) : bx(y)); // barra vertical principal
-      const hook = Math.max(Math.min(st.anchorage.ldh, xv(0) - covF - 0.02), 0.1);
+      // el gancho va hacia el pie; si no hay pie (o no cabe) se dobla hacia el talón y viceversa
+      const side = stemHookSide(g);
+      const room = side === -1 ? xv(0) - covF - 0.02 : g.B - xv(0) - covF - 0.02;
+      const hook = Math.max(Math.min(st.anchorage.ldh, room), 0.1);
       // barra vertical principal (una sola si hay una capa; del lado del relleno si hay dos)
-      s += polyline([pt(xv(inp.H), g.yTop - cov), pt(xv(0), covF + 0.035), pt(xv(0) - hook, covF + 0.035)], MAIN, 3.2);
+      s += polyline([pt(xv(inp.H), g.yTop - cov), pt(xv(0), covF + 0.035), pt(xv(0) + side * hook, covF + 0.035)], MAIN, 3.2);
       // segunda capa: barra de la cara frontal
       if (st.layers === 2) {
-        const hk2 = Math.max(Math.min(0.25, xv(0) - fxs(0) - 0.06), 0.08);
-        s += polyline([pt(fxs(inp.H), g.yTop - cov), pt(fxs(0), covF + 0.075), pt(fxs(0) + hk2, covF + 0.075)], SKIN, 2.6);
+        // la segunda capa se dobla al lado contrario del gancho principal si allí cabe; si no, al mismo lado
+        const roomOpp = side === -1 ? g.B - fxs(0) - covF - 0.02 : fxs(0) - covF - 0.02;
+        const side2 = roomOpp >= 0.12 ? -side : side;
+        const room2 = side2 === -1 ? fxs(0) - covF - 0.02 : g.B - fxs(0) - covF - 0.02;
+        const hk2 = Math.max(Math.min(0.25, room2), 0.08);
+        s += polyline([pt(fxs(inp.H), g.yTop - cov), pt(fxs(0), covF + 0.075), pt(fxs(0) + side2 * hk2, covF + 0.075)], SKIN, 2.6);
       }
       if (st.yCut) {
         const yc = g.hb + st.yCut;
@@ -261,6 +269,8 @@ const WALL_LABEL: Record<WallType, string> = {
   gravityConcrete: 'Muro de gravedad de concreto',
   gravityMasonry: 'Muro de gravedad de mampostería',
   masonryReinforced: 'Muro de mampostería reforzada',
+  masonryCfInt: 'Muro de mampostería con contrafuertes internos',
+  masonryCfExt: 'Muro de mampostería con contrafuertes externos',
   gabion: 'Muro de gaviones',
 };
 
@@ -287,7 +297,7 @@ export function wallPlanSvg(res: WallResults, o: { W?: number; H?: number; theme
   const x0 = Math.min(1.2, inp.cf.s * 0.4);
   for (let i = 0; i < nCf; i++) {
     const cx = x0 + i * inp.cf.s;
-    if (inp.type === 'counterfortInt') {
+    if (cfInternal(inp.type)) {
       const yb = g.xBb, ye = g.xBb + Math.min(inp.cf.proj, g.B - g.xBb);
       s += `<rect x="${X(cx).toFixed(1)}" y="${Y(ye).toFixed(1)}" width="${(inp.cf.t * sc).toFixed(1)}" height="${((ye - yb) * sc).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="2"/>`;
     } else {
@@ -299,7 +309,7 @@ export function wallPlanSvg(res: WallResults, o: { W?: number; H?: number; theme
   s += dimLine(X(c0), Y(g.B) - 4, X(c0 + inp.cf.s), Y(g.B) - 4, `s = ${o.fmt.u('len', inp.cf.s, 2)}`, th.dim, 16, 11.5, -1);
   s += dimLine(X(x0), Y(g.xBb) + 20, X(x0 + inp.cf.t), Y(g.xBb) + 20, `t = ${o.fmt.u('len', inp.cf.t, 2)}`, th.dim, 0, 10.5);
   s += text(14, 22, 'Planta (vista superior)', { size: 13, fill: th.ink, weight: 600 });
-  s += text(14, H - 8, inp.type === 'counterfortInt' ? 'Relleno hacia arriba del dibujo; contrafuertes dentro del relleno.' : 'Relleno hacia arriba del dibujo; contrafuertes en la cara visible.', { size: 10.5, fill: th.muted });
+  s += text(14, H - 8, cfInternal(inp.type) ? 'Relleno hacia arriba del dibujo; contrafuertes dentro del relleno.' : 'Relleno hacia arriba del dibujo; contrafuertes en la cara visible.', { size: 10.5, fill: th.muted });
   return svgWrap(W, H, s, th.bg);
 }
 
@@ -332,6 +342,12 @@ export function wallTypeIcon(t: WallType): string {
       break;
     case 'gabion':
       body = fillR(80) + `<path d="M44 62 V50 H54 V38 H64 V26 H74 V14 H82 L90 62 Z" fill="#cfc8bc" stroke="#5b554c" stroke-width="1.8" stroke-linejoin="round"/><circle cx="58" cy="56" r="3" fill="#8a8277"/><circle cx="70" cy="56" r="3" fill="#8a8277"/><circle cx="68" cy="43" r="3" fill="#8a8277"/><circle cx="78" cy="31" r="3" fill="#8a8277"/><circle cx="58" cy="44" r="2.5" fill="#9d9488"/>`;
+      break;
+    case 'masonryCfInt':
+      body = fillR(66) + `<path d="M52 12 H62 V54 H100 V62 H30 V54 H52 Z" fill="${C}" stroke="${S}" stroke-width="2" stroke-linejoin="round"/><path d="M62 14 L98 54 H62 Z" fill="none" stroke="${S}" stroke-width="1.6" stroke-dasharray="4 3"/><path d="M52 20 H62 M52 28 H62 M52 36 H62 M52 44 H62 M66 30 H80 M66 44 H90" stroke="${S}" stroke-width="1" opacity=".7"/>`;
+      break;
+    case 'masonryCfExt':
+      body = fillR(70) + `<path d="M58 12 H70 V54 H98 V62 H20 V54 H58 Z" fill="${C}" stroke="${S}" stroke-width="2" stroke-linejoin="round"/><path d="M58 14 L26 54 H58 Z" fill="none" stroke="${S}" stroke-width="1.6" stroke-dasharray="4 3"/><path d="M58 20 H70 M58 28 H70 M58 36 H70 M58 44 H70 M34 44 H52 M44 32 H56" stroke="${S}" stroke-width="1" opacity=".7"/>`;
       break;
     case 'masonryReinforced':
       body = fillR(64) + `<path d="M52 12 H64 V56 H88 V62 H32 V56 H52 Z" fill="${C}" stroke="${S}" stroke-width="2" stroke-linejoin="round"/><path d="M52 20 H64 M52 28 H64 M52 36 H64 M52 44 H64" stroke="${S}" stroke-width="1" opacity=".7"/><path d="M60 12 V56" stroke="var(--bad)" stroke-width="1.6"/>`;
