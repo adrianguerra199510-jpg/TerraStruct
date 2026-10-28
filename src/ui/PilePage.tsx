@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves } from 'lucide-react';
 import { PileInput, PileKind, CAP_SHAPES, CapShape, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
 import { analyzePile, autoSizePile, findCapDesign, PileResults } from '../core/pile';
 import { barList } from '../core/materials';
@@ -552,6 +552,11 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
   const g = data.geo;
   const set = (patch: Partial<typeof g>) => onChange({ ...data, geo: { ...g, ...patch } });
   const updL = (i: number, patch: Partial<SoilLayer>) => set({ layers: g.layers.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
+  // estratos contraídos por defecto para que la lista no se alargue
+  const [open, setOpen] = useState<Record<number, boolean>>({});
+  const toggle = (i: number) => setOpen((o) => ({ ...o, [i]: !o[i] }));
+  const setAll = (v: boolean) => setOpen(Object.fromEntries(g.layers.map((_, i) => [i, v])));
+  const kindLabel = (l: SoilLayer) => (l.kind === 'cohesive' ? `cohesivo, su = ${l.su}` : l.kind === 'granular' ? `granular, φ = ${l.phi}°` : l.kind === 'rock' ? `roca, qu = ${l.qu} MPa` : `fs = ${l.fs}`);
   return (
     <>
       <Sel label="Capacidad del pilote" value={g.mode} onChange={(v) => set({ mode: v })} options={[{ id: 'static', label: 'Método estático (estratos)' }, { id: 'user', label: 'Admisible dada por el estudio de suelos' }]} />
@@ -585,9 +590,18 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
           {g.layers.map((l, i) => (
             <div key={i} className="card" style={{ padding: 10 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <div style={{ flex: 1 }}><Txt label={`Estrato ${i + 1}`} value={l.name} onChange={(v) => updL(i, { name: v })} /></div>
+                <button className="icon-btn" title={open[i] ? 'Contraer' : 'Expandir'} onClick={() => toggle(i)}>{open[i] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>
+                <div style={{ flex: 1, cursor: 'pointer', minWidth: 0 }} onClick={() => !open[i] && toggle(i)}>
+                  {open[i] ? <Txt label={`Estrato ${i + 1}`} value={l.name} onChange={(v) => updL(i, { name: v })} /> : (
+                    <div>
+                      <b style={{ fontSize: 13 }}>{i + 1}. {l.name}</b>
+                      <div className="hint">{l.thk} m · {kindLabel(l)}{l.downdrag ? ' · arrastre' : ''}{g.liqOn && l.liq ? ' · licuable' : ''}</div>
+                    </div>
+                  )}
+                </div>
                 <button className="icon-btn danger" title="Quitar" onClick={() => set({ layers: g.layers.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
               </div>
+              {open[i] && (<>
               <div className="grid3">
                 <Sel label="Tipo" value={l.kind} onChange={(v) => updL(i, { kind: v })} options={[{ id: 'cohesive', label: 'Cohesivo (α·su)' }, { id: 'granular', label: 'Granular (K·tanδ)' }, { id: 'rock', label: 'Roca (socket)' }, { id: 'direct', label: 'fs directo' }]} />
                 <Num label="Espesor" q="len" value={l.thk} onChange={(v) => updL(i, { thk: v })} min={0.5} />
@@ -635,10 +649,13 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                 <Check label="Arrastre (fricción negativa)" value={l.downdrag} onChange={(v) => updL(i, { downdrag: v })} />
                 {g.liqOn && <Check label="Susceptible a licuación" value={l.liq} onChange={(v) => updL(i, { liq: v })} />}
               </div>
+              </>)}
             </div>
           ))}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn small" onClick={() => set({ layers: [...g.layers, { ...defaultLayers()[1], name: `Estrato ${g.layers.length + 1}` }] })}><Plus size={14} /> Estrato</button>
+            <button className="btn small" onClick={() => { setOpen((o) => ({ ...o, [g.layers.length]: true })); set({ layers: [...g.layers, { ...defaultLayers()[1], name: `Estrato ${g.layers.length + 1}` }] }); }}><Plus size={14} /> Estrato</button>
+            <button className="btn small ghost" onClick={() => setAll(false)}>Contraer todos</button>
+            <button className="btn small ghost" onClick={() => setAll(true)}>Expandir todos</button>
           </div>
         </>
       )}

@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const out = process.argv[2], file = process.argv[3];
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('file://' + file);
+await page.waitForTimeout(400);
+await page.getByText('Cabezal de 4 pilotes de concreto').click();
+await page.waitForTimeout(500);
+await page.getByText('Suelo y capacidad del pilote').click();
+await page.waitForTimeout(300);
+await page.getByText('1. Arcilla blanda a media').scrollIntoViewIfNeeded();
+await page.screenshot({ path: out + '/estr1.png' });
+await page.getByText('2. Arena densa').click();
+await page.waitForTimeout(300);
+await page.screenshot({ path: out + '/estr2.png' });
+await browser.close();
