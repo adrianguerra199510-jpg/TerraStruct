@@ -269,6 +269,23 @@ export interface PilePunch {
   alphaS: number;
 }
 
+export interface TensionResult {
+  any: boolean;
+  /** por combinación de servicio: tracción máxima por pilote y capacidad admisible */
+  service: { name: string; T: number; Qta: number; ratio: number }[];
+  /** última: tracción máxima por pilote y resistencia a tracción pura */
+  Tu: number;
+  TuCombo: string;
+  phiTn: number;
+  ratioTn: number;
+  /** anclaje en el cabezal: concreto (barras) o acero (pernos) */
+  anchor: { kind: 'bars' | 'studs'; ok: boolean; ratio: number; text: string; ld?: number; ldh?: number; avail?: number; req?: number; prov?: number; phiQn?: number };
+  /** extracción del pilote a través del cabezal (punzonamiento por tracción) */
+  pull: { pile: number; Tu: number; bo: number; d: number; vu: number; phivc: number; ratio: number; ok: boolean } | null;
+  /** levantamiento del grupo como bloque (si la carga neta es de tracción) */
+  block: { applicable: boolean; combo: string; Tgroup: number; Qs: number; Wsoil: number; Wpiles: number; Wcap: number; resist: number; ratio: number; ok: boolean; perim: number } | null;
+}
+
 export interface PileResults {
   ok: boolean;
   checks: PCheck[];
@@ -297,6 +314,7 @@ export interface PileResults {
   punch?: CapPunch;
   pilePunch: PilePunch[];
   stm?: StmResult;
+  tension: TensionResult;
   liq: LiqResult;
   settle?: SettleResult;
   deep: boolean;
@@ -630,6 +648,103 @@ export function analyzePile(inp: PileInput): PileResults {
     checks.push({ name: 'Cabezal · punzonamiento por pilote', ratio: w.ratio, ok: w.ok, detail: `Pilote ${w.i + 1}: Ru = ${w.Ru.toFixed(0)} kN, vu = ${w.vu.toFixed(2)} MPa ≤ φvc = ${w.phivc.toFixed(2)} MPa` });
   }
 
+  // ---------- revisión a tracción
+  const tension = ((): TensionResult => {
+    const svcRows = service.map((sv) => {
+      const T = Math.max(-sv.Rmin, 0);
+      const Qta = geo.QaT * sv.combo.qaFactor;
+      return { name: sv.combo.name, T, Qta, ratio: T / Math.max(Qta, 1e-9) };
+    });
+    // tracción última por pilote (peso propio del cabezal × 0.9)
+    const Tpile = new Array<number>(n).fill(0);
+    let Tu = 0;
+    let TuCombo = '—';
+    for (const u of ultimate) {
+      const Rt = rc(u.combo).map((v, i) => v + 0.9 * (rw[i] ?? 0));
+      Rt.forEach((v, i) => {
+        const t = Math.max(-v, 0);
+        Tpile[i] = Math.max(Tpile[i], t);
+        if (t > Tu) { Tu = t; TuCombo = u.combo.name; }
+      });
+    }
+    const anyT = Tu > 1e-6 || svcRows.some((r) => r.T > 1e-6);
+    const phiTn = p.kind === 'concrete' ? 0.9 * p.fy * ((p.nBars * findBar(p.bar).area) / 1e4) * 1000 : 0.9 * p.Fy * props.A * 1000;
+    const none: TensionResult = { any: false, service: svcRows, Tu: 0, TuCombo, phiTn, ratioTn: 0, anchor: { kind: p.kind === 'concrete' ? 'bars' : 'studs', ok: true, ratio: 0, text: 'sin tracción' }, pull: null, block: null };
+    if (!anyT) return none;
+
+    // anclaje en el cabezal
+    let anchor: TensionResult['anchor'];
+    if (p.kind === 'concrete') {
+      const bar = findBar(p.bar);
+      const avail = cap.h - cap.embed - cap.cover;
+      const ld = developmentLength(bar.db, p.fy, cap.fc, { lambda: cap.lambda });
+      const ldh = hookDevelopment(bar.db, p.fy, cap.fc, cap.lambda);
+      const okStraight = ld <= avail + 1e-9;
+      const okHook = ldh <= avail + 1e-9;
+      anchor = { kind: 'bars', ok: okStraight || okHook, ratio: Math.min(ld, ldh) / Math.max(avail, 1e-9), text: okStraight ? 'barras rectas desarrollan' : okHook ? 'requiere gancho estándar a 90° en el extremo' : 'no desarrolla: aumente el espesor del cabezal', ld, ldh, avail };
+    } else {
+      const Qn = (Math.PI * 0.019 ** 2 / 4) * 450 * 1000; // perno Ø19, Fu = 450 MPa
+      const phiQn = 0.75 * Qn;
+      const req = Tu / phiQn;
+      anchor = { kind: 'studs', ok: p.studs >= Math.ceil(req - 1e-9), ratio: req / Math.max(p.studs, 1e-9), text: `${p.studs} pernos Ø19 (requeridos ${Math.ceil(req)})`, req, prov: p.studs, phiQn };
+    }
+
+    // extracción a través del cabezal: punzonamiento por tracción del pilote
+    const dPull = Math.max(cap.h - cap.embed - cap.cover - 0.02, 0.1);
+    let pull: TensionResult['pull'] = null;
+    let worstIdx = -1;
+    Tpile.forEach((t, i) => { if (t > 1e-6 && (worstIdx < 0 || t > Tpile[worstIdx])) worstIdx = i; });
+    if (worstIdx >= 0) {
+      const i = worstIdx;
+      const e = props.Dp + dPull;
+      const circ = (p.kind === 'concrete' && p.shape === 'circle') || p.kind === 'pipe';
+      const sideCut = [pts[i].x + e / 2 > rect.x1, pts[i].x - e / 2 < rect.x0, pts[i].y + e / 2 > rect.y1, pts[i].y - e / 2 < rect.y0].filter(Boolean).length;
+      let inside = 0;
+      const NS = 72;
+      for (let k = 0; k < NS; k++) {
+        const a = (2 * Math.PI * (k + 0.5)) / NS;
+        const q = { x: pts[i].x + (e / 2) * Math.cos(a), y: pts[i].y + (e / 2) * Math.sin(a) };
+        if (q.x <= rect.x1 && q.x >= rect.x0 && q.y <= rect.y1 && q.y >= rect.y0) inside++;
+      }
+      const bo = ((circ ? Math.PI * e : 4 * e) * inside) / NS;
+      const alphaS = Math.max(40 - 10 * sideCut, 20);
+      const vcs = punchingVc(1, alphaS, bo, dPull, cap.fc, cap.code, cap.lambda);
+      const phivc = PHI_SHEAR * vcs.vc;
+      const vu = Tpile[i] / (bo * dPull) / 1000;
+      pull = { pile: i + 1, Tu: Tpile[i], bo, d: dPull, vu, phivc, ratio: vu / phivc, ok: vu <= phivc + 1e-9 };
+    }
+
+    // levantamiento del grupo como bloque (solo si la carga vertical neta es de tracción)
+    let block: TensionResult['block'] = null;
+    const netT = service.map((sv) => ({ name: sv.combo.name, T: -sv.Ptot })).reduce<{ name: string; T: number } | null>((a, b) => (!a || b.T > a.T ? b : a), null);
+    if (netT && netT.T > 1e-6) {
+      const bb = bbox(pts);
+      const Bg = bb.xmax - bb.xmin + props.Dp;
+      const Lg = bb.ymax - bb.ymin + props.Dp;
+      const perimB = 2 * (Bg + Lg);
+      const Qs = geo.mode === 'static' ? (geo.Qs * perimB) / Math.max(props.perim, 1e-9) * inp.geo.etaT : geo.QaT * inp.geo.FSt * n;
+      let Wsoil = 0;
+      let zAcc = 0;
+      for (const l of inp.geo.layers) {
+        const th = Math.max(Math.min(l.thk, p.L - zAcc), 0);
+        Wsoil += l.gamma * th * Bg * Lg;
+        zAcc += l.thk;
+        if (zAcc >= p.L) break;
+      }
+      const Wpiles = n * props.w * p.L;
+      const resist = Qs / inp.geo.FSt + Wsoil + Wpiles + Wcap;
+      block = { applicable: true, combo: netT.name, Tgroup: netT.T, Qs, Wsoil, Wpiles, Wcap, resist, ratio: netT.T / Math.max(resist, 1e-9), ok: false, perim: perimB };
+      block.ok = block.ratio <= 1 + 1e-9;
+    }
+    return { any: true, service: svcRows, Tu, TuCombo, phiTn, ratioTn: Tu / Math.max(phiTn, 1e-9), anchor, pull, block };
+  })();
+  if (tension.any) {
+    checks.push({ name: 'Pilote · resistencia a tracción pura', ratio: tension.ratioTn, ok: tension.ratioTn <= 1 + 1e-9, detail: `${tension.TuCombo}: Tu = ${tension.Tu.toFixed(0)} kN ≤ φTn = ${tension.phiTn.toFixed(0)} kN (${p.kind === 'concrete' ? '0.9·fy·Ast' : '0.9·Fy·Ag'})` });
+    checks.push({ name: p.kind === 'concrete' ? 'Pilote · anclaje de las barras en el cabezal' : 'Pilote · pernos de transferencia en el cabezal', ratio: tension.anchor.ratio, ok: tension.anchor.ok, detail: p.kind === 'concrete' ? `ld = ${((tension.anchor.ld ?? 0) * 100).toFixed(0)} cm, ldh = ${((tension.anchor.ldh ?? 0) * 100).toFixed(0)} cm; disponible ${((tension.anchor.avail ?? 0) * 100).toFixed(0)} cm: ${tension.anchor.text}` : `Tu = ${tension.Tu.toFixed(0)} kN: ${tension.anchor.text}` });
+    if (tension.pull) checks.push({ name: 'Cabezal · extracción del pilote por tracción', ratio: tension.pull.ratio, ok: tension.pull.ok, detail: `Pilote ${tension.pull.pile}: Tu = ${tension.pull.Tu.toFixed(0)} kN, vu = ${tension.pull.vu.toFixed(2)} MPa ≤ φvc = ${tension.pull.phivc.toFixed(2)} MPa` });
+    if (tension.block) checks.push({ name: 'Pilotes · levantamiento del grupo en bloque', ratio: tension.block.ratio, ok: tension.block.ok, detail: `${tension.block.combo}: T neta = ${tension.block.Tgroup.toFixed(0)} kN ≤ (Qs/FS + Wsuelo + Wpilotes + Wcabezal) = ${tension.block.resist.toFixed(0)} kN` });
+  }
+
   // ---------- fricción negativa
   const sustained = service.filter((x) => !x.combo.eq);
   const sus = sustained.length ? sustained : service;
@@ -689,7 +804,7 @@ export function analyzePile(inp: PileInput): PileResults {
   return {
     ok, checks, warnings, pts, n, capRect: rect, Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
     lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen },
-    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, liq, settle, deep, dX, dY,
+    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, tension, liq, settle, deep, dX, dY,
     concreteVolume: rect.B * rect.L * cap.h, pileLength: n * p.L,
   };
 }

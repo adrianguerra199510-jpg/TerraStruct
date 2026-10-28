@@ -208,6 +208,54 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     if (res.worstT) d.p(`Condición crítica a tracción: ${res.worstT.res.combo.name}, Pu = ${n('force', res.worstT.Pu, 0)} ${fmt.l('force')} → relación ${f(res.worstT.ratio, 2)}.`);
   }
 
+  d.h2('Revisión de pilotes en tracción');
+  const tn = res.tension;
+  if (!tn.any) d.p('Ningún pilote trabaja a tracción en las combinaciones analizadas (todas las reacciones son de compresión).');
+  else {
+    d.eq(
+      [
+        'Servicio:  T = −R mín ≤ Qta·(aumento) ;   Qta = η·Qs/FSt + Wpilote',
+        p.kind === 'concrete' ? 'Última:  Tu = −(R_col + 0.9·R_peso cabezal) ≤ φTn = 0.90·fy·Ast' : 'Última:  Tu = −(R_col + 0.9·R_peso cabezal) ≤ φTn = 0.90·Fy·Ag',
+        p.kind === 'concrete'
+          ? 'Anclaje de las barras del pilote en el cabezal:  ld (tracción, ACI 25.4.2) ó ldh (gancho 90°, ACI 25.4.3) ≤ h − penetración − recubrimiento'
+          : 'Pernos de transferencia (Ø19, Fu = 450 MPa):  φQn = 0.75·Asa·Fu;   n ≥ Tu / φQn',
+        'Extracción del pilote a través del cabezal:  vu = Tu / (bo·d) ≤ φ·vc,  bo a d/2 del pilote (recortado por los bordes), d = h − penetración − recubrimiento',
+        'Levantamiento del grupo (solo con carga neta de tracción):  T neta ≤ Qs,bloque/FSt + W suelo + W pilotes + W cabezal',
+      ],
+      'Ecuaciones',
+    );
+    d.table(
+      ['Combinación de servicio', `T máx por pilote (${fmt.l('force')})`, `Qta adm. (${fmt.l('force')})`, 'Relación'],
+      tn.service.map((r) => [r.name, n('force', r.T, 0), n('force', r.Qta, 0), f(r.ratio, 2)]),
+      { align: ['l', 'r', 'r', 'r'], caption: 'Tabla. Tracción de servicio por pilote' },
+    );
+    d.kv(
+      [
+        ['Tracción última máxima Tu', `${u('force', tn.Tu, 0)} (${tn.TuCombo})`],
+        ['Resistencia a tracción φTn', u('force', tn.phiTn, 0)],
+        ['Relación Tu / φTn', f(tn.ratioTn, 2)],
+        [p.kind === 'concrete' ? 'Anclaje de las barras' : 'Pernos de transferencia', tn.anchor.text],
+      ],
+      1,
+    );
+    if (tn.pull) d.p(`Extracción por punzonamiento (pilote ${tn.pull.pile}): bo = ${u('len', tn.pull.bo, 2)}, d = ${u('len', tn.pull.d, 3)}, vu = ${f(tn.pull.vu, 2)} MPa ≤ φvc = ${f(tn.pull.phivc, 2)} MPa → relación ${f(tn.pull.ratio, 2)}.`);
+    if (tn.block) {
+      d.table(
+        ['Concepto', `Valor (${fmt.l('force')})`],
+        [
+          [`Tracción neta del grupo (${tn.block.combo})`, n('force', tn.block.Tgroup, 0)],
+          [`Fricción en el bloque (perímetro ${f(tn.block.perim, 1)} m) / FSt`, n('force', tn.block.Qs / inp.geo.FSt, 0)],
+          ['Peso efectivo del suelo del bloque', n('force', tn.block.Wsoil, 0)],
+          ['Peso de los pilotes', n('force', tn.block.Wpiles, 0)],
+          ['Peso del cabezal', n('force', tn.block.Wcap, 0)],
+          ['Resistencia total', n('force', tn.block.resist, 0)],
+          ['Relación', f(tn.block.ratio, 2)],
+        ],
+        { align: ['l', 'r'], caption: 'Tabla. Levantamiento del grupo en bloque' },
+      );
+    }
+  }
+
   // ------------------------------------------------------------------ 6
   d.h1('Diseño del cabezal');
   d.h2('Flexión');

@@ -93,6 +93,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
             <Num label="Longitud embebida L" q="len" value={p.L} onChange={(v) => setPile({ L: v })} min={2} />
             <Num label="Longitud libre sobre el terreno" q="len" value={p.Lu} onChange={(v) => setPile({ Lu: v })} min={0} />
             {p.kind !== 'concrete' && <Num label="K (pandeo)" value={p.K} onChange={(v) => setPile({ K: v })} min={0.5} />}
+            {p.kind !== 'concrete' && <Num label="Pernos Ø19 en el cabezal" value={p.studs} onChange={(v) => setPile({ studs: Math.max(0, Math.round(v)) })} min={0} hint="Transfieren la tracción del pilote al cabezal" />}
             <Sel label="Cabeza del pilote" value={p.head} onChange={(v) => setPile({ head: v })} options={[{ id: 'fixed', label: 'Empotrada en el cabezal' }, { id: 'free', label: 'Libre (articulada)' }]} />
             <Num label="nh (suelo lateral)" unit="kN/m³" value={p.nh} onChange={(v) => setPile({ nh: v })} min={100} hint="Arena suelta ≈ 2000, media ≈ 5000, densa ≈ 12000; arcilla blanda ≈ 500" />
             <Num label="Deflexión lateral adm." unit="mm" value={+(p.yAllow * 1000).toFixed(2)} onChange={(v) => setPile({ yAllow: v / 1000 })} min={1} />
@@ -259,6 +260,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
             <Card title="Verificaciones" icon={<ListChecks size={18} />}>
               <div className="checks">{res.checks.map((c, i) => <CheckCard key={i} name={c.name} ratio={c.ratio} ok={c.ok} detail={c.detail} advisory={c.advisory} />)}</div>
             </Card>
+            <TensionCard res={res} data={data} />
             <PileResultTables res={res} data={data} />
           </>
         )}
@@ -363,6 +365,39 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
         {res && tab === 'memoria' && <ReportButtons kind="pile" pile={data} info={info} />}
       </div>
     </div>
+  );
+}
+
+function TensionCard({ res, data }: { res: PileResults; data: PileInput }) {
+  const { fmt } = useUnits();
+  const t = res.tension;
+  return (
+    <Card title="Revisión de pilotes en tracción" icon={<Pickaxe size={18} />}>
+      {!t.any ? (
+        <span className="hint">Ningún pilote trabaja a tracción en las combinaciones ingresadas. Si hay momentos grandes o cargas de levantamiento, aparecerá aquí la revisión.</span>
+      ) : (
+        <div className="stack" style={{ gap: 10 }}>
+          <Tbl
+            head={['Combinación (servicio)', `T máx (${fmt.l('force')})`, `Qta adm. (${fmt.l('force')})`, 'Relación']}
+            align={['l', 'r', 'r', 'r']}
+            rows={t.service.map((r) => [r.name, fmt.n('force', r.T, 0), fmt.n('force', r.Qta, 0), r.ratio.toFixed(2)])}
+          />
+          <Tbl
+            head={['Verificación', 'Demanda', 'Capacidad', 'Relación']}
+            align={['l', 'r', 'r', 'r']}
+            rows={[
+              ['Tracción pura del pilote (última)', fmt.u('force', t.Tu, 0), fmt.u('force', t.phiTn, 0), t.ratioTn.toFixed(2)],
+              data.pile.kind === 'concrete'
+                ? ['Anclaje de barras en el cabezal', `ld ${(t.anchor.ld! * 100).toFixed(0)} / ldh ${(t.anchor.ldh! * 100).toFixed(0)} cm`, `disp. ${(t.anchor.avail! * 100).toFixed(0)} cm`, t.anchor.ratio.toFixed(2)]
+                : ['Pernos de transferencia Ø19', `${Math.ceil(t.anchor.req ?? 0)} requeridos`, `${t.anchor.prov} colocados`, t.anchor.ratio.toFixed(2)],
+              ...(t.pull ? [[`Extracción por punzonamiento (pilote ${t.pull.pile})`, `${t.pull.vu.toFixed(2)} MPa`, `${t.pull.phivc.toFixed(2)} MPa`, t.pull.ratio.toFixed(2)]] : []),
+              ...(t.block ? [[`Levantamiento del grupo (${t.block.combo})`, fmt.u('force', t.block.Tgroup, 0), fmt.u('force', t.block.resist, 0), t.block.ratio.toFixed(2)]] : []),
+            ]}
+          />
+          {t.anchor.kind === 'bars' && <span className="hint">{t.anchor.text}</span>}
+        </div>
+      )}
+    </Card>
   );
 }
 

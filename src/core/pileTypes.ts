@@ -49,6 +49,8 @@ export interface PileDef {
   tc: number;
   /** eje de flexión del perfil H */
   axis: 'weak' | 'strong';
+  /** pilotes de acero: conectores (pernos de Ø19 mm) soldados al pilote dentro del cabezal para transferir tracción */
+  studs: number;
   /** método de instalación (asentamiento por punta) */
   install: 'driven' | 'bored';
   /** tapón de suelo en el extremo (tubo abierto o perfil H) */
@@ -200,6 +202,7 @@ export function defaultPile(kind: PileKind = 'concrete'): PileDef {
     Fy: 250,
     tc: 0.0015,
     axis: 'weak',
+    studs: 8,
     install: kind === 'concrete' ? 'bored' : 'driven',
     plug: false,
     L: 18,

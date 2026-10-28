@@ -184,3 +184,37 @@ describe('memoria con todos los efectos', () => {
     for (const k of ['puntales y tirantes', 'Licuación', 'Asentamiento', 'Fricción negativa', 'p-múltiples']) expect(txt.toLowerCase()).toContain(k.toLowerCase());
   });
 });
+
+describe('revisión a tracción', () => {
+  it('sin tracción no agrega verificaciones', () => {
+    const r = analyzePile(defaultPileInput());
+    expect(r.tension.any).toBe(false);
+    expect(r.checks.some((c) => /tracción pura/.test(c.name))).toBe(false);
+  });
+  it('con momento grande hay pilotes en tracción y se revisan resistencia, anclaje y extracción', () => {
+    const inp = defaultPileInput();
+    inp.combos = [
+      { id: 'S1', name: 'D+L', kind: 'service', P: 1500, Vx: 0, Vy: 0, Mx: 0, My: 0, qaFactor: 1 },
+      { id: 'S2', name: 'D+E', kind: 'service', P: 700, Vx: 100, Vy: 0, Mx: 0, My: 1200, qaFactor: 1.33, eq: true },
+      { id: 'U1', name: '0.9D+E', kind: 'ultimate', P: 600, Vx: 140, Vy: 0, Mx: 0, My: 1700, qaFactor: 1, eq: true },
+    ];
+    const r = analyzePile(inp);
+    expect(r.tension.any).toBe(true);
+    expect(r.tension.Tu).toBeGreaterThan(100);
+    for (const k of [/tracción pura/, /anclaje de las barras/, /extracción/]) expect(r.checks.some((c) => k.test(c.name))).toBe(true);
+    // My,base = 1700 + 140·1.1 = 1854;  ΔR = 1854·0.75/(4·0.75²) = 618;  Tu = 618 − 600/4 − 0.9·Wcab/4
+    expect(r.tension.Tu).toBeCloseTo(618 - 150 - (0.9 * r.Wcap) / 4, 6);
+  });
+  it('carga neta de tracción activa el levantamiento del grupo y los pilotes de acero piden pernos', () => {
+    const inp = defaultPileInput('hpile');
+    inp.combos = [
+      { id: 'S1', name: 'Levantamiento', kind: 'service', P: -900, Vx: 0, Vy: 0, Mx: 0, My: 0, qaFactor: 1 },
+      { id: 'U1', name: 'U', kind: 'ultimate', P: -800, Vx: 0, Vy: 0, Mx: 0, My: 0, qaFactor: 1 },
+    ];
+    const r = analyzePile(inp);
+    expect(r.tension.block?.applicable).toBe(true);
+    expect(r.tension.anchor.kind).toBe('studs');
+    inp.pile.studs = 0;
+    expect(analyzePile(inp).tension.anchor.ok).toBe(false);
+  });
+});
