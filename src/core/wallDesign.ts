@@ -312,6 +312,20 @@ export interface KeyDesign {
   PpUsed: number;
 }
 
+export interface WallDiagrams {
+  /** pantalla en voladizo (por metro): momento y cortante mayorados, estático y sísmico, según la altura sobre la zapata */
+  stem: { y: number[]; Mst: number[]; Mse: number[]; Vst: number[]; Vse: number[]; seismic: boolean } | null;
+  /** muros de gravedad / gaviones: esfuerzos de servicio por metro en las secciones */
+  gravity: { y: number[]; M: number[]; V: number[]; N: number[] } | null;
+  /** contrafuerte (por contrafuerte) */
+  counterfort: { y: number[]; M: number[]; V: number[] } | null;
+  /** pantalla entre contrafuertes: momentos horizontales por metro y flexión vertical */
+  stemSlab: { y: number[]; Mneg: number[]; Mpos: number[] } | null;
+  vertical: { y: number[]; M: number[] } | null;
+  /** zapata: pie y talón como voladizos desde la pantalla, por combinación última (momento positivo = tracción inferior) */
+  base: { toe: { x: number[]; combos: { name: string; M: number[]; V: number[] }[] } | null; heel: { x: number[]; combos: { name: string; M: number[]; V: number[] }[] } | null; xFb: number; xBb: number; B: number } | null;
+}
+
 export interface WallDesign {
   uls: { label: string; res: CaseResult }[];
   stem: StemDesign | null;
@@ -322,6 +336,7 @@ export interface WallDesign {
   gravityMaterial: 'concreto' | 'mamposteria' | 'gaviones' | null;
   baseCheck: { name: string; ratio: number; detail: string }[] | null;
   counterfort: CounterfortDesign | null;
+  diagrams: WallDiagrams | null;
   mesh: MeshSummary | null;
   suggest: WallSuggest | null;
   warnings: string[];
@@ -1152,6 +1167,72 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
 }
 
 // ---------------------------------------------------------------------------
+// Diagramas de momento y de cortante
+// ---------------------------------------------------------------------------
+function wallDiagrams(g: WallGeom, uls: { label: string; res: CaseResult }[], d: WallDesign): WallDiagrams {
+  const inp = g.inp;
+  const f = inp.factors;
+  const out: WallDiagrams = { stem: null, gravity: null, counterfort: null, stemSlab: null, vertical: null, base: null };
+  const H = inp.H;
+  if (d.gravity) {
+    out.gravity = { y: d.gravity.map((q) => q.y), M: d.gravity.map((q) => q.M), V: d.gravity.map((q) => q.V), N: d.gravity.map((q) => q.N) };
+  } else if (d.counterfort) {
+    const c = d.counterfort;
+    out.counterfort = { y: c.sections.map((q) => q.y), M: c.sections.map((q) => q.Mcf), V: c.sections.map((q) => q.Vcf) };
+    out.stemSlab = { y: c.stemSlab.map((q) => q.y), Mneg: c.stemSlab.map((q) => q.MuNeg), Mpos: c.stemSlab.map((q) => q.MuPos) };
+    out.vertical = { y: c.vertical.map((q) => q.y), M: c.vertical.map((q) => q.Mu) };
+  } else if (d.stem) {
+    const lat = stemLateral(g);
+    const N = 40;
+    const y: number[] = [], Mst: number[] = [], Mse: number[] = [], Vst: number[] = [], Vse: number[] = [];
+    for (let k = 0; k <= N; k++) {
+      const yy = (H * k) / N;
+      const L = sectionLoad(g, lat, yy);
+      y.push(yy);
+      Mst.push(f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur);
+      Vst.push(f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur);
+      Mse.push(inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0);
+      Vse.push(inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) : 0);
+    }
+    out.stem = { y, Mst, Mse, Vst, Vse, seismic: inp.seismic.on };
+  }
+  // zapata: pie y talón como voladizos (muros sin contrafuertes en la zapata)
+  if (!isGravity(inp.type) && g.hb > 1e-6 && !isCounterfort(inp.type)) {
+    const NP = 40;
+    const mkToe = () => {
+      if (g.xFb <= 1e-6) return null;
+      const x = Array.from({ length: NP + 1 }, (_, i) => (g.xFb * i) / NP);
+      const combos = uls.map((c) => {
+        const net = (xx: number) => c.res.qAt(xx) + c.res.uAt(xx) - downward(g, c.res, xx, 'toe');
+        return {
+          name: c.label,
+          // voladizo libre en la punta (x = 0) y empotrado en la cara frontal de la pantalla: esfuerzo en x = cargas entre 0 y x
+          M: x.map((xx) => simpson((t) => net(t) * (xx - t), 0, xx, 40)),
+          V: x.map((xx) => simpson(net, 0, xx, 40)),
+        };
+      });
+      return { x, combos };
+    };
+    const mkHeel = () => {
+      if (g.B - g.xBb <= 1e-6) return null;
+      const x = Array.from({ length: NP + 1 }, (_, i) => g.xBb + ((g.B - g.xBb) * i) / NP);
+      const combos = uls.map((c) => {
+        const net = (xx: number) => downward(g, c.res, xx, 'heel') - (c.res.qAt(xx) + c.res.uAt(xx));
+        // M positivo = tracción inferior: en el talón la tracción suele estar arriba (carga hacia abajo), por eso se cambia el signo
+        return {
+          name: c.label,
+          M: x.map((xx) => -simpson((t) => net(t) * (t - xx), xx, g.B, 40)),
+          V: x.map((xx) => simpson(net, xx, g.B, 40)),
+        };
+      });
+      return { x, combos };
+    };
+    out.base = { toe: mkToe(), heel: mkHeel(), xFb: g.xFb, xBb: g.xBb, B: g.B };
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Orquestador
 // ---------------------------------------------------------------------------
 export function designWall(g: WallGeom): WallDesign {
@@ -1163,7 +1244,7 @@ export function designWall(g: WallGeom): WallDesign {
   for (const u of uls) {
     if (u.res.SumV <= 0 || u.res.xbar <= 0) warnings.push(`Combinación ${u.label}: la resultante cae fuera de la base (vuelco).`);
   }
-  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, mesh: null, suggest: null, warnings, notes };
+  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, diagrams: null, mesh: null, suggest: null, warnings, notes };
 
   if (isGravity(inp.type)) {
     out.gravity = gravitySections(g);
@@ -1250,6 +1331,7 @@ export function designWall(g: WallGeom): WallDesign {
   out.key = keyDesign(g);
   if (inp.hb > 1e-6 && inp.hb < 0.3 && !isGravity(inp.type)) warnings.push('El espesor de la zapata es menor que 0.30 m: verificar anclaje de las barras de la pantalla.');
   if (out.stem && !out.stem.anchorage.ok) warnings.push(`El espesor de la zapata no alcanza para el gancho estándar de las barras de la pantalla (${(out.stem.anchorage.ldh * 100).toFixed(0)} cm requeridos).`);
+  out.diagrams = wallDiagrams(g, uls, out);
   void beta1;
   void isMasonry;
   return out;

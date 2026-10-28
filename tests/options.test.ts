@@ -126,7 +126,7 @@ describe('armadura de la pantalla elegible', () => {
 
 import { isCounterfort, isMasonry, cfInternal } from '../src/core/wallTypes';
 import { stemHookSide } from '../src/core/wallGeom';
-import { reportForWall } from '../src/report';
+import { reportForWall, reportForFooting } from '../src/report';
 import { makeFmt } from '../src/core/units';
 import { newProject } from '../src/state';
 
@@ -220,5 +220,48 @@ describe('vigas corona y flexión vertical', () => {
     const txt = JSON.stringify(reportForWall(w, makeFmt('SI'), newProject().info).blocks);
     expect(txt).toContain('Vigas corona entre contrafuertes');
     expect(txt).toContain('Flexión vertical de la pantalla');
+  });
+});
+
+describe('diagramas de momento y cortante (zapatas y muros)', () => {
+  it('zapata: los diagramas cierran en cero en los bordes y el máximo coincide con el Mu de diseño', () => {
+    const f = defaultFooting();
+    f.columns[0].loads.D.Mx = 30;
+    const r = analyzeFooting(f);
+    for (const fl of [r.flexX!, r.flexY!]) {
+      expect(fl.diagramAll.length).toBeGreaterThan(0);
+      for (const c of fl.diagramAll) {
+        expect(Math.abs(c.M[0])).toBeLessThan(1e-6);
+        expect(Math.abs(c.M[c.M.length - 1])).toBeLessThan(1e-3);
+      }
+      const peak = Math.max(...fl.diagramAll.flatMap((c) => c.M));
+      expect(peak).toBeGreaterThanOrEqual(fl.Mu * 0.99);
+    }
+  });
+  it('muro en voladizo: momento y cortante máximos en la base y nulos en la corona; pie y talón nulos en el extremo', () => {
+    const r = analyzeWall(defaultWall('cantilever'));
+    const dg = r.design.diagrams!;
+    expect(dg.stem!.Mst[0]).toBeGreaterThan(0);
+    expect(dg.stem!.Mst[dg.stem!.Mst.length - 1]).toBeCloseTo(0, 6);
+    expect(dg.stem!.Vst[0]).toBeGreaterThan(dg.stem!.Vst[10]);
+    expect(dg.stem!.Mst[0]).toBeCloseTo(r.design.stem!.sections[0].MuStatic, 6);
+    const toe = dg.base!.toe!;
+    for (const c of toe.combos) expect(Math.abs(c.M[0])).toBeLessThan(1e-9);
+    const heel = dg.base!.heel!;
+    for (const c of heel.combos) expect(Math.abs(c.M[c.M.length - 1])).toBeLessThan(1e-9);
+    // el momento de diseño del pie (tracción inferior) es el máximo del diagrama
+    expect(Math.max(...toe.combos.map((c) => Math.max(...c.M)))).toBeCloseTo(r.design.toe!.Mu > 0 ? Math.max(r.design.toe!.Mu, r.design.toe!.opp?.Mu ?? 0) : 0, 0);
+  });
+  it('contrafuertes, gravedad: se generan sus diagramas', () => {
+    expect(analyzeWall(defaultWall('counterfortInt')).design.diagrams!.counterfort!.M.length).toBeGreaterThan(5);
+    expect(analyzeWall(defaultWall('masonryCfExt')).design.diagrams!.stemSlab!.Mneg.length).toBeGreaterThan(5);
+    expect(analyzeWall(defaultWall('gravityConcrete')).design.diagrams!.gravity!.M.length).toBeGreaterThan(5);
+  });
+  it('las figuras y la memoria incluyen los diagramas', () => {
+    const w = defaultWall('cantilever');
+    const txt = JSON.stringify(reportForWall(w, makeFmt('SI'), newProject().info).blocks);
+    expect(txt).toContain('Diagramas de momento y de cortante');
+    const ft = JSON.stringify(reportForFooting(defaultFooting(), makeFmt('SI'), newProject().info).blocks);
+    expect(ft).toContain('Diagrama de cortante a lo largo de X');
   });
 });

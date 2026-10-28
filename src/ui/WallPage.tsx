@@ -6,7 +6,7 @@ import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, has
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
-import { wallElevationSvg, wallPlanSvg, wallSectionSvg, wallTypeIcon } from '../draw/wallDraw';
+import { wallDiagramFigures, wallElevationSvg, wallPlanSvg, wallSectionSvg, wallTypeIcon } from '../draw/wallDraw';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
@@ -14,7 +14,7 @@ import { CaseResult } from '../core/wallStability';
 
 const SPACINGS = [{ id: '0', label: 'Automática' }, ...[0.2, 0.4, 0.6, 0.8, 1.0, 1.2].map((v) => ({ id: String(v), label: `${v * 100} cm` }))];
 
-type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'armado' | 'memoria';
+type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'diagramas' | 'armado' | 'memoria';
 
 export function WallPage({ data, onChange, theme, info }: { data: WallInput; onChange: (w: WallInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const [tab, setTab] = useState<Tab>('seccion');
@@ -357,6 +357,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             { id: 'seccion', label: 'Sección', icon: <Eye size={16} /> },
             { id: 'estabilidad', label: 'Estabilidad', icon: <Scale size={16} /> },
             { id: 'diseno', label: 'Diseño estructural', icon: <Layers size={16} /> },
+            { id: 'diagramas', label: 'Diagramas', icon: <Activity size={16} /> },
             { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
             { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
           ]}
@@ -365,6 +366,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
         {res && tab === 'seccion' && <WallSection res={res} theme={th} />}
         {res && tab === 'estabilidad' && <WallStability res={res} />}
         {res && tab === 'diseno' && <WallDesignView res={res} theme={th} />}
+        {res && tab === 'diagramas' && <WallDiagramTab res={res} theme={th} />}
         {res && tab === 'armado' && <WallArmado res={res} theme={th} />}
         {res && tab === 'memoria' && <ReportButtons kind="wall" wall={data} info={info} />}
       </div>
@@ -633,6 +635,26 @@ function CounterfortView({ res }: { res: WallResults }) {
         </div>
       </Card>
       {c.notes.map((n, i) => <div className="hint" key={i}>{n}</div>)}
+    </>
+  );
+}
+
+function WallDiagramTab({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const figs = wallDiagramFigures(res, { theme, fmt, W: 820 });
+  if (!figs.length) return <Alert>Este tipo de muro no tiene diagramas de esfuerzos que mostrar.</Alert>;
+  return (
+    <>
+      <div className="hint">Esfuerzos con las cargas mayoradas (cargas de servicio en muros de gravedad y gaviones). Los diagramas de la pantalla y del contrafuerte van de la corona (arriba) a la zapata (abajo); los de la zapata, de la punta del pie al extremo del talón.</div>
+      <div className="grid2" style={{ gap: 12 }}>
+        {res.design.diagrams?.stem && (
+          <>
+            <Kpi label="Momento máx. de la pantalla" value={fmt.u('lmoment', Math.max(...res.design.diagrams.stem.Mst, ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Mse : [0])), 1)} sub="en la base de la pantalla" />
+            <Kpi label="Cortante máx. de la pantalla" value={fmt.u('lforce', Math.max(...res.design.diagrams.stem.Vst, ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Vse : [0])), 1)} sub="en la base de la pantalla" />
+          </>
+        )}
+      </div>
+      {figs.map((f) => <div className="draw" key={f.id}><div dangerouslySetInnerHTML={{ __html: f.svg }} /></div>)}
     </>
   );
 }

@@ -5,7 +5,7 @@ import { PHI_FLEX, PHI_SHEAR, PHI_PLAIN } from '../core/concrete';
 import { ProjectInfo } from '../state';
 import { DocBuilder, ReportDoc } from './model';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
-import { wallElevationSvg, wallPlanSvg, wallSectionSvg } from '../draw/wallDraw';
+import { wallDiagramFigures, wallElevationSvg, wallPlanSvg, wallSectionSvg } from '../draw/wallDraw';
 import { CaseResult } from '../core/wallStability';
 import { rad } from '../core/earth';
 
@@ -454,6 +454,14 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   for (const nn of des.notes) d.p(nn, { small: true });
 
   // ------------------------------------------------------------------ 6
+  {
+    const figs = wallDiagramFigures(res, { theme: th, fmt, W: 800 });
+    if (figs.length) {
+      d.h1('Diagramas de momento y de cortante');
+      d.p('Esfuerzos de las secciones con las cargas mayoradas (de servicio en muros de gravedad y gaviones). La pantalla y el contrafuerte se dibujan según la altura sobre la zapata; el pie y el talón, como voladizos desde las caras de la pantalla (momento positivo = tracción inferior).', { align: 'justify' });
+      for (const f of figs) d.img(f.svg, `Figura. ${f.title}.`, 0.92);
+    }
+  }
   d.h1('Resumen del armado');
   const rows: string[][] = [];
   if (des.stem) {

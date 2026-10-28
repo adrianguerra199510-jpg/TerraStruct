@@ -331,3 +331,46 @@ export function footingRebarPlanSvg(inp: FootingInput, res: FootingResults | nul
   void columnSectionBox;
   return svgWrap(W, H, s, th.bg);
 }
+
+// ---------------------------------------------------------------------------
+// Diagramas de momento y de cortante a lo largo de un eje
+// ---------------------------------------------------------------------------
+import { diagramSvg, DgSeries } from './diagram';
+
+export function footingDiagramSvg(inp: FootingInput, res: FootingResults, o: { dir: 'x' | 'y'; kind: 'M' | 'V'; W?: number; H?: number; theme?: Theme; fmt: Fmt; combo?: string | null }): string {
+  const th = o.theme ?? LIGHT;
+  const f = o.dir === 'x' ? res.flexX : res.flexY;
+  const isM = o.kind === 'M';
+  const q = isM ? 'moment' : 'force';
+  if (!f || !f.diagramAll.length) return svgWrap(o.W ?? 820, 50, text(12, 30, 'Sin combinaciones últimas utilizables.', { size: 12, fill: th.muted }), th.bg);
+  const all = f.diagramAll;
+  const pos = all[0].pos;
+  const vals = (c: (typeof all)[number]) => (isM ? c.M : c.V).map((v) => v);
+  const envMax = pos.map((_, k) => Math.max(0, ...all.map((c) => vals(c)[k])));
+  const envMin = pos.map((_, k) => Math.min(0, ...all.map((c) => vals(c)[k])));
+  const sel = o.combo ? all.find((c) => c.name === o.combo) : null;
+  const series: DgSeries[] = [];
+  if (!sel) all.forEach((c) => series.push({ s: pos, v: vals(c), color: th.muted, width: 1, opacity: 0.55 }));
+  series.push({ s: pos, v: envMax, color: th.concreteStroke, width: 2.2, fill: true });
+  series.push({ s: pos, v: envMin, color: th.bad, width: 2.2, fill: true });
+  if (sel) series.push({ s: pos, v: vals(sel), color: th.accent, width: 2.8 });
+  let pk = { v: 0, s: pos[0] }, nk = { v: 0, s: pos[0] };
+  pos.forEach((p, k) => {
+    if (envMax[k] > pk.v) pk = { v: envMax[k], s: p };
+    if (envMin[k] < nk.v) nk = { v: envMin[k], s: p };
+  });
+  const peaks = [];
+  if (pk.v > 1e-6) peaks.push({ s: pk.s, v: pk.v, color: th.concreteStroke, label: o.fmt.n(q, pk.v, 0) });
+  if (nk.v < -1e-6) peaks.push({ s: nk.s, v: nk.v, color: th.bad, label: o.fmt.n(q, nk.v, 0) });
+  const lo = pos[0], hi = pos[pos.length - 1];
+  return diagramSvg({
+    W: o.W, H: o.H ?? (isM ? 370 : 340), theme: th, orient: 'h', sRange: [lo, hi],
+    title: `${isM ? 'Momento' : 'Cortante'} en ${o.dir.toUpperCase()} (${o.fmt.l(q)}) — combinaciones últimas${sel ? ` — ${sel.name}` : ''}`,
+    note: isM ? 'positivo abajo (tracción inferior)' : 'valores de la sección completa',
+    sLabel: `Posición ${o.dir} (m)`, vLabel: `${isM ? 'M' : 'V'} (${o.fmt.l(q)})`, series, peaks,
+    markers: f.colIntervals.flatMap(([a, b]) => [{ s: a }, { s: b }]),
+    fmtS: (v) => o.fmt.n('len', v, 1), fmtV: (v) => o.fmt.n(q, v, 0),
+    stripH: 40,
+    stripSvg: (X, y0) => `<rect x="${X(lo).toFixed(1)}" y="${y0}" width="${(X(hi) - X(lo)).toFixed(1)}" height="22" fill="${th.concrete}" fill-opacity=".55" stroke="${th.concreteStroke}" stroke-width="1.6"/>` + f.colIntervals.map(([a, b]) => `<rect x="${X(a).toFixed(1)}" y="${y0 - 16}" width="${(X(b) - X(a)).toFixed(1)}" height="16" fill="${th.col}" fill-opacity=".85" stroke="${th.ink}"/>`).join(''),
+  });
+}

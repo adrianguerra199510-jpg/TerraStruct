@@ -238,6 +238,10 @@ export interface FlexureDir {
   hookNeeded: boolean;
   hookLen: number;
   diagram: { pos: number[]; M: number[]; V: number[]; chord: number[] };
+  /** momento y cortante totales de cada combinación última a lo largo del eje (sección completa); dentro de las columnas se interpola entre sus caras */
+  diagramAll: { name: string; pos: number[]; M: number[]; V: number[] }[];
+  /** caras de las columnas sobre el eje */
+  colIntervals: [number, number][];
   /** barras: longitud total estimada (m) por m de ancho */
   steelVolume: number;
 }
@@ -740,6 +744,29 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
         diagram.chord.push(sfa.chord);
       }
     }
+    const diagramAll: FlexureDir['diagramAll'] = usableU.map((u) => {
+      const NP = 160;
+      const pos: number[] = [];
+      const M: number[] = [];
+      const V: number[] = [];
+      const at = (p: number) => sectionForce(poly, u.sol.plane, u.cols, dir, p, 'izq', inp.Df);
+      const ends = info.intervals.map(([a, b]) => ({ a, b, fa: at(a), fb: at(b) }));
+      for (let i = 0; i <= NP; i++) {
+        const p = info.lo + ((info.hi - info.lo) * i) / NP;
+        const inside = ends.find((e) => p > e.a + 1e-9 && p < e.b - 1e-9);
+        pos.push(p);
+        if (inside) {
+          const t = (p - inside.a) / Math.max(inside.b - inside.a, 1e-9);
+          M.push(inside.fa.M + (inside.fb.M - inside.fa.M) * t);
+          V.push(inside.fa.V + (inside.fb.V - inside.fa.V) * t);
+        } else {
+          const r = at(p);
+          M.push(r.M);
+          V.push(r.V);
+        }
+      }
+      return { name: u.combo.name, pos, M, V };
+    });
     const designDir = (bf: Best | null, bar: Bar, dUse: number, face: 'inferior' | 'superior'): FlexureDir | null => {
       if (!peakU) return null;
       const b0: Best = bf ?? { asPm: 0, u: peakU, pos: (info.lo + info.hi) / 2, sf: { M: 0, V: 0, chord: maxChord[dir], partMin: info.lo, side: 'izq', hasColumns: true }, Mu: 0 };
@@ -763,7 +790,7 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
         AsReq: asReq, AsMin: asMin, AsDesign: asDes, det, phiMn, rho: fr.rho, cOverD: fr.cOverD, sectionOk: fr.ok && isFinite(fr.As) && det.asProv + 1e-9 >= asMin && det.ok,
         ratio: phiMn > 0 ? b0.Mu / phiMn : Infinity,
         ldReq, ldAvail, hookNeeded: ldAvail < ldReq, hookLen: hookDevelopment(bar.db, inp.fy, inp.fc, inp.lambda),
-        diagram, steelVolume: det.asProv * 1e-4 * pp.A,
+        diagram, diagramAll, colIntervals: info.intervals as [number, number][], steelVolume: det.asProv * 1e-4 * pp.A,
       };
     };
     flex[dir] = designDir(bestSag, info.bar, dd, 'inferior');

@@ -6,7 +6,7 @@ import { rhoMinSlab, PHI_FLEX, PHI_SHEAR, PHI_BEARING } from '../core/concrete';
 import { ProjectInfo } from '../state';
 import { DocBuilder, ReportDoc } from './model';
 import { LIGHT } from '../draw/svg';
-import { footingPlanSvg, footingRebarPlanSvg, footingSectionSvg } from '../draw/footingDraw';
+import { footingDiagramSvg, footingPlanSvg, footingRebarPlanSvg, footingSectionSvg } from '../draw/footingDraw';
 import { lineChart } from '../draw/svg';
 
 const shapeLabel = (s: string) => COLUMN_SHAPES.find((x) => x.id === s)?.label ?? s;
@@ -251,14 +251,8 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
       ],
       `Flexión en ${dir.toUpperCase()}`,
     );
-    d.img(
-      lineChart({
-        w: 760, h: 270, theme: th, xLabel: `Posición ${dir} (m)`, yLabel: `Momento (${fmt.l('moment')})`, title: `Diagrama de momentos de la combinación más severa — dirección ${dir.toUpperCase()}`,
-        series: [{ name: 'M', xs: fx.diagram.pos, ys: fx.diagram.M.map((m) => (fmt.sys === 'SI' ? m : m / 9.80665)), color: th.accent }], fillArea: true,
-      }),
-      `Figura. Momento flector a lo largo de ${dir.toUpperCase()} (positivo = tracción inferior).`,
-      0.9,
-    );
+    d.img(footingDiagramSvg(inp, res, { dir, kind: 'M', W: 800, H: 370, theme: th, fmt }), `Figura. Diagrama de momento a lo largo de ${dir.toUpperCase()} — envolvente de combinaciones últimas (positivo = tracción inferior).`, 0.95);
+    d.img(footingDiagramSvg(inp, res, { dir, kind: 'V', W: 800, H: 340, theme: th, fmt }), `Figura. Diagrama de cortante a lo largo de ${dir.toUpperCase()} — envolvente de combinaciones últimas.`, 0.95);
   }
 
   if (inp.topSteel) {

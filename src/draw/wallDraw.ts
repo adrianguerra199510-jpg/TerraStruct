@@ -410,3 +410,100 @@ export function wallElevationSvg(res: WallResults, o: { W?: number; H?: number; 
   s += text(14, 22, 'Alzado (vista desde el lado visible) — vigas corona entre contrafuertes', { size: 13, fill: th.ink, weight: 600 });
   return svgWrap(W, H, s, th.bg);
 }
+
+// ---------------------------------------------------------------------------
+// Diagramas de momento y de cortante
+// ---------------------------------------------------------------------------
+import { diagramSvg, DgSeries } from './diagram';
+
+export interface WallDiagramFig {
+  id: string;
+  title: string;
+  svg: string;
+}
+
+export function wallDiagramFigures(res: WallResults, o: { theme?: Theme; fmt: Fmt; W?: number }): WallDiagramFig[] {
+  const th = o.theme ?? LIGHT;
+  const fmt = o.fmt;
+  const d = res.design.diagrams;
+  const W = o.W ?? 820;
+  const figs: WallDiagramFig[] = [];
+  if (!d) return figs;
+  const H = res.inp.H;
+  const mq = 'moment', fq = 'force';
+  const vert = (title: string, id: string, series: DgSeries[], vLabel: string, q: 'moment' | 'force' | 'lmoment' | 'lforce', note?: string) => {
+    figs.push({
+      id, title,
+      svg: diagramSvg({
+        W, H: 380, theme: th, orient: 'v', title, note, sLabel: 'Altura sobre la zapata (m)', vLabel, series, sRange: [0, H],
+        fmtS: (v) => fmt.n('len', v, 1), fmtV: (v) => fmt.n(q, v, 0),
+        peaks: series.filter((s) => s.fill !== false).slice(0, 2).flatMap((s) => {
+          let k = 0;
+          s.v.forEach((v, i) => { if (Math.abs(v) > Math.abs(s.v[k])) k = i; });
+          return Math.abs(s.v[k]) > 1e-6 ? [{ s: s.s[k], v: s.v[k], color: s.color, label: fmt.n(q, s.v[k], 1) }] : [];
+        }),
+      }),
+    });
+  };
+  if (d.stem) {
+    const st = d.stem;
+    vert('Pantalla — momento mayorado por metro de muro', 'stem-M', [
+      { s: st.y, v: st.Mst, color: th.concreteStroke, width: 2.4, fill: true },
+      ...(st.seismic ? [{ s: st.y, v: st.Mse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),
+    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', st.seismic ? 'azul: estático · naranja: con sismo · tracción en la cara del relleno' : 'tracción en la cara del relleno');
+    vert('Pantalla — cortante mayorado por metro de muro', 'stem-V', [
+      { s: st.y, v: st.Vst, color: th.concreteStroke, width: 2.4, fill: true },
+      ...(st.seismic ? [{ s: st.y, v: st.Vse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),
+    ], `Vu (${fmt.l('lforce')})`, 'lforce');
+  }
+  if (d.gravity) {
+    const gr = d.gravity;
+    vert('Pantalla de gravedad — momento por metro (cargas de servicio)', 'grav-M', [{ s: gr.y, v: gr.M, color: th.concreteStroke, width: 2.4, fill: true }], `M (${fmt.l('lmoment')})`, 'lmoment', 'tracción en la cara posterior');
+    vert('Pantalla de gravedad — cortante por metro', 'grav-V', [{ s: gr.y, v: gr.V, color: th.concreteStroke, width: 2.4, fill: true }], `V (${fmt.l('lforce')})`, 'lforce');
+  }
+  if (d.counterfort) {
+    const c = d.counterfort;
+    vert('Contrafuerte — momento (por contrafuerte)', 'cf-M', [{ s: c.y, v: c.M, color: th.concreteStroke, width: 2.4, fill: true }], `Mcf (${fmt.l('moment')})`, 'moment');
+    vert('Contrafuerte — cortante (por contrafuerte)', 'cf-V', [{ s: c.y, v: c.V, color: th.concreteStroke, width: 2.4, fill: true }], `Vcf (${fmt.l('force')})`, 'force');
+  }
+  if (d.stemSlab) {
+    const sl = d.stemSlab;
+    vert('Pantalla entre contrafuertes — momentos horizontales por metro de altura', 'slab-M', [
+      { s: sl.y, v: sl.Mneg, color: th.bad, width: 2.2, fill: true },
+      { s: sl.y, v: sl.Mpos, color: th.concreteStroke, width: 2.2, fill: true },
+    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', 'rojo: Mu(−) sobre el contrafuerte · azul: Mu(+) en el centro de la luz');
+  }
+  if (d.vertical) vert('Pantalla — flexión vertical (acción en dos direcciones)', 'vert-M', [{ s: d.vertical.y, v: d.vertical.M, color: th.concreteStroke, width: 2.4, fill: true }], `Mv (${fmt.l('lmoment')})`, 'lmoment', 'voladizo desde la zapata con reparto por rigideces');
+  if (d.base && (d.base.toe || d.base.heel)) {
+    const b = d.base;
+    for (const kind of ['M', 'V'] as const) {
+      const q = kind === 'M' ? 'lmoment' : 'lforce';
+      const series: DgSeries[] = [];
+      const parts = [b.toe, b.heel].filter(Boolean) as NonNullable<typeof b.toe>[];
+      parts.forEach((pt) => {
+        pt.combos.forEach((c) => series.push({ s: pt.x, v: kind === 'M' ? c.M : c.V, color: th.muted, width: 1, opacity: 0.55 }));
+        const env = (sgn: 1 | -1) => pt.x.map((_, k) => (sgn === 1 ? Math.max(0, ...pt.combos.map((c) => (kind === 'M' ? c.M : c.V)[k])) : Math.min(0, ...pt.combos.map((c) => (kind === 'M' ? c.M : c.V)[k]))));
+        series.push({ s: pt.x, v: env(1), color: th.concreteStroke, width: 2.2, fill: true });
+        series.push({ s: pt.x, v: env(-1), color: th.bad, width: 2.2, fill: true });
+      });
+      const peaks: { s: number; v: number; color: string; label: string }[] = [];
+      for (const sr of series.filter((x) => x.width === 2.2)) {
+        let k = 0;
+        sr.v.forEach((v, i) => { if (Math.abs(v) > Math.abs(sr.v[k])) k = i; });
+        if (Math.abs(sr.v[k]) > 1e-6) peaks.push({ s: sr.s[k], v: sr.v[k], color: sr.color, label: fmt.n(q, sr.v[k], 1) });
+      }
+      figs.push({
+        id: `base-${kind}`, title: kind === 'M' ? 'Zapata — momento por metro (pie y talón)' : 'Zapata — cortante por metro (pie y talón)',
+        svg: diagramSvg({
+          W, H: 360, theme: th, orient: 'h', sRange: [0, b.B], title: kind === 'M' ? `Zapata — momento por metro (${fmt.l('lmoment')}), envolvente de combinaciones últimas` : `Zapata — cortante por metro (${fmt.l('lforce')}), envolvente de combinaciones últimas`,
+          note: kind === 'M' ? 'positivo abajo (tracción inferior)' : 'voladizos desde las caras de la pantalla', sLabel: 'Posición x desde la punta del pie (m)', vLabel: kind === 'M' ? `M (${fmt.l('lmoment')})` : `V (${fmt.l('lforce')})`,
+          series, peaks, markers: [{ s: b.xFb, label: 'cara frontal' }, { s: b.xBb, label: 'cara posterior' }],
+          fmtS: (v) => fmt.n('len', v, 1), fmtV: (v) => fmt.n(q, v, 0), stripH: 30,
+          stripSvg: (X, y0) => `<rect x="${X(0).toFixed(1)}" y="${y0 + 8}" width="${(X(b.B) - X(0)).toFixed(1)}" height="12" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="1.4"/><rect x="${X(b.xFb).toFixed(1)}" y="${y0 - 6}" width="${(X(b.xBb) - X(b.xFb)).toFixed(1)}" height="16" fill="${th.col}" fill-opacity=".85" stroke="${th.ink}"/>`,
+        }),
+      });
+    }
+  }
+  void mq; void fq;
+  return figs;
+}

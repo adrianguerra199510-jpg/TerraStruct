@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
-  Plus, Trash2, Shapes, Columns3, Mountain, Layers, Settings2, Ruler, CheckCircle2, XCircle, Wand2, MoveDiagonal, Grid3x3, Eye, FileText, ListChecks, RotateCcw, Copy,
+  Plus, Trash2, Shapes, Columns3, Mountain, Layers, Settings2, Ruler, CheckCircle2, XCircle, Wand2, MoveDiagonal, Grid3x3, Eye, FileText, ListChecks, RotateCcw, Copy, Activity,
 } from 'lucide-react';
 import {
   FootingInput, FootingColumn, LoadCombo, CASE_KEYS, CASE_LABEL, CaseKey, analyzeFooting, defaultColumn, defaultCombos, findMinThickness, findScaleForPressure, FootingResults, casesToEnvelope, zeroLoad, LoadCase,
@@ -12,13 +12,13 @@ import { barList, findBar } from '../core/materials';
 import { makeFmt } from '../core/units';
 import { Pt, polyProps, ccw } from '../core/geometry';
 import { Acc, Alert, Card, Check, CheckCard, CellNum, CellText, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
-import { PlanView, footingPlanSvg, footingRebarPlanSvg, footingSectionSvg, makePlanView, planPoints } from '../draw/footingDraw';
+import { PlanView, footingDiagramSvg, footingPlanSvg, footingRebarPlanSvg, footingSectionSvg, makePlanView, planPoints } from '../draw/footingDraw';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
 import { autoSizeFooting } from '../core/footingAuto';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 
-type Tab = 'planta' | 'resultados' | 'armado' | 'memoria';
+type Tab = 'planta' | 'resultados' | 'diagramas' | 'armado' | 'memoria';
 
 export function FootingPage({ data, onChange, theme, info }: { data: FootingInput; onChange: (f: FootingInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const { fmt, sys } = useUnits();
@@ -178,6 +178,7 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
           items={[
             { id: 'planta', label: 'Planta y presiones', icon: <Eye size={16} /> },
             { id: 'resultados', label: 'Resultados', icon: <ListChecks size={16} /> },
+            { id: 'diagramas', label: 'Diagramas', icon: <Activity size={16} /> },
             { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
             { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
           ]}
@@ -214,6 +215,7 @@ export function FootingPage({ data, onChange, theme, info }: { data: FootingInpu
           </>
         )}
         {res && tab === 'resultados' && <FootingResultsView data={data} res={res} onChange={onChange} theme={th} />}
+        {res && tab === 'diagramas' && <FootingDiagramTab data={data} res={res} theme={th} />}
         {res && tab === 'armado' && <FootingArmado data={data} res={res} theme={th} />}
         {res && tab === 'memoria' && <ReportButtons kind="footing" footing={data} info={info} />}
       </div>
@@ -686,17 +688,6 @@ function FootingResultsView({ data, res, onChange, theme }: { data: FootingInput
           ])}
         />
       </Card>
-      <div className="grid2">
-        {(['x', 'y'] as const).map((d) => {
-          const f = d === 'x' ? res.flexX : res.flexY;
-          if (!f) return null;
-          const svg = lineChart({
-            w: 520, h: 250, theme: th, xLabel: `Posición ${d} (m)`, yLabel: `Momento (${fmt.l('moment')})`, title: `Momento flector — dirección ${d.toUpperCase()}`,
-            series: [{ name: 'M', xs: f.diagram.pos, ys: f.diagram.M.map((m) => fmt.sys === 'SI' ? m : m / 9.80665), color: th.accent }], fillArea: true,
-          });
-          return <div className="draw" key={d}><div dangerouslySetInnerHTML={{ __html: svg }} /></div>;
-        })}
-      </div>
     </>
   );
 }
@@ -704,6 +695,51 @@ function FootingResultsView({ data, res, onChange, theme }: { data: FootingInput
 // ---------------------------------------------------------------------------
 // Armado
 // ---------------------------------------------------------------------------
+function FootingDiagramTab({ data, res, theme }: { data: FootingInput; res: FootingResults; theme: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const [sel, setSel] = useState('');
+  const names = res.flexX?.diagramAll.map((c) => c.name) ?? [];
+  if (!names.length) return <Alert>No hay combinaciones últimas utilizables para dibujar los diagramas.</Alert>;
+  const combo = sel || null;
+  const ext = (d: 'x' | 'y') => {
+    const f = d === 'x' ? res.flexX : res.flexY;
+    const all = f?.diagramAll ?? [];
+    return {
+      Mp: Math.max(0, ...all.flatMap((c) => c.M)), Mn: Math.min(0, ...all.flatMap((c) => c.M)),
+      Vp: Math.max(0, ...all.flatMap((c) => c.V)), Vn: Math.min(0, ...all.flatMap((c) => c.V)),
+    };
+  };
+  const ex = ext('x'), ey = ext('y');
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <span className="hint">Combinación</span>
+          <div className="inp" style={{ minWidth: 220 }}>
+            <select value={sel} onChange={(e) => setSel(e.target.value)}>
+              <option value="">Todas (envolvente)</option>
+              {names.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+        </label>
+        <span className="hint">Esfuerzos de la sección completa con la presión neta de las cargas mayoradas; positivo hacia abajo (tracción inferior)</span>
+      </div>
+      <div className="grid2" style={{ gap: 12 }}>
+        <Kpi label="Momento en X (+) / (−)" value={`${fmt.n('moment', ex.Mp, 0)} / ${fmt.n('moment', ex.Mn, 0)}`} sub={fmt.l('moment')} />
+        <Kpi label="Momento en Y (+) / (−)" value={`${fmt.n('moment', ey.Mp, 0)} / ${fmt.n('moment', ey.Mn, 0)}`} sub={fmt.l('moment')} />
+        <Kpi label="Cortante en X (+) / (−)" value={`${fmt.n('force', ex.Vp, 0)} / ${fmt.n('force', ex.Vn, 0)}`} sub={fmt.l('force')} />
+        <Kpi label="Cortante en Y (+) / (−)" value={`${fmt.n('force', ey.Vp, 0)} / ${fmt.n('force', ey.Vn, 0)}`} sub={fmt.l('force')} />
+      </div>
+      {(['x', 'y'] as const).map((d) => (
+        <React.Fragment key={d}>
+          <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingDiagramSvg(data, res, { dir: d, kind: 'M', W: 820, theme, fmt, combo }) }} /></div>
+          <div className="draw"><div dangerouslySetInnerHTML={{ __html: footingDiagramSvg(data, res, { dir: d, kind: 'V', W: 820, theme, fmt, combo }) }} /></div>
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
 function FootingArmado({ data, res, theme }: { data: FootingInput; res: FootingResults; theme: typeof LIGHT }) {
   const { fmt } = useUnits();
   return (
