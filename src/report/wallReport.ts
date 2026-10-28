@@ -248,7 +248,8 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
         `As,req = ${f(s0.AsReq, 2)} cm²/m ;  As,mín = ${f(s0.AsMin, 2)} cm²/m ;  As,diseño = ${f(s0.AsDes, 2)} cm²/m`,
         `Armado vertical: ${st.base.text} → As = ${f(st.base.asProv, 2)} cm²/m ;  φMn = ${u('lmoment', s0.phiMn, 2)}`,
         `Cortante a d de la base: Vu = ${u('lforce', st.critical.Vu, 2)} ;  φVc = ${u('lforce', st.critical.phiVc, 2)}  (relación ${f(st.critical.ratio, 2)})`,
-        `Armado horizontal: ρh = ${st.rhoH.toFixed(4)} → ${st.horizontalDet.text} (⅔ en la cara frontal)${st.masonry ? '' : '; vertical en la cara frontal: ' + st.frontVertDet.text}`,
+        `Capas de acero vertical: ${st.layers}${st.centered ? ' (barra centrada en la celda, d = t/2)' : st.layers === 2 && st.masonry ? ' (d medido a la barra del lado del relleno; la capa frontal se desprecia en flexión)' : ''}; separación ${st.vertAuto ? 'calculada' : 'elegida'}`,
+        st.horizOn ? `Armado horizontal: ρh,mín = ${st.rhoH.toFixed(4)} → As = ${f(st.AsH, 2)} cm²/m → ${st.horizontalDet.text}${st.horizLayers === 2 ? ' en cada cara' : ''} (${st.horizAuto ? 'separación calculada' : 'separación elegida'})${st.layers === 2 && !st.masonry ? '; vertical en la cara frontal: ' + st.frontVertDet.text : ''}` : 'Sin barras horizontales (no se cubre el acero mínimo de retracción y temperatura).',
         `Anclaje en la zapata: ldh = ${f(st.anchorage.ldh, 2)} m  ${st.anchorage.ok ? '≤' : '>'}  disponible ${f(st.anchorage.available, 2)} m`,
       ],
       'Cálculo en la base',
@@ -401,9 +402,10 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   d.h1('Resumen del armado');
   const rows: string[][] = [];
   if (des.stem) {
-    rows.push(['Pantalla: vertical (cara del relleno)', des.stem.base.text, f(des.stem.base.asProv, 2), des.stem.cutNote]);
-    rows.push(['Pantalla: horizontal', des.stem.horizontalDet.text + ' (cara frontal)', f(des.stem.horizontalDet.asProv, 2), 'Un tercio en la cara del relleno']);
-    if (!des.stem.masonry) rows.push(['Pantalla: vertical (cara frontal)', des.stem.frontVertDet.text, f(des.stem.frontVertDet.asProv, 2), 'Acero mínimo']);
+    const st2 = des.stem;
+    rows.push([st2.centered ? 'Pantalla: vertical (barra al centro de la celda)' : st2.layers === 2 ? 'Pantalla: vertical (cara del relleno)' : 'Pantalla: vertical (una capa, cara del relleno)', st2.base.text, f(st2.base.asProv, 2), st2.cutNote]);
+    if (st2.layers === 2) rows.push(['Pantalla: vertical (cara frontal)', st2.masonry ? st2.base.text : st2.frontVertDet.text, f((st2.masonry ? st2.base : st2.frontVertDet).asProv, 2), st2.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero mínimo']);
+    rows.push([`Pantalla: horizontal${st2.horizOn && st2.horizLayers === 2 ? ' (cada cara)' : ''}`, st2.horizontalDet.text, st2.horizOn ? f(st2.horizontalDet.asProv * st2.horizLayers, 2) : '—', st2.horizOn ? `Requerido ${f(st2.AsH, 2)} cm²/m` : 'Sin barras horizontales']);
   }
   if (des.toe) rows.push([`Pie (cara ${des.toe.face}) — transversal`, des.toe.det.text, f(des.toe.det.asProv, 2), 'Perpendicular al muro']);
   if (des.toe?.opp) rows.push([`Pie (cara ${des.toe.opp.face}) — transversal`, des.toe.opp.det.text, f(des.toe.opp.det.asProv, 2), `Cara opuesta; Mu = ${u('lmoment', des.toe.opp.Mu, 1)}`]);

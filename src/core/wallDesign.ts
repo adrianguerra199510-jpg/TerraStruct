@@ -128,6 +128,17 @@ export interface StemDesign {
   critical: { y: number; d: number; Vu: number; phiVc: number; ratio: number; formula: string };
   anchorage: { ldh: number; ld: number; available: number; ok: boolean };
   masonry?: boolean;
+  /** capas de acero vertical (1 o 2 caras); en mampostería con 1 capa la barra va centrada en la celda */
+  layers: 1 | 2;
+  centered: boolean;
+  vertAuto: boolean;
+  /** relación acero requerido / adoptado en la base (vertical) */
+  vertRatio: number;
+  horizOn: boolean;
+  horizAuto: boolean;
+  horizLayers: number;
+  /** relación acero horizontal requerido / adoptado */
+  horizRatio: number;
   governing: 'estático' | 'sísmico';
   sectionOk: boolean;
 }
@@ -431,7 +442,12 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     const asDes = asDesign(asReq, asMinF, asMinW);
     secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, Vu, AsReq: asReq, AsMin: Math.max(asMinF, asMinW), AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
-  const base = chooseSpacing(secs[0].AsDes, bar, Math.min(3 * secs[0].t, 0.45));
+  const layers = m.stemLayers;
+  const vertAuto = !(m.stemVertS > 0);
+  const base: Detailing = vertAuto
+    ? chooseSpacing(secs[0].AsDes, bar, Math.min(3 * secs[0].t, 0.45))
+    : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
+  const vertRatio = secs[0].AsDes / Math.max(base.asProv, 1e-9);
   for (const s of secs) {
     s.phiMn = flexureCapacity(base.asProv, 1, s.d, m.fc, m.fy);
   }
@@ -464,14 +480,21 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const rhoH = rhoHorizMin(barH.db, m.fy);
   const AsH = rhoH * tAvg * 1e4;
   const rhoV = rhoVertMin(bar.db, m.fy);
-  const front = chooseSpacing(0.5 * rhoV * tAvg * 1e4, barH, 0.45);
-  const hDet = chooseSpacing(AsH * (2 / 3), barH, 0.45);
+  const front: Detailing = layers === 2 ? chooseSpacing(0.5 * rhoV * tAvg * 1e4, barH, 0.45) : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
+  const horizAuto = !(m.horizS > 0);
+  const hDet: Detailing = !m.horizOn
+    ? { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true }
+    : horizAuto
+      ? chooseSpacing(AsH / layers, barH, 0.45)
+      : { text: `${barH.id} @ ${(m.horizS * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing: m.horizS, asProv: barH.area / m.horizS, ok: true };
+  const horizRatio = m.horizOn ? AsH / Math.max(hDet.asProv * layers, 1e-9) : Infinity;
   // Anclaje de las barras de la pantalla en la zapata
   const ld = developmentLength(bar.db, m.fy, m.fc, { lambda: m.lambda });
   const ldh = hookDevelopment(bar.db, m.fy, m.fc, m.lambda);
   const avail = g.hb - m.coverFound;
   return {
     sections: secs, bar, barH, base, yCut, cutNote, AsH, horizontalDet: hDet, frontVertDet: front, rhoV, rhoH,
+    layers, centered: false, vertAuto, vertRatio, horizOn: m.horizOn, horizAuto, horizLayers: layers, horizRatio,
     critical: { y: yCrit, d: dC, Vu, phiVc, ratio: Vu / phiVc, formula: cap.formula },
     anchorage: { ldh, ld, available: avail, ok: avail >= ldh },
     governing: seismicGov ? 'sísmico' : 'estático',
@@ -517,13 +540,14 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
   const bar = findBar(m.barStem);
   const barH = findBar(m.barStemH);
   const N = 20;
+  const layers = m.stemLayers;
   const secs: StemSection[] = [];
   let seismicGov = false;
   for (let k = 0; k <= N; k++) {
     const y = (inp.H * k) / N;
     const L = sectionLoad(g, lat, y);
     const t = g.stemT(y);
-    const d = t / 2; // barra centrada en la celda del bloque
+    const d = layers === 1 ? t / 2 : t - 0.05 - bar.db / 2000; // 1 capa: barra centrada en la celda; 2 capas: barra del lado del relleno
     const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur;
     const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0;
     const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur;
@@ -536,7 +560,9 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     const asDes = Math.max(asReq, asMinW);
     secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, Vu: Math.max(Vst, Vse), AsReq: asReq, AsMin: asMinW, AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
-  const base = chooseSpacingModule(secs[0].AsDes, bar);
+  const vertAuto = !(m.stemVertS > 0);
+  const base: Detailing = vertAuto ? chooseSpacingModule(secs[0].AsDes, bar) : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(0)} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
+  const vertRatio = secs[0].AsDes / Math.max(base.asProv, 1e-9);
   for (const s of secs) {
     const a = (base.asProv * 1e-4 * m.fy) / (0.8 * m.fm * 1000);
     s.phiMn = PHI_FLEX * base.asProv * 1e-4 * m.fy * (s.d - a / 2) * 1000;
@@ -573,12 +599,17 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
   const phiVn = 0.8 * Math.min(Vnm, VnMax);
   const rhoH = 0.0007;
   const AsH = rhoH * ((inp.tTop + inp.tBot) / 2) * 1e4;
-  const hDet = chooseSpacingModule(AsH, barH, 0.2, 1.2);
+  const horizAuto = !(m.horizS > 0);
+  const hDet: Detailing = !m.horizOn
+    ? { text: 'No se coloca', spacing: 0.4, asProv: 0, ok: true }
+    : horizAuto ? chooseSpacingModule(AsH, barH, 0.2, 1.2) : { text: `${barH.id} @ ${(m.horizS * 100).toFixed(0)} cm`, spacing: m.horizS, asProv: barH.area / m.horizS, ok: true };
+  const horizRatio = m.horizOn ? AsH / Math.max(hDet.asProv, 1e-9) : Infinity;
   const ld = developmentLength(bar.db, m.fy, m.fc, { lambda: m.lambda });
   const ldh = hookDevelopment(bar.db, m.fy, m.fc, m.lambda);
   return {
     sections: secs, bar, barH, base, yCut, cutNote, AsH, horizontalDet: hDet,
-    frontVertDet: { text: '—', spacing: 0, asProv: 0, ok: true }, rhoV: 0.0007, rhoH,
+    frontVertDet: layers === 2 ? base : { text: 'No se coloca', spacing: 0, asProv: 0, ok: true }, rhoV: 0.0007, rhoH,
+    layers, centered: layers === 1, vertAuto, vertRatio, horizOn: m.horizOn, horizAuto, horizLayers: 1, horizRatio,
     critical: { y: yCrit, d: d0, Vu, phiVc: phiVn, ratio: Vu / phiVn, formula: 'φVn = 0.8·[(4.0 − 1.75·Mu/(Vu·dv))·An·√f′m] (TMS 402 SD, simplificado)' },
     anchorage: { ldh, ld, available: g.hb - m.coverFound, ok: g.hb - m.coverFound >= ldh },
     masonry: true, governing: seismicGov ? 'sísmico' : 'estático',

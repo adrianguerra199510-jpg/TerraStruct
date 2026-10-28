@@ -1,0 +1,23 @@
+import { chromium } from 'playwright';
+const out = process.argv[2];
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome' });
+const page = await b.newPage({ viewport: { width: 1500, height: 950 } });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:4173/');
+await page.getByText('Mampostería reforzada en voladizo').click();
+const sel = (label) => page.locator('.field', { has: page.locator(`label:text-is("${label}")`) }).locator('select');
+await page.locator('summary', { hasText: 'Materiales y armado' }).click();
+const shot = async (name) => { await page.getByRole('tab', { name: /Armado/ }).click(); await page.waitForTimeout(400); await page.screenshot({ path: `${out}/${name}.png`, clip: { x: 760, y: 140, width: 740, height: 760 } }); };
+await sel('Tipo de bloque').selectOption('6'); await shot('stem-6');
+console.log('6in layers select present:', await sel('Capas de acero vertical').count());
+await sel('Tipo de bloque').selectOption('12');
+await sel('Capas de acero vertical').selectOption('2');
+await sel('Separación de las barras verticales').selectOption('0.4');
+await sel('Separación de las barras horizontales').selectOption('0.6'); await shot('stem-12-2c');
+// concreto, 1 capa, sin horizontales
+await page.locator('.nav-btn', { hasText: 'Inicio' }).click();
+await page.getByText('Voladizo de concreto armado').click();
+await page.locator('summary', { hasText: 'Materiales y armado' }).click();
+await sel('Capas de acero vertical').selectOption('1');
+await page.locator('label.check', { hasText: 'Con barras horizontales' }).click(); await shot('stem-conc-1c-nohoriz');
+await b.close();

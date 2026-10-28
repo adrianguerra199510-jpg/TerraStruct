@@ -152,29 +152,41 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     const pt = (x: number, y: number) => ({ x: X(x), y: Y(y) });
     const dot = (x: number, y: number, c: string) => `<circle cx="${X(x).toFixed(1)}" cy="${Y(y).toFixed(1)}" r="3" fill="${c}"/>`;
     if (st) {
-      const xb0 = g.stemBackX(0) - cov, xb1 = g.stemBackX(inp.H) - cov;
-      const hook = Math.max(Math.min(st.anchorage.ldh, xb0 - covF - 0.02), 0.1);
-      // barra principal del dorso con gancho hacia el pie
-      s += polyline([pt(xb1, g.yTop - cov), pt(xb0, covF + 0.035), pt(xb0 - hook, covF + 0.035)], MAIN, 3.2);
-      // barras de la cara frontal con gancho hacia el talón
-      const xf0 = g.stemFrontX(0) + cov, xf1 = g.stemFrontX(inp.H) + cov;
-      const hk2 = Math.max(Math.min(0.25, xb0 - xf0 - 0.06), 0.08);
-      s += polyline([pt(xf1, g.yTop - cov), pt(xf0, covF + 0.075), pt(xf0 + hk2, covF + 0.075)], SKIN, 2.6);
+      const masonry = !!st.masonry;
+      const c0 = masonry ? 0.05 : cov; // distancia del eje de la barra a la cara
+      const bx = (y: number) => g.stemBackX(y) - c0;
+      const fxs = (y: number) => g.stemFrontX(y) + c0;
+      const mid = (y: number) => (g.stemBackX(y) + g.stemFrontX(y)) / 2;
+      const xv = (y: number) => (st.centered ? mid(y) : bx(y)); // barra vertical principal
+      const hook = Math.max(Math.min(st.anchorage.ldh, xv(0) - covF - 0.02), 0.1);
+      // barra vertical principal (una sola si hay una capa; del lado del relleno si hay dos)
+      s += polyline([pt(xv(inp.H), g.yTop - cov), pt(xv(0), covF + 0.035), pt(xv(0) - hook, covF + 0.035)], MAIN, 3.2);
+      // segunda capa: barra de la cara frontal
+      if (st.layers === 2) {
+        const hk2 = Math.max(Math.min(0.25, xv(0) - fxs(0) - 0.06), 0.08);
+        s += polyline([pt(fxs(inp.H), g.yTop - cov), pt(fxs(0), covF + 0.075), pt(fxs(0) + hk2, covF + 0.075)], SKIN, 2.6);
+      }
       if (st.yCut) {
         const yc = g.hb + st.yCut;
-        const xc = g.stemBackX(st.yCut) - cov;
+        const xc = xv(st.yCut);
         s += polyline([pt(xc - 0.05, yc), pt(xc + 0.05, yc)], th.ink, 2);
         s += text(X(xc) + 12, Y(yc) + 4, 'la mitad de las barras se corta aquí', { size: 10, fill: th.muted, halo });
       }
       const ym = g.hb + inp.H * 0.55;
-      s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym), `Vertical ${st.base.text}`, { size: 11, fill: MAIN, weight: 700, halo });
-      if (!st.masonry) s += text(X(g.stemFrontX(inp.H * 0.55)) - 10, Y(ym) - 2, `Vertical ${st.frontVertDet.text}`, { size: 11, fill: SKIN, weight: 700, anchor: 'end', halo });
-      s += text(X(g.stemFrontX(inp.H * 0.55)) - 10, Y(ym) + 13, `Horizontal ${st.horizontalDet.text}`, { size: 11, fill: DIST, weight: 700, anchor: 'end', halo });
-      // barras horizontales (puntos) en ambas caras
-      const sp = Math.max(st.horizontalDet.spacing, 0.15);
-      for (let y = 0.2; y < inp.H - 0.1; y += sp) {
-        s += dot(g.stemBackX(y) - cov - 0.035, g.hb + y, DIST);
-        s += dot(g.stemFrontX(y) + cov + 0.035, g.hb + y, DIST);
+      const vtxt = `Vertical ${st.base.text}${st.centered ? ' (al centro)' : st.layers === 2 ? ' (cada cara)' : ''}`;
+      s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym), vtxt, { size: 11, fill: MAIN, weight: 700, halo });
+      if (st.horizOn) s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym) + 14, `Horizontal ${st.horizontalDet.text}${st.horizLayers === 2 ? ' (cada cara)' : ''}`, { size: 11, fill: DIST, weight: 700, halo });
+      else s += text(X(g.stemBackX(inp.H * 0.55)) + 14, Y(ym) + 14, 'Sin barras horizontales', { size: 11, fill: th.muted, weight: 700, halo });
+      // barras horizontales (puntos) según capas y separación
+      if (st.horizOn) {
+        const sp = Math.max(st.horizontalDet.spacing, 0.12);
+        for (let y = 0.2; y < inp.H - 0.1; y += sp) {
+          if (st.centered) s += dot(mid(y) + 0.03, g.hb + y, DIST);
+          else if (st.layers === 2) {
+            s += dot(bx(y) - 0.035, g.hb + y, DIST);
+            s += dot(fxs(y) + 0.035, g.hb + y, DIST);
+          } else s += dot(bx(y) - 0.035, g.hb + y, DIST);
+        }
       }
     }
     // zapata: barras principales y de reparto
@@ -223,7 +235,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     // leyenda
     const ly = 44;
     s += polyline([{ x: 16, y: ly }, { x: 46, y: ly }], MAIN, 3.2) + text(54, ly + 4, 'Armadura principal (tracción)', { size: 10.5, fill: th.ink });
-    s += polyline([{ x: 16, y: ly + 16 }, { x: 46, y: ly + 16 }], SKIN, 2.6) + text(54, ly + 20, 'Armadura de la cara frontal', { size: 10.5, fill: th.ink });
+    s += polyline([{ x: 16, y: ly + 16 }, { x: 46, y: ly + 16 }], SKIN, 2.6) + text(54, ly + 20, 'Segunda capa (cara frontal)', { size: 10.5, fill: th.ink });
     s += `<circle cx="31" cy="${ly + 32}" r="3" fill="${DIST}"/>` + text(54, ly + 36, 'Armadura horizontal / de reparto (en sección)', { size: 10.5, fill: th.ink });
   }
 

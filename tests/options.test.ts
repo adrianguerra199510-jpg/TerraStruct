@@ -57,3 +57,39 @@ describe('mampostería reforzada según el bloque', () => {
     expect(mk('12')).toBeLessThan(mk('6'));
   });
 });
+
+describe('armadura de la pantalla elegible', () => {
+  it('bloque de 6″: una sola capa aunque se pida dos', () => {
+    const w = defaultWall('masonryReinforced');
+    w.block = '6'; w.mat.stemLayers = 2;
+    const r = analyzeWall(w);
+    expect(r.design.stem!.layers).toBe(1);
+    expect(r.design.stem!.centered).toBe(true);
+  });
+  it('bloque de 8″ con dos capas usa d mayor que al centro', () => {
+    const w1 = defaultWall('masonryReinforced'); w1.block = '8'; w1.mat.stemLayers = 1;
+    const w2 = defaultWall('masonryReinforced'); w2.block = '8'; w2.mat.stemLayers = 2;
+    expect(analyzeWall(w2).design.stem!.sections[0].d).toBeGreaterThan(analyzeWall(w1).design.stem!.sections[0].d);
+  });
+  it('separación vertical elegida se respeta y se verifica', () => {
+    const w = defaultWall('masonryReinforced');
+    w.mat.stemVertS = 1.2;
+    const r = analyzeWall(w);
+    expect(r.design.stem!.base.spacing).toBeCloseTo(1.2, 9);
+    expect(r.design.stem!.vertRatio).toBeGreaterThan(0);
+  });
+  it('muro de concreto: una capa y sin horizontales', () => {
+    const w = defaultWall('cantilever');
+    w.mat.stemLayers = 1; w.mat.horizOn = false; w.mat.horizS = 0;
+    const r = analyzeWall(w);
+    expect(r.design.stem!.frontVertDet.asProv).toBe(0);
+    expect(r.design.stem!.horizOn).toBe(false);
+    expect(r.warnings.some((x) => /horizontales/.test(x))).toBe(true);
+  });
+  it('separación horizontal elegida muy grande no cumple el mínimo', () => {
+    const w = defaultWall('cantilever');
+    w.mat.horizS = 0.6;
+    const r = analyzeWall(w);
+    expect(r.design.stem!.horizRatio).toBeGreaterThan(1);
+  });
+});

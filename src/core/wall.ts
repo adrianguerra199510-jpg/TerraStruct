@@ -57,6 +57,11 @@ export function analyzeWall(input: WallInput): WallResults {
     add({ group: 'Estructural', name: 'Pantalla: flexión', ratio: worst, detail: `Acero ${d.stem.base.text} en la base`, ok: d.stem.sections.every((s) => s.ok) && worst <= 1.0001 });
     add({ group: 'Estructural', name: 'Pantalla: cortante', ratio: d.stem.critical.ratio, detail: `Vu = ${d.stem.critical.Vu.toFixed(1)} kN/m, φVc = ${d.stem.critical.phiVc.toFixed(1)} kN/m`, ok: d.stem.critical.ratio <= 1 });
   }
+  if (d.stem) {
+    add({ group: 'Estructural', name: 'Pantalla: acero vertical adoptado', ratio: d.stem.vertRatio, detail: `${d.stem.base.text}${d.stem.layers === 2 ? ' en cada cara' : d.stem.centered ? ' (barra centrada)' : ''}`, ok: d.stem.vertRatio <= 1.0001 });
+    if (d.stem.horizOn) add({ group: 'Estructural', name: 'Pantalla: acero horizontal mínimo', ratio: d.stem.horizRatio, detail: `${d.stem.horizontalDet.text}${d.stem.horizLayers === 2 ? ' en cada cara' : ''} (ρ mín. ${d.stem.rhoH})`, ok: d.stem.horizRatio <= 1.0001 });
+    else warnings.push('Sin barras horizontales en la pantalla: no se cubre el acero mínimo de retracción y temperatura.');
+  }
   if (d.toe) {
     add({ group: 'Estructural', name: 'Pie: flexión', ratio: d.toe.ratioM, detail: `Mu = ${d.toe.Mu.toFixed(1)} kN·m/m (cara ${d.toe.face})`, ok: d.toe.sectionOk && d.toe.ratioM <= 1 });
     add({ group: 'Estructural', name: 'Pie: cortante', ratio: d.toe.ratioV, detail: `Vu = ${d.toe.Vu.toFixed(1)} kN/m`, ok: d.toe.ratioV <= 1 });

@@ -107,6 +107,11 @@ export interface WallInput {
     barToe: string;
     barKey: string;
     /** barras longitudinales de la zapata (paralelas al muro) */
+    /** pantalla: capas de acero vertical (1 o 2 caras), separación vertical (0 = automática), barras horizontales y su separación (0 = automática) */
+    stemLayers: 1 | 2;
+    stemVertS: number;
+    horizOn: boolean;
+    horizS: number;
     footLong: boolean;
     barLong: string;
     /** acero transversal también en la cara opuesta de pie y talón */
@@ -176,6 +181,10 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       barHeel: '#5',
       barToe: '#5',
       barKey: '#5',
+      stemLayers: 2,
+      stemVertS: 0,
+      horizOn: true,
+      horizS: 0,
       footLong: true,
       barLong: '#4',
       footOpp: false,
@@ -211,6 +220,8 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       break;
     case 'masonryReinforced':
       Object.assign(base, { H: 2.4, tTop: 0.2, tBot: 0.2, Lt: 0.6, Lh: 1.5, hb: 0.4, hbTip: 0.4, block: '8' });
+      base.mat.stemLayers = 1;
+      base.mat.horizS = 0.4;
       base.mat.barStem = '#5';
       break;
     default:
@@ -228,7 +239,8 @@ export const isGabion = (t: WallType) => t === 'gabion';
 export function normalizeWall(w: WallInput): WallInput {
   if (w.type === 'masonryReinforced') {
     const t = blockThickness(w.block);
-    return { ...w, tTop: t, tBot: t, stemFace: 'front', fb: 0 };
+    // con bloque de 6″ solo cabe una barra al centro de la celda
+    return { ...w, tTop: t, tBot: t, stemFace: 'front', fb: 0, mat: { ...w.mat, stemLayers: w.block === '6' ? 1 : w.mat.stemLayers } };
   }
   if (w.type !== 'gabion') return w;
   const g = w.gab;

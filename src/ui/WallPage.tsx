@@ -12,6 +12,8 @@ import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 import { CaseResult } from '../core/wallStability';
 
+const SPACINGS = [{ id: '0', label: 'Automática' }, ...[0.2, 0.4, 0.6, 0.8, 1.0, 1.2].map((v) => ({ id: String(v), label: `${v * 100} cm` }))];
+
 type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'armado' | 'memoria';
 
 export function WallPage({ data, onChange, theme, info }: { data: WallInput; onChange: (w: WallInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
@@ -213,6 +215,29 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                 <Sel label="Pie" value={data.mat.barToe} onChange={(v) => setMat({ barToe: v })} options={bars} />
                 {data.key.enabled && <Sel label="Llave" value={data.mat.barKey} onChange={(v) => setMat({ barKey: v })} options={bars} />}
               </div>
+              {(t === 'cantilever' || t === 'masonryReinforced') && (
+                <>
+                  <div className="hint"><b>Armadura de la pantalla</b></div>
+                  <div className="grid2">
+                    {t === 'masonryReinforced' && data.block === '6' ? (
+                      <div className="hint" style={{ alignSelf: 'end' }}>Bloque de 6″: solo cabe una barra vertical, al centro de la celda.</div>
+                    ) : (
+                      <Sel label="Capas de acero vertical" value={String(data.mat.stemLayers)} onChange={(v) => setMat({ stemLayers: v === '2' ? 2 : 1 })} options={[{ id: '1', label: t === 'masonryReinforced' ? 'Una capa (barra al centro)' : 'Una capa (cara del relleno)' }, { id: '2', label: 'Dos capas (ambas caras)' }]} />
+                    )}
+                    {t === 'masonryReinforced' ? (
+                      <Sel label="Separación de las barras verticales" value={String(data.mat.stemVertS)} onChange={(v) => setMat({ stemVertS: parseFloat(v) })} options={SPACINGS} />
+                    ) : (
+                      <Num label="Separación vertical (0 = automática)" q="lencm" value={data.mat.stemVertS} onChange={(v) => setMat({ stemVertS: v })} min={0} hint="Se verifica con el momento" />
+                    )}
+                  </div>
+                  <Check label="Con barras horizontales" value={data.mat.horizOn} onChange={(v) => setMat({ horizOn: v })} hint={t === 'masonryReinforced' ? 'Vigas de amarre en las hiladas' : 'Retracción y temperatura'} />
+                  {data.mat.horizOn && (t === 'masonryReinforced' ? (
+                    <Sel label="Separación de las barras horizontales" value={String(data.mat.horizS)} onChange={(v) => setMat({ horizS: parseFloat(v) })} options={SPACINGS} />
+                  ) : (
+                    <Num label="Separación horizontal (0 = automática)" q="lencm" value={data.mat.horizS} onChange={(v) => setMat({ horizS: v })} min={0} hint="Por capa" />
+                  ))}
+                </>
+              )}
               <div className="hint"><b>Armado de la zapata</b></div>
               <Check label="Acero transversal también en la cara opuesta (pie y talón)" value={data.mat.footOpp} onChange={(v) => setMat({ footOpp: v })} hint="Sin él solo se arma la cara en tracción" />
               <Check label="Acero longitudinal (paralelo al muro)" value={data.mat.footLong} onChange={(v) => setMat({ footLong: v })} hint="Reparto y retracción, mitad por cara" />
@@ -390,9 +415,9 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
         <Card title={d.stem.masonry ? 'Pantalla de mampostería reforzada' : 'Pantalla'} icon={<Layers size={18} />}>
           <div className="stack">
             <div className="kpis">
-              <Kpi label="Armado vertical (cara del relleno)" value={d.stem.base.text} sub={`As = ${d.stem.base.asProv.toFixed(2)} cm²/m`} />
-              <Kpi label="Horizontal" value={d.stem.horizontalDet.text} sub={`Total ${d.stem.AsH.toFixed(2)} cm²/m (⅔ cara frontal)`} />
-              {!d.stem.masonry && <Kpi label="Vertical cara frontal" value={d.stem.frontVertDet.text} />}
+              <Kpi label={d.stem.centered ? 'Armado vertical (al centro)' : d.stem.layers === 2 ? 'Armado vertical (cada cara)' : 'Armado vertical (cara del relleno)'} value={d.stem.base.text} sub={`As = ${d.stem.base.asProv.toFixed(2)} cm²/m${d.stem.vertAuto ? ' · automático' : ' · elegido'}`} />
+              <Kpi label={`Horizontal${d.stem.horizOn && d.stem.horizLayers === 2 ? ' (cada cara)' : ''}`} value={d.stem.horizontalDet.text} sub={d.stem.horizOn ? `Requerido ${d.stem.AsH.toFixed(2)} cm²/m` : 'Sin barras horizontales'} />
+              {!d.stem.masonry && d.stem.layers === 2 && <Kpi label="Vertical cara frontal" value={d.stem.frontVertDet.text} />}
               <Kpi label="Cortante crítico" value={`${(d.stem.critical.ratio * 100).toFixed(0)} %`} sub={`Vu ${fmt.n('lforce', d.stem.critical.Vu, 1)} / φVc ${fmt.n('lforce', d.stem.critical.phiVc, 1)}`} />
             </div>
             <div className="hint">{d.stem.cutNote}</div>
@@ -505,9 +530,9 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
   const d = res.design;
   const rows: React.ReactNode[][] = [];
   if (d.stem) {
-    rows.push(['Pantalla — vertical (cara del relleno)', d.stem.base.text, d.stem.base.asProv.toFixed(2), d.stem.cutNote]);
-    rows.push(['Pantalla — horizontal (total)', d.stem.horizontalDet.text, (d.stem.horizontalDet.asProv * 1.5).toFixed(2), '⅔ en la cara frontal y ⅓ en la cara del relleno']);
-    if (!d.stem.masonry) rows.push(['Pantalla — vertical (cara frontal)', d.stem.frontVertDet.text, d.stem.frontVertDet.asProv.toFixed(2), 'Acero mínimo']);
+    rows.push([d.stem.centered ? 'Pantalla — vertical (barra al centro)' : d.stem.layers === 2 ? 'Pantalla — vertical (cara del relleno)' : 'Pantalla — vertical (una capa, cara del relleno)', d.stem.base.text, d.stem.base.asProv.toFixed(2), d.stem.cutNote]);
+    if (d.stem.layers === 2) rows.push(['Pantalla — vertical (cara frontal)', d.stem.masonry ? d.stem.base.text : d.stem.frontVertDet.text, (d.stem.masonry ? d.stem.base : d.stem.frontVertDet).asProv.toFixed(2), d.stem.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero mínimo']);
+    rows.push([`Pantalla — horizontal${d.stem.horizOn ? (d.stem.horizLayers === 2 ? ' (cada cara)' : '') : ''}`, d.stem.horizontalDet.text, d.stem.horizOn ? (d.stem.horizontalDet.asProv * d.stem.horizLayers).toFixed(2) : '—', d.stem.horizOn ? `Requerido ${d.stem.AsH.toFixed(2)} cm²/m; ${d.stem.horizAuto ? 'separación automática' : 'separación elegida'}` : 'Sin barras horizontales']);
     rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
   }
   if (d.toe) rows.push([`Pie (cara ${d.toe.face}) — transversal`, d.toe.det.text, d.toe.det.asProv.toFixed(2), 'Perpendicular al muro']);
