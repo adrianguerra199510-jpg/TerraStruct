@@ -32,6 +32,42 @@ function miterOffset(p: Poly, d: number): Poly {
   return out;
 }
 
+/**
+ * Redondea las esquinas de un polígono con arcos tangentes de radio r. El radio se limita para que los arcos de
+ * esquinas vecinas no se solapen (tangentes ≤ la mitad de cada lado). Los vértices casi colineales (p. ej. los de un
+ * círculo discretizado) no se tocan.
+ */
+export function roundCorners(p: Poly, r: number): Poly {
+  if (r <= 1e-6 || p.length < 3) return p;
+  const n = p.length;
+  const out: Poly = [];
+  for (let i = 0; i < n; i++) {
+    const A = p[(i + n - 1) % n], B = p[i], C = p[(i + 1) % n];
+    const lu = Math.hypot(A.x - B.x, A.y - B.y), lv = Math.hypot(C.x - B.x, C.y - B.y);
+    if (lu < 1e-9 || lv < 1e-9) { out.push(B); continue; }
+    const u = { x: (A.x - B.x) / lu, y: (A.y - B.y) / lu }, v = { x: (C.x - B.x) / lv, y: (C.y - B.y) / lv };
+    const cosT = Math.max(-1, Math.min(1, u.x * v.x + u.y * v.y));
+    const theta = Math.acos(cosT); // ángulo interior entre los lados
+    if (Math.PI - theta < (8 * Math.PI) / 180 || theta < 1e-3) { out.push(B); continue; }
+    const t = Math.min(r / Math.tan(theta / 2), Math.min(lu, lv) / 2);
+    const rr = t * Math.tan(theta / 2);
+    const P1 = { x: B.x + u.x * t, y: B.y + u.y * t }, P2 = { x: B.x + v.x * t, y: B.y + v.y * t };
+    const bis = { x: u.x + v.x, y: u.y + v.y };
+    const lb = Math.hypot(bis.x, bis.y) || 1;
+    const c = { x: B.x + (bis.x / lb) * (rr / Math.sin(theta / 2)), y: B.y + (bis.y / lb) * (rr / Math.sin(theta / 2)) };
+    const a1 = Math.atan2(P1.y - c.y, P1.x - c.x);
+    let d = Math.atan2(P2.y - c.y, P2.x - c.x) - a1;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    const steps = Math.max(3, Math.ceil(Math.abs(d) / ((10 * Math.PI) / 180)));
+    for (let k = 0; k <= steps; k++) {
+      const a = a1 + (d * k) / steps;
+      out.push({ x: c.x + rr * Math.cos(a), y: c.y + rr * Math.sin(a) });
+    }
+  }
+  return out;
+}
+
 const circlePoly = (cx: number, cy: number, R: number, n = 72): Poly => regularPolygon(n, R).map((v) => ({ x: v.x + cx, y: v.y + cy }));
 
 export function capGeometry(inp: PileInput, pts: Pt[]): CapGeom {
@@ -73,7 +109,7 @@ export function capGeometry(inp: PileInput, pts: Pt[]): CapGeom {
     default:
       poly = rectOf(inp, bbp);
   }
-  poly = ccw(poly);
+  poly = ccw(roundCorners(ccw(poly), c.cornerR ?? 0));
   const b = bbox(poly);
   const pp = polyProps(poly);
   return { poly, bb: { x0: b.xmin, x1: b.xmax, y0: b.ymin, y1: b.ymax, B: b.xmax - b.xmin, L: b.ymax - b.ymin }, area: pp.A, cx: pp.cx, cy: pp.cy };

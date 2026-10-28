@@ -199,6 +199,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
                 )}
               </>
             )}
+            <Num label="Radio de esquinas" q="len" value={data.cap.cornerR} onChange={(v) => setCap({ cornerR: Math.max(0, v) })} min={0} hint="0 = esquinas vivas; redondea todas las esquinas" />
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button className="btn small" title="Convierte el contorno actual en vértices que puede editar" onClick={() => res && setCap({ shape: 'poly', vertices: simplifyPoly(res.capPoly).map((q) => ({ x: +q.x.toFixed(3), y: +q.y.toFixed(3) })), dx: 0, dy: 0 })}><Shapes size={14} /> Convertir a vértices editables</button>
             </div>

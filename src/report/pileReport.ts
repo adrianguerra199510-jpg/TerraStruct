@@ -73,6 +73,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     [
       ['Forma del cabezal', CAP_SHAPES.find((c) => c.id === cap.shape)?.label ?? cap.shape],
       [cap.shape === 'rect' ? 'Dimensiones B × L' : 'Caja envolvente B × L', `${u('len', rect.B, 2)} × ${u('len', rect.L, 2)}`],
+      ...(cap.cornerR > 0 ? ([['Radio de redondeo de esquinas', u('len', cap.cornerR, 2)]] as [string, string][]) : []),
       ['Área en planta', `${f(res.capArea, 3)} m²`],
       ['Espesor h', u('len', cap.h, 2)],
       ['f′c / fy del cabezal', `${u('stress', cap.fc, 1)} / ${u('stress', cap.fy, 0)}`],
@@ -82,7 +83,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     ],
     2,
   );
-  if (cap.shape !== 'rect') {
+  if (cap.shape !== 'rect' || cap.cornerR > 0) {
     d.table(
       ['Vértice', `x (${fmt.l('len')})`, `y (${fmt.l('len')})`],
       res.capPoly.map((q, i) => [String(i + 1), n('len', q.x, 3), n('len', q.y, 3)]),

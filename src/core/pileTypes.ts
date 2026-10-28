@@ -164,6 +164,8 @@ export const CAP_SHAPES: { id: CapShape; label: string; auto: boolean }[] = [
 export interface PileCap {
   /** forma del contorno */
   shape: CapShape;
+  /** radio de redondeo de las esquinas del contorno, m (0 = esquinas vivas) */
+  cornerR: number;
   /** lados del polígono regular (shape = 'ngon') */
   nSides: number;
   /** parámetros y posición del centro de las formas definidas (L, T, trapecio, triángulo) y vértices de la forma libre */
@@ -277,7 +279,7 @@ export function defaultPileInput(kind: PileKind = 'concrete'): PileInput {
     pile: defaultPile(kind),
     layout: { mode: 'grid', nx: 2, ny: 2, sx: 1.5, sy: 1.5, nRing: 6, R: 1.2, center: false, pts: [{ x: -0.75, y: -0.75 }, { x: 0.75, y: -0.75 }, { x: 0.75, y: 0.75 }, { x: -0.75, y: 0.75 }] },
     cap: {
-      shape: 'rect', nSides: 6, preset: { ...defaultPresetParams(), B: 3, L: 3, t1: 1.2, t2: 1.2, b2: 1.5, D: 3 }, vertices: [{ x: -1.5, y: -1.5 }, { x: 1.5, y: -1.5 }, { x: 1.5, y: 1.5 }, { x: -1.5, y: 1.5 }], dx: 0, dy: 0,
+      shape: 'rect', cornerR: 0, nSides: 6, preset: { ...defaultPresetParams(), B: 3, L: 3, t1: 1.2, t2: 1.2, b2: 1.5, D: 3 }, vertices: [{ x: -1.5, y: -1.5 }, { x: 1.5, y: -1.5 }, { x: 1.5, y: 1.5 }, { x: -1.5, y: 1.5 }], dx: 0, dy: 0,
       h: 1.1, edge: 0.5, manualSize: false, B: 2.5, L: 2.5, cover: 0.075, embed: 0.075, barSystem: 'astm', barX: '#8', barY: '#8', lowerLayer: 'x',
       topSteel: false, barTopX: '#5', barTopY: '#5', manual: { on: false, sBotX: 0.15, sBotY: 0.15, sTopX: 0.2, sTopY: 0.2 },
       fc: 28, fy: 420, lambda: 1, code: 'ACI318_14', gammaC: 24, crackMesh: true,

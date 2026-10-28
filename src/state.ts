@@ -139,6 +139,7 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
         i.name = 'Cabezal CP-3';
         i.layout = standardLayout(3, 1.5);
         i.cap.shape = 'miter';
+        i.cap.cornerR = 0.4;
         i.cap.edge = 0.6;
         i.combos = i.combos.map((c) => ({ ...c, P: c.P * 0.6, My: c.My * 0.6, Vx: c.Vx * 0.6 }));
         return i;

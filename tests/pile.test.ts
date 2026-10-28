@@ -331,3 +331,41 @@ describe('ejemplos de pilotes', () => {
     for (const e of examplePiles()) expect(analyzePile(e.make()).ok, e.title).toBe(true);
   });
 });
+
+import { roundCorners } from '../src/core/pileCap';
+import { polyProps } from '../src/core/geometry';
+describe('redondeo de esquinas del cabezal', () => {
+  it('cuadrado: área = L² − (4 − π)·r²', () => {
+    const sq = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 2 }, { x: 0, y: 2 }];
+    const r = 0.4;
+    const A = polyProps(roundCorners(sq, r)).A;
+    expect(A).toBeCloseTo(4 - (4 - Math.PI) * r * r, 2);
+  });
+  it('triángulo equilátero: se quita r²·(cot(θ/2) − (π−θ)/2) por esquina', () => {
+    const i = defaultPileInput();
+    i.layout = standardLayout(3, 1.5);
+    i.cap.shape = 'miter';
+    i.cap.edge = 0.6;
+    const a0 = capGeometry(i, pilePositions(i.layout)).area;
+    i.cap.cornerR = 0.5;
+    const a1 = capGeometry(i, pilePositions(i.layout)).area;
+    const th = Math.PI / 3;
+    const removed = 3 * (0.25 / Math.tan(th / 2) - 0.125 * (Math.PI - th));
+    expect(a0 - a1).toBeCloseTo(removed, 2);
+  });
+  it('el radio se limita a la mitad de los lados y radio 0 no cambia el contorno', () => {
+    const sq = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+    const big = polyProps(roundCorners(sq, 10)).A; // se limita: círculo inscrito
+    expect(big).toBeCloseTo(Math.PI * 0.25, 1);
+    expect(roundCorners(sq, 0)).toEqual(sq);
+  });
+  it('un cabezal redondeado se analiza y mantiene los pilotes dentro', () => {
+    const i = defaultPileInput();
+    i.cap.shape = 'rect';
+    i.cap.cornerR = 0.3;
+    const r = analyzePile(i);
+    expect(r.capArea).toBeLessThan(2.5 * 2.5);
+    expect(r.checks.find((c) => /distancia al borde/.test(c.name))!.ok).toBe(true);
+    expect(r.capPoly.length).toBeGreaterThan(8);
+  });
+});
