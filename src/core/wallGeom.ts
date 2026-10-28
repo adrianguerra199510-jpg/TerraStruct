@@ -3,7 +3,7 @@ import { WallInput, isCounterfort, cfInternal, cfExternal, isMasonryStem, gabion
 import { rad } from './earth';
 
 export interface WallPart {
-  id: 'stem' | 'base' | 'key' | 'cf';
+  id: 'stem' | 'base' | 'key' | 'cf' | 'beam';
   name: string;
   poly: Poly;
   /** peso unitario del material, kN/m³ */
@@ -147,6 +147,21 @@ export function buildWallGeom(inp: WallInput): WallGeom {
   const course = (y: number) => Math.min(Math.max(Math.floor((y + 1e-7) / inp.gab.hc), 0), gw.length - 1);
   const xFrontAt = (y: number) => (isGab ? gFront(course(y)) : xFb + ((xFt - xFb) * y) / inp.H);
   const xBackAt = (y: number) => (isGab ? gBack(course(y)) : xBb + ((xBt - xBb) * y) / inp.H);
+
+  // Vigas corona de concreto (entre contrafuertes): continuas a lo largo del muro
+  if (isCounterfort(inp.type)) {
+    (inp.beams ?? []).forEach((bm, i) => {
+      const yTop = Math.min(Math.max(bm.y, bm.h), inp.H);
+      const yBot = yTop - bm.h;
+      const xm = (xFrontAt(yTop - bm.h / 2) + xBackAt(yTop - bm.h / 2)) / 2;
+      const poly = ccw([{ x: xm - bm.b / 2, y: hb + yBot }, { x: xm + bm.b / 2, y: hb + yBot }, { x: xm + bm.b / 2, y: hb + yTop }, { x: xm - bm.b / 2, y: hb + yTop }]);
+      // se descuenta la mampostería (o concreto) que la viga reemplaza dentro del espesor de la pantalla
+      const tHere = xBackAt(yTop - bm.h / 2) - xFrontAt(yTop - bm.h / 2);
+      const overlap = Math.min(bm.b, tHere) / Math.max(bm.b, 1e-9);
+      const gamma = concreteGamma - overlap * stemGamma;
+      parts.push(partOf('beam', `Viga corona ${i + 1}`, poly, gamma, 1));
+    });
+  }
 
   return {
     inp, B, hb, hbTip, xFb, xBb, xFt, xBt, yTop, psiDeg, surfaceY, yPlane, parts, stemPoly, basePoly, keyPoly, cfPoly,

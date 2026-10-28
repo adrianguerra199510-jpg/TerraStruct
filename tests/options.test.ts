@@ -168,3 +168,57 @@ describe('gancho de las barras de la pantalla', () => {
     expect(stemHookSide(analyzeWall(v).geom)).toBe(-1);
   });
 });
+
+import { defaultCrownBeam } from '../src/core/wallTypes';
+describe('vigas corona y flexión vertical', () => {
+  it('la viga corona se calcula con su franja tributaria y las fórmulas de viga continua', () => {
+    const w = defaultWall('counterfortExt');
+    w.beams = [defaultCrownBeam(w.H, w.tBot)];
+    const r = analyzeWall(w);
+    const c = r.design.counterfort!;
+    const b = c.beams[0];
+    expect(b.Mneg).toBeCloseTo((b.w * c.Ls ** 2) / 12, 9);
+    expect(b.Mpos).toBeCloseTo((b.w * c.Ls ** 2) / 16, 9);
+    expect(b.Vu).toBeCloseTo(b.w * (c.Ls / 2 - (b.dBack + b.dFront) / 2), 6);
+    expect(b.hi).toBeCloseTo(w.H, 9);
+    expect(b.lo).toBeCloseTo((w.H - b.h / 2) / 2, 9);
+    expect(r.checks.some((k) => /Viga corona 1/.test(k.name))).toBe(true);
+  });
+  it('varias vigas: la franja tributaria se reparte entre ellas y la suma cubre la altura', () => {
+    const w = defaultWall('masonryCfInt');
+    w.beams = [defaultCrownBeam(w.H, w.tBot), defaultCrownBeam(w.H * 0.5, w.tBot), defaultCrownBeam(w.H * 0.25, w.tBot)];
+    const bs = analyzeWall(w).design.counterfort!.beams;
+    const sum = bs.reduce((a, b) => a + b.trib, 0);
+    // desde la mitad de la viga inferior hasta la corona; lo que queda debajo lo recibe la zapata
+    expect(sum).toBeCloseTo(w.H - Math.min(...bs.map((b) => b.yc)) / 2, 6);
+  });
+  it('el armado sugerido cumple', () => {
+    const w = defaultWall('counterfortExt');
+    w.beams = [{ ...defaultCrownBeam(w.H * 0.5, 0.4), b: 0.4, h: 0.3 }];
+    const sug = analyzeWall(w).design.counterfort!.beams[0].suggest;
+    w.beams[0] = { ...w.beams[0], nBack: sug.nBack, nFront: sug.nFront, stirS: sug.stirS, barBack: '#8', barFront: '#8' };
+    const sug2 = analyzeWall(w).design.counterfort!.beams[0].suggest;
+    w.beams[0] = { ...w.beams[0], nBack: sug2.nBack, nFront: sug2.nFront, stirS: sug2.stirS };
+    expect(analyzeWall(w).design.counterfort!.beams[0].ok).toBe(true);
+  });
+  it('agregar una viga aumenta el peso y aparece en la geometría; una viga dentro del espesor suma poco', () => {
+    const w0 = defaultWall('masonryCfInt');
+    const w1 = { ...w0, beams: [defaultCrownBeam(w0.H, w0.tBot)] };
+    const r0 = analyzeWall({ ...w0, beams: [] }), r1 = analyzeWall(w1);
+    expect(r1.weightWall).toBeGreaterThan(r0.weightWall);
+    expect(r1.geom.parts.some((p) => p.id === 'beam')).toBe(true);
+  });
+  it('flexión vertical de la pantalla: máx. en la base y decrece con la altura', () => {
+    const c = analyzeWall(defaultWall('counterfortInt')).design.counterfort!;
+    expect(c.vertical[0].Mu).toBeGreaterThan(c.vertical[5].Mu);
+    expect(c.vertical[c.vertical.length - 1].Mu).toBeCloseTo(0, 9);
+    expect(c.AsVertCalc).toBeGreaterThan(0);
+    expect(c.req.vert).toBeGreaterThanOrEqual(c.AsVertMin);
+  });
+  it('la memoria incluye vigas corona y flexión vertical', () => {
+    const w = defaultWall('masonryCfInt');
+    const txt = JSON.stringify(reportForWall(w, makeFmt('SI'), newProject().info).blocks);
+    expect(txt).toContain('Vigas corona entre contrafuertes');
+    expect(txt).toContain('Flexión vertical de la pantalla');
+  });
+});

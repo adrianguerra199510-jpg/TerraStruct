@@ -86,6 +86,27 @@ export function gabionGamma(g: GabionInput): number {
   return g.gammaStone * (1 - g.porosity);
 }
 
+/** Viga corona (de amarre) de concreto rectangular entre contrafuertes, a una altura dada de la pantalla */
+export interface CrownBeam {
+  /** altura de la cara superior de la viga sobre la cara superior de la zapata, m */
+  y: number;
+  /** dimensión en el sentido del espesor del muro (b) y en el vertical (h), m */
+  b: number;
+  h: number;
+  /** acero de la cara del relleno (apoyos, sobre los contrafuertes) y de la cara frontal (centro de la luz) */
+  nBack: number;
+  barBack: string;
+  nFront: number;
+  barFront: string;
+  /** estribos de 2 ramas */
+  stirBar: string;
+  stirS: number;
+}
+
+export function defaultCrownBeam(y: number, t: number): CrownBeam {
+  return { y, b: Math.max(t, 0.2), h: 0.2, nBack: 2, barBack: '#4', nFront: 2, barFront: '#4', stirBar: '#3', stirS: 0.2 };
+}
+
 export interface WallInput {
   name: string;
   type: WallType;
@@ -106,6 +127,8 @@ export interface WallInput {
   hbTip: number;
   key: { enabled: boolean; x: number; b: number; d: number };
   cf: { s: number; t: number; proj: number; projTop: number; rb: CounterfortRebar };
+  /** vigas corona entre contrafuertes (solo muros con contrafuertes) */
+  beams: CrownBeam[];
   gab: GabionInput;
   /** bloque de mampostería reforzada: 6", 8" o 12" */
   block: BlockType;
@@ -188,7 +211,8 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     hb: 0.5,
     hbTip: 0.5,
     key: { enabled: false, x: 1.2, b: 0.4, d: 0.5 },
-    cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0, rb: { mainBar: '#8', nMain: 8, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.3 } },
+    beams: [],
+    cf: { s: 3.0, t: 0.3, proj: 2.0, projTop: 0, rb: { mainBar: '#8', nMain: 8, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#5', stemVS: 0.25 } },
     gab: { n: 4, hc: 1.0, b0: 2.5, step: 0.5, side: 'front', gammaStone: 26, porosity: 0.3, sigmaAllow: 300, muG: 0.6, cG: 0, fsSlide: 1.5, eFrac: 1 / 3 },
     block: '8',
     Df: 1.0,
@@ -243,7 +267,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       base.cf.rb.tieSlabS = 0.1;
       break;
     case 'counterfortExt':
-      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 2.8, Lh: 3.4, hb: 0.7, hbTip: 0.7, cf: { s: 3.5, t: 0.3, proj: 2.6, projTop: 0, rb: { mainBar: '#8', nMain: 10, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.3 } }, Df: 1.0 });
+      Object.assign(base, { H: 7.0, tTop: 0.3, tBot: 0.3, Lt: 2.8, Lh: 3.4, hb: 0.7, hbTip: 0.7, cf: { s: 3.5, t: 0.3, proj: 2.6, projTop: 0, rb: { mainBar: '#8', nMain: 10, stirBar: '#4', stirS: 0.2, tieStemBar: '#4', tieStemS: 0.2, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#5', stemVS: 0.25 } }, Df: 1.0 });
       base.mat.mesh = { botBar: '#6', botS: 0.15, topOn: true, topBar: '#6', topS: 0.15, longOn: true, longBar: '#5', longS: 0.15 };
       base.cf.rb.tieStemS = 0.15;
       base.cf.rb.tieSlabBar = '#5';
@@ -254,12 +278,13 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
       const ext = type === 'masonryCfExt';
       Object.assign(base, {
         H: 4.0, tTop: 0.2, tBot: 0.2, Lt: ext ? 1.8 : 0.8, Lh: ext ? 2.4 : 2.6, hb: 0.5, hbTip: 0.5, block: '8', Df: ext ? 0.8 : 1.0,
-        cf: { s: 2.4, t: 0.2, proj: ext ? 1.6 : 2.2, projTop: 0, rb: { mainBar: '#7', nMain: 4, stirBar: '#4', stirS: 0.4, tieStemBar: '#4', tieStemS: 0.4, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.4 } },
+        cf: { s: 2.4, t: 0.2, proj: ext ? 1.6 : 2.2, projTop: 0, rb: { mainBar: '#7', nMain: 4, stirBar: '#4', stirS: 0.4, tieStemBar: '#4', tieStemS: 0.4, tieSlabBar: '#4', tieSlabS: 0.2, stemHBar: '#5', stemHS: 0.2, stemVBar: '#4', stemVS: 0.2 } },
       });
       base.mat.mesh = { botBar: '#5', botS: 0.2, topOn: true, topBar: '#5', topS: 0.2, longOn: true, longBar: '#5', longS: 0.1 };
       base.mat.stemLayers = 1;
       base.mat.horizS = 0.4;
       base.mat.barStem = '#5';
+      base.beams = [defaultCrownBeam(4.0, 0.2)];
       base.cf.rb.tieSlabBar = '#5';
       base.cf.rb.tieSlabS = 0.15;
       break;

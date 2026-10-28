@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer,
+  Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer, Plus, Trash2,
 } from 'lucide-react';
-import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal } from '../core/wallTypes';
+import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal, defaultCrownBeam, CrownBeam } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
-import { wallPlanSvg, wallSectionSvg, wallTypeIcon } from '../draw/wallDraw';
+import { wallElevationSvg, wallPlanSvg, wallSectionSvg, wallTypeIcon } from '../draw/wallDraw';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
@@ -267,6 +267,43 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                   )}
                 </>
               )}
+              {isCounterfort(t) && (
+                <>
+                  <div className="hint"><b>Vigas corona de concreto (de contrafuerte a contrafuerte)</b></div>
+                  {data.beams.map((bm, i) => {
+                    const bd = res?.design.counterfort?.beams[i];
+                    const upd = (patch: Partial<CrownBeam>) => set({ beams: data.beams.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+                    return (
+                      <div key={i} className="card" style={{ padding: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <b style={{ fontSize: 13 }}>Viga corona {i + 1}</b>
+                          {bd && <StatusChip ok={bd.ok} />}
+                          <span className="spacer" />
+                          {bd && <button className="btn small ghost" title="Calcula las barras y los estribos necesarios" onClick={() => upd({ nBack: bd.suggest.nBack, nFront: bd.suggest.nFront, stirS: bd.suggest.stirS })}><Wand2 size={13} /> Sugerir armado</button>}
+                          <button className="icon-btn danger" title="Quitar" onClick={() => set({ beams: data.beams.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
+                        </div>
+                        <div className="grid3">
+                          <Num label="Altura (cara sup.)" q="len" value={bm.y} onChange={(v) => upd({ y: Math.min(Math.max(v, 0.1), data.H) })} min={0.1} hint="Sobre la zapata" />
+                          <Num label="Ancho b (espesor)" q="lencm" value={bm.b} onChange={(v) => upd({ b: v })} min={0.1} />
+                          <Num label="Alto h" q="lencm" value={bm.h} onChange={(v) => upd({ h: v })} min={0.1} />
+                          <Num label="N.º barras relleno" value={bm.nBack} onChange={(v) => upd({ nBack: Math.max(1, Math.round(v)) })} min={1} />
+                          <Sel label="Barra relleno" value={bm.barBack} onChange={(v) => upd({ barBack: v })} options={bars} />
+                          <span />
+                          <Num label="N.º barras frontal" value={bm.nFront} onChange={(v) => upd({ nFront: Math.max(1, Math.round(v)) })} min={1} />
+                          <Sel label="Barra frontal" value={bm.barFront} onChange={(v) => upd({ barFront: v })} options={bars} />
+                          <span />
+                          <Sel label="Estribos (2 ramas)" value={bm.stirBar} onChange={(v) => upd({ stirBar: v })} options={bars} />
+                          <Num label="Separación" q="lencm" value={bm.stirS} onChange={(v) => upd({ stirS: v })} min={0.05} />
+                        </div>
+                        {bd && <div className="hint" style={{ marginTop: 4 }}>Franja tributaria {bd.trib.toFixed(2)} m · w = {bd.w.toFixed(1)} kN/m · Mu(−) {bd.Mneg.toFixed(1)} / Mu(+) {bd.Mpos.toFixed(1)} kN·m · req. {bd.AsReqBack.toFixed(1)} / {bd.AsReqFront.toFixed(1)} cm² (prov. {bd.AsProvBack.toFixed(1)} / {bd.AsProvFront.toFixed(1)})</div>}
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn small" onClick={() => set({ beams: [...data.beams, defaultCrownBeam(data.beams.length ? Math.max(data.H * 0.5, 0.3) : data.H, data.tBot)] })}><Plus size={14} /> Agregar viga corona</button>
+                  </div>
+                </>
+              )}
               <div className="hint"><b>Malla de la zapata corrida (definida por usted)</b></div>
               <div className="grid3">
                 <Sel label="Transv. inf. (barra)" value={data.mat.mesh.botBar} onChange={(v) => setMesh({ botBar: v })} options={bars} />
@@ -374,6 +411,9 @@ function WallSection({ res, theme }: { res: WallResults; theme: typeof LIGHT }) 
       </div>
       {isCounterfort(res.inp.type) && (
         <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>
+      )}
+      {isCounterfort(res.inp.type) && res.inp.beams.length > 0 && (
+        <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallElevationSvg(res, { fmt, theme }) }} /></div>
       )}
       <Card title="Verificaciones" icon={<ListChecks size={18} />}>
         <div className="checks">
@@ -549,6 +589,15 @@ function CounterfortView({ res }: { res: WallResults }) {
           rows={c.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.proj.toFixed(2), s.dcf.toFixed(2), fmt.n('moment', s.Mcf, 1), fmt.n('force', s.Vcf, 1), s.AsReq.toFixed(2), s.AsIncl.toFixed(2)])}
         />
       </Card>
+      {c.beams.length > 0 && (
+        <Card title="Vigas corona" icon={<Layers size={18} />}>
+          <Tbl
+            head={['Viga', 'Altura (m)', 'b × h (cm)', 'Franja (m)', 'w (kN/m)', `Mu(−)/Mu(+) (${fmt.l('moment')})`, 'Cara relleno', 'Cara frontal', 'Estribos', 'Estado']}
+            align={['l', 'r', 'r', 'r', 'r', 'r', 'l', 'l', 'l', 'c']}
+            rows={c.beams.map((b) => [`VC${b.i + 1}`, b.y.toFixed(2), `${(b.b * 100).toFixed(0)} × ${(b.h * 100).toFixed(0)}`, b.trib.toFixed(2), b.w.toFixed(1), `${fmt.n('moment', b.Mneg, 1)} / ${fmt.n('moment', b.Mpos, 1)}`, `${b.textBack} (req. ${b.AsReqBack.toFixed(1)} cm²)`, `${b.textFront} (req. ${b.AsReqFront.toFixed(1)} cm²)`, b.textStir, b.ok ? 'Cumple' : 'No cumple'])}
+          />
+        </Card>
+      )}
       <Card title="Verificación del armado definido" icon={<ListChecks size={18} />}>
         <Tbl
           head={['Elemento', 'Adoptado', 'Requerido', 'Relación', '']}
@@ -618,6 +667,9 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     rows.push([`${c.slabLabel} — ${c.slabFaceNeg}`, c.slabNegDet.text, c.slabNegDet.asProv.toFixed(2), '']);
     rows.push(['Amarres pantalla–contrafuerte', c.tieStem.text, c.tieStem.asProv.toFixed(2), 'Horizontales']);
     rows.push(['Amarres zapata–contrafuerte', c.tieSlab.text, c.tieSlab.asProv.toFixed(2), 'Verticales']);
+    for (const b of c.beams) {
+      rows.push([`Viga corona ${b.i + 1} (${(b.b * 100).toFixed(0)}×${(b.h * 100).toFixed(0)} cm, a ${b.y.toFixed(2)} m)`, `Cara relleno ${b.textBack}; cara frontal ${b.textFront}`, (b.AsProvBack + b.AsProvFront).toFixed(2), `Estribos ${b.textStir} (2 ramas); barras continuas entre contrafuertes`]);
+    }
   }
   if (res.inp.type === 'gabion') {
     const gw = gabionWidths(res.inp.gab);
@@ -627,6 +679,7 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
     <>
       <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallSectionSvg(res, { fmt, theme, W: 860, H: 580, showRebar: true, showPressure: false, showLoads: false }) }} /></div>
       {isCounterfort(res.inp.type) && <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallPlanSvg(res, { fmt, theme }) }} /></div>}
+      {isCounterfort(res.inp.type) && res.inp.beams.length > 0 && <div className="draw"><div dangerouslySetInnerHTML={{ __html: wallElevationSvg(res, { fmt, theme }) }} /></div>}
       <Card title="Cuadro de armado (por metro de muro)" icon={<Grid3x3 size={18} />}>
         <Tbl head={['Elemento', 'Armado', 'As prov (cm²/m)', 'Observación']} align={['l', 'l', 'r', 'l']} rows={rows} />
       </Card>

@@ -92,6 +92,14 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += text(X(cx), Y(cy) + 13, '(fuera del plano)', { size: 9.5, fill: th.accent, anchor: 'middle' });
   }
 
+  // Vigas corona
+  g.parts.filter((p) => p.id === 'beam').forEach((p, i) => {
+    s += poly(p.poly.map(P), th.concrete, th.concreteStroke, 2);
+    const bm = inp.beams[i];
+    const c = p.poly.reduce((a, q) => ({ x: a.x + q.x / p.poly.length, y: a.y + q.y / p.poly.length }), { x: 0, y: 0 });
+    if (bm) s += text(X(c.x) - 16, Y(c.y) + 4, `VC${i + 1} ${(bm.b * 100).toFixed(0)}×${(bm.h * 100).toFixed(0)}`, { size: 10.5, fill: th.concreteStroke, anchor: 'end', weight: 700, halo: th.bg });
+  });
+
   // Sobrecarga
   if (inp.fill.q > 0) {
     const n = Math.max(4, Math.round((xR - g.xBt) / 0.5));
@@ -354,4 +362,51 @@ export function wallTypeIcon(t: WallType): string {
       break;
   }
   return `<svg viewBox="0 0 120 74" xmlns="http://www.w3.org/2000/svg">${ground}${body}</svg>`;
+}
+
+// ---------------------------------------------------------------------------
+// Alzado entre contrafuertes (vista frontal): pantalla, contrafuertes y vigas corona
+// ---------------------------------------------------------------------------
+export function wallElevationSvg(res: WallResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
+  const W = o.W ?? 820, H = o.H ?? 440;
+  const th = o.theme ?? LIGHT;
+  const inp = res.inp;
+  const g = res.geom;
+  const nSp = 3;
+  const len = nSp * inp.cf.s + inp.cf.t;
+  const tot = inp.H + g.hb;
+  const sc = Math.min((W - 190) / len, (H - 90) / tot);
+  const ox = 70;
+  const X = (x: number) => ox + x * sc;
+  const Y = (y: number) => H - 40 - y * sc;
+  const masonry = isMasonryStem(inp.type);
+  let s = `<defs><pattern id="we-mas" width="14" height="10" patternUnits="userSpaceOnUse"><rect width="14" height="10" fill="${th.concrete}"/><path d="M0 0H14M0 5H14M0 10H14M0 0V5M7 5V10" stroke="${th.concreteStroke}" stroke-width=".6" fill="none" opacity=".55"/></pattern></defs>`;
+  // zapata
+  s += `<rect x="${X(-0.25).toFixed(1)}" y="${Y(g.hb).toFixed(1)}" width="${((len + 0.5) * sc).toFixed(1)}" height="${(g.hb * sc).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  // pantalla
+  s += `<rect x="${X(0).toFixed(1)}" y="${Y(g.hb + inp.H).toFixed(1)}" width="${(len * sc).toFixed(1)}" height="${(inp.H * sc).toFixed(1)}" fill="${masonry ? 'url(#we-mas)' : th.concrete}" fill-opacity="${masonry ? 1 : 0.5}" stroke="${th.concreteStroke}" stroke-width="2"/>`;
+  // contrafuertes
+  for (let i = 0; i <= nSp; i++) {
+    const x = i * inp.cf.s;
+    s += `<rect x="${X(x).toFixed(1)}" y="${Y(g.hb + inp.H).toFixed(1)}" width="${(inp.cf.t * sc).toFixed(1)}" height="${(inp.H * sc).toFixed(1)}" fill="${th.accent}" fill-opacity=".35" stroke="${th.accent}" stroke-width="2"/>`;
+  }
+  s += text(X(inp.cf.t / 2), Y(g.hb + inp.H) - 6, 'contrafuerte', { size: 10.5, fill: th.accent, anchor: 'middle', weight: 600 });
+  // vigas corona
+  const des = res.design.counterfort;
+  inp.beams.forEach((bm, i) => {
+    const yTop = Math.min(Math.max(bm.y, bm.h), inp.H);
+    s += `<rect x="${X(0).toFixed(1)}" y="${Y(g.hb + yTop).toFixed(1)}" width="${(len * sc).toFixed(1)}" height="${Math.max(bm.h * sc, 3).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="2.2"/>`;
+    const bd = des?.beams[i];
+    s += text(X(len) + 10, Y(g.hb + yTop - bm.h / 2) + 4, `VC${i + 1}  ${(bm.b * 100).toFixed(0)}×${(bm.h * 100).toFixed(0)} cm`, { size: 11.5, fill: th.concreteStroke, weight: 700 });
+    if (bd) {
+      s += text(X(len) + 10, Y(g.hb + yTop - bm.h / 2) + 18, `cara relleno: ${bd.textBack}`, { size: 10, fill: th.rebar });
+      s += text(X(len) + 10, Y(g.hb + yTop - bm.h / 2) + 31, `cara frontal: ${bd.textFront}`, { size: 10, fill: th.rebar });
+      s += text(X(len) + 10, Y(g.hb + yTop - bm.h / 2) + 44, `estribos ${bd.textStir}`, { size: 10, fill: th.rebar });
+    }
+    s += dimLine(X(0) - 18, Y(g.hb), X(0) - 18, Y(g.hb + yTop), `${o.fmt.n('len', yTop, 2)}`, th.dim, 0, 10.5, -1);
+  });
+  s += dimLine(X(0), Y(0) + 24, X(inp.cf.s + inp.cf.t), Y(0) + 24, `s = ${o.fmt.u('len', inp.cf.s, 2)}`, th.dim, 0, 11);
+  s += dimLine(X(inp.cf.s + inp.cf.t), Y(0) + 24, X(2 * inp.cf.s + inp.cf.t), Y(0) + 24, `Ls = ${o.fmt.u('len', inp.cf.s - inp.cf.t, 2)}`, th.dim, 0, 11);
+  s += text(14, 22, 'Alzado (vista desde el lado visible) — vigas corona entre contrafuertes', { size: 13, fill: th.ink, weight: 600 });
+  return svgWrap(W, H, s, th.bg);
 }

@@ -5,7 +5,7 @@ import { PHI_FLEX, PHI_SHEAR, PHI_PLAIN } from '../core/concrete';
 import { ProjectInfo } from '../state';
 import { DocBuilder, ReportDoc } from './model';
 import { DARK, LIGHT, lineChart } from '../draw/svg';
-import { wallPlanSvg, wallSectionSvg } from '../draw/wallDraw';
+import { wallElevationSvg, wallPlanSvg, wallSectionSvg } from '../draw/wallDraw';
 import { CaseResult } from '../core/wallStability';
 import { rad } from '../core/earth';
 
@@ -412,6 +412,42 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
       ],
       'Armado de las losas',
     );
+    d.h3('Flexión vertical de la pantalla (acción en dos direcciones)');
+    d.eq(
+      [
+        'αv(y) = 1 / (1 + 48·(y/Ls)⁴):  parte de la presión que toman las franjas verticales en voladizo (reparto por rigideces, igual flecha que las franjas horizontales)',
+        'Mv(y′) = Σ pu(y)·αv(y)·(y − y′)·Δy   para y > y′;   As,v = flexión con d de la pantalla;   As,v ≥ mínimo',
+      ],
+      'Modelo',
+    );
+    d.table(
+      ['y (m)', `Mv (${fmt.l('lmoment')})`, 'As,v (cm²/m)'],
+      c.vertical.filter((_, i) => i % 2 === 0).map((v) => [f(v.y, 2), n('lmoment', v.Mu, 2), f(v.As, 2)]),
+      { align: ['r', 'r', 'r'], widths: [6, 8, 8], caption: `Tabla. Acero vertical requerido (máx. ${f(c.AsVertCalc, 2)} cm²/m; mínimo ${f(c.AsVertMin, 2)} cm²/m) → colocado ${c.vertDet.text}` },
+    );
+    if (c.beams.length) {
+      d.h3('Vigas corona entre contrafuertes');
+      d.eq(
+        [
+          'Franja tributaria: mitad de la distancia a las vigas vecinas (o a la zapata y a la corona);  w = ∫ pu dy sobre la franja  [kN/m]',
+          'Luz libre Ls = s − tc;  Mu(−) = w·Ls²/12 (cara del relleno, sobre los contrafuertes);  Mu(+) = w·Ls²/16 (cara frontal, centro de la luz);  Vu = w·(Ls/2 − d)',
+          'Sección rectangular: ancho = h (alto de la viga), peralte d = b − recubrimiento − estribo − db/2 (flexión en el plano horizontal);  As,mín = máx(0.25·√f′c, 1.4)/fy · h·d',
+          'Cortante:  φVn = φ·(0.17·√f′c·h·d + Av·fy·d/s);  estribos mínimos máx(0.062·√f′c, 0.35)·h/fy',
+        ],
+        'Modelo',
+      );
+      d.table(
+        ['Viga', 'Altura (m)', 'b × h (cm)', 'Franja (m)', 'w (kN/m)', `Mu(−) (${fmt.l('moment')})`, `Mu(+) (${fmt.l('moment')})`, `Vu (${fmt.l('force')})`],
+        c.beams.map((b) => [`VC${b.i + 1}`, f(b.y, 2), `${f(b.b * 100, 0)} × ${f(b.h * 100, 0)}`, f(b.trib, 2), f(b.w, 1), n('moment', b.Mneg, 1), n('moment', b.Mpos, 1), n('force', b.Vu, 1)]),
+        { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], caption: 'Tabla. Solicitaciones de las vigas corona' },
+      );
+      d.table(
+        ['Viga', 'Cara del relleno', 'As req / prov (cm²)', 'Cara frontal', 'As req / prov (cm²)', 'Estribos', 'Av req / prov (cm²/m)', 'Relación máx.', 'Estado'],
+        c.beams.map((b) => [`VC${b.i + 1}`, b.textBack, `${f(b.AsReqBack, 2)} / ${f(b.AsProvBack, 2)}`, b.textFront, `${f(b.AsReqFront, 2)} / ${f(b.AsProvFront, 2)}`, b.textStir, `${f(b.AvReq, 2)} / ${f(b.AvProv, 2)}`, f(Math.max(...Object.values(b.ratios)), 2), b.ok ? 'Cumple' : 'No cumple']),
+        { align: ['l', 'l', 'r', 'l', 'r', 'l', 'r', 'r', 'c'], small: true, caption: 'Tabla. Armado de las vigas corona (definido por el usuario) y verificación' },
+      );
+      d.img(wallElevationSvg(res, { W: 800, H: 440, theme: th, fmt }), 'Figura. Alzado con las vigas corona entre contrafuertes.', 0.95);
+    }
     for (const nn of c.notes) d.p(nn, { small: true });
   }
 

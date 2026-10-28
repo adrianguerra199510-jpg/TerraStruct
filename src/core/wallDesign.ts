@@ -197,6 +197,38 @@ export interface CounterfortSection {
   tiesStem: number; // cm²/m de altura
 }
 
+export interface BeamDesign {
+  i: number;
+  y: number;
+  yc: number;
+  b: number;
+  h: number;
+  lo: number;
+  hi: number;
+  trib: number;
+  w: number;
+  Mneg: number;
+  Mpos: number;
+  Vu: number;
+  dBack: number;
+  dFront: number;
+  AsReqBack: number;
+  AsReqFront: number;
+  AsProvBack: number;
+  AsProvFront: number;
+  AvReq: number;
+  AvProv: number;
+  phiMnBack: number;
+  phiMnFront: number;
+  phiVn: number;
+  ratios: { back: number; front: number; flexBack: number; flexFront: number; shear: number; stir: number };
+  ok: boolean;
+  suggest: { nBack: number; nFront: number; stirS: number };
+  textBack: string;
+  textFront: string;
+  textStir: string;
+}
+
 export interface CounterfortDesign {
   kind: 'interno' | 'externo';
   s: number;
@@ -242,6 +274,11 @@ export interface CounterfortDesign {
   stemShear: { Vu: number; phiVc: number; ratio: number };
   vertDet: Detailing;
   vertBottomDet: Detailing;
+  /** flexión vertical de la pantalla (reparto entre franjas por rigidez) */
+  vertical: { y: number; Mu: number; As: number }[];
+  AsVertCalc: number;
+  AsVertMin: number;
+  beams: BeamDesign[];
   /** relaciones requerido / adoptado del armado definido por el usuario */
   ratios: { main: number; stirrup: number; stirMin: number; tieStem: number; tieSlab: number; stemNeg: number; stemPos: number; vert: number; slabNeg: number; slabPos: number };
   /** valores requeridos del cálculo */
@@ -893,7 +930,32 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const stemCapVc = mas ? masonryVn(1, sw.d, Math.max(sw.MuNeg, 1e-6), Math.max(stemVu, 1e-6), m.fm) : oneWayVc(1, sw.d, m.fc, 0.003, 'ACI318_14', m.lambda).Vc;
   const stemShear = { Vu: stemVu, phiVc: phiV * stemCapVc, ratio: stemVu / (phiV * stemCapVc) };
   const tAvg = (inp.tTop + inp.tBot) / 2;
-  const vertDet = mas ? chooseSpacingModule(0.0007 * tAvg * 1e4, barV, 0.2, 1.2) : chooseSpacing(0.5 * rhoVertMin(barV.db, m.fy) * tAvg * 1e4, barV, 0.45);
+  // Flexión vertical de la pantalla (acción en dos direcciones): la carga se reparte entre las franjas
+  // horizontales y las verticales en proporción a sus rigideces (iguales flechas):  αv(y) = 1 / (1 + 48·(y/Ls)⁴),
+  // con y la altura sobre la zapata; las franjas verticales trabajan en voladizo desde la zapata.
+  const vertical: CounterfortDesign['vertical'] = [];
+  {
+    const NV = 60;
+    const dy = H / NV;
+    for (let k = 0; k <= NS; k++) {
+      const y0 = (H * k) / NS;
+      let Mv = 0;
+      for (let j = 0; j < NV; j++) {
+        const yj = (j + 0.5) * dy;
+        if (yj <= y0) continue;
+        const alpha = 1 / (1 + 48 * Math.pow(yj / Ls, 4));
+        Mv += pu(H - yj) * alpha * (yj - y0) * dy;
+      }
+      const t = tAt(y0);
+      const dv = mas ? t / 2 : t - m.cover - findBar(inp.cf.rb.stemVBar).db / 2000;
+      const fv = flex(Mv, 1, dv);
+      vertical.push({ y: y0, Mu: Mv, As: isFinite(fv.As) ? fv.As : 1e6 });
+    }
+  }
+  const AsVertCalc = Math.max(...vertical.map((x) => x.As));
+  const AsVertMin = mas ? 0.0007 * tAvg * 1e4 : 0.5 * rhoVertMin(barV.db, m.fy) * tAvg * 1e4;
+  const AsVertReq = Math.max(AsVertCalc, AsVertMin);
+  const vertDet = mas ? chooseSpacingModule(AsVertReq, barV, 0.2, 1.2) : chooseSpacing(AsVertReq, barV, 0.45);
   const vertBottomDet = mas ? chooseSpacingModule(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.2, 1.2) : chooseSpacing(0.25 * Math.max(...stemSlab.map((x) => Math.max(x.AsNeg, x.AsPos))), barV, 0.45);
   const maxNeg = Math.max(...stemSlab.map((x) => x.AsNeg));
   const maxPos = Math.max(...stemSlab.map((x) => x.AsPos));
@@ -990,7 +1052,7 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
   const phiVnUser = phiV * (capcVc + ((mas ? 0.5 : 1) * 2 * uStir.area * 1e-4 * m.fy * 1000 * vc.dcf) / Math.max(rb.stirS, 0.02));
   const AvMinC = mas ? 0.0007 * tc * 1e4 : (Math.max(0.062 * Math.sqrt(m.fc), 0.35) * tc) / m.fy * 1e4;
   const AvProv = (2 * uStir.area) / Math.max(rb.stirS, 0.02);
-  const reqVert = mas ? 0.0007 * tAvg * 1e4 : 0.5 * rhoVertMin(barH.db, m.fy) * tAvg * 1e4;
+  const reqVert = AsVertReq;
   const maxSlabNeg = Math.max(...slabArr.map((x) => x.AsNeg));
   const maxSlabPos = Math.max(...slabArr.map((x) => x.AsPos));
   const rt = (req: number, prov: number) => (prov > 0 ? req / prov : Infinity);
@@ -1015,6 +1077,60 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
     notes.push('Contrafuerte externo (estribo): trabaja como viga en voladizo con la pantalla como ala traccionada; el acero principal se coloca junto a la cara del relleno, en la pantalla.');
     notes.push('La pantalla es una losa horizontal entre estribos: acero en la cara del relleno al centro de la luz; acero en la cara frontal sobre los estribos.');
   }
+  // ----- Vigas corona entre contrafuertes -----
+  const beams: BeamDesign[] = [];
+  const sortedY = inp.beams.map((bm) => Math.min(Math.max(bm.y - bm.h / 2, 0), H)).sort((a, b) => a - b);
+  inp.beams.forEach((bm, i) => {
+    const yc = Math.min(Math.max(bm.y - bm.h / 2, 0), H);
+    const idx = sortedY.indexOf(yc);
+    const below = idx > 0 ? sortedY[idx - 1] : 0;
+    const above = idx < sortedY.length - 1 ? sortedY[idx + 1] : H;
+    const lo = idx > 0 ? (yc + below) / 2 : yc / 2;
+    const hi = idx < sortedY.length - 1 ? (yc + above) / 2 : H;
+    // fuerza horizontal por metro de viga: presión mayorada × franja tributaria
+    const NT = 24;
+    let w = 0;
+    for (let j = 0; j < NT; j++) {
+      const yy = lo + ((hi - lo) * (j + 0.5)) / NT;
+      w += pu(H - yy) * ((hi - lo) / NT);
+    }
+    const bB = findBar(bm.barBack), bF = findBar(bm.barFront), bS = findBar(bm.stirBar);
+    const cvr = 0.04;
+    const dBack = bm.b - cvr - bS.db / 1000 - bB.db / 2000;
+    const dFront = bm.b - cvr - bS.db / 1000 - bF.db / 2000;
+    const Mneg = (w * Ls * Ls) / 12;
+    const Mpos = (w * Ls * Ls) / 16;
+    const frB = flexureAs(Mneg, bm.h, dBack, m.fc, m.fy);
+    const frF = flexureAs(Mpos, bm.h, dFront, m.fc, m.fy);
+    const rhoMin = Math.max((0.25 * Math.sqrt(m.fc)) / m.fy, 1.4 / m.fy);
+    const AsMinB = rhoMin * bm.h * dBack * 1e4;
+    const AsMinF = rhoMin * bm.h * dFront * 1e4;
+    const reqB = Math.max(isFinite(frB.As) ? frB.As : 1e6, AsMinB);
+    const reqF = Math.max(isFinite(frF.As) ? frF.As : 1e6, AsMinF);
+    const provB = Math.max(1, Math.round(bm.nBack)) * bB.area;
+    const provF = Math.max(1, Math.round(bm.nFront)) * bF.area;
+    const dMean = (dBack + dFront) / 2;
+    const Vu = Math.max((w * Ls) / 2 - w * dMean, 0);
+    const capVc = oneWayVc(bm.h, dMean, m.fc, 0.005, 'ACI318_14', m.lambda).Vc;
+    const Vs = Math.max(Vu / PHI_SHEAR - capVc, 0);
+    const AvMinB = Math.max(0.062 * Math.sqrt(m.fc), 0.35) * bm.h / m.fy * 1e4;
+    const AvReq = Math.max((Vs / (m.fy * 1000 * dMean)) * 1e4, AvMinB);
+    const AvProv = (2 * bS.area) / Math.max(bm.stirS, 0.02);
+    const phiMnB = flexureCapacity(provB, bm.h, dBack, m.fc, m.fy);
+    const phiMnF = flexureCapacity(provF, bm.h, dFront, m.fc, m.fy);
+    const phiVn = PHI_SHEAR * (capVc + (2 * bS.area * 1e-4 * m.fy * 1000 * dMean) / Math.max(bm.stirS, 0.02));
+    const nSug = (as: number, bar: Bar) => Math.max(2, Math.ceil(as / bar.area));
+    const sSug = Math.max(Math.min(Math.floor(((2 * bS.area) / Math.max(AvReq, 1e-6)) * 40) / 40, 0.3), 0.05);
+    const ratios = { back: reqB / Math.max(provB, 1e-9), front: reqF / Math.max(provF, 1e-9), flexBack: Mneg / Math.max(phiMnB, 1e-9), flexFront: Mpos / Math.max(phiMnF, 1e-9), shear: Vu / Math.max(phiVn, 1e-9), stir: AvReq / Math.max(AvProv, 1e-9) };
+    const ok = Object.values(ratios).every((v) => v <= 1.0001) && frB.ok && frF.ok;
+    beams.push({
+      i, y: bm.y, yc, b: bm.b, h: bm.h, lo, hi, trib: hi - lo, w, Mneg, Mpos, Vu, dBack, dFront,
+      AsReqBack: reqB, AsReqFront: reqF, AsProvBack: provB, AsProvFront: provF, AvReq, AvProv, phiMnBack: phiMnB, phiMnFront: phiMnF, phiVn, ratios, ok,
+      suggest: { nBack: nSug(reqB, bB), nFront: nSug(reqF, bF), stirS: sSug },
+      textBack: `${Math.max(1, Math.round(bm.nBack))} × ${bB.id}`, textFront: `${Math.max(1, Math.round(bm.nFront))} × ${bF.id}`, textStir: `${bS.id} @ ${(bm.stirS * 100).toFixed(0)} cm`,
+    });
+  });
+  if (beams.length) notes.push('Vigas corona: vigas continuas de concreto entre contrafuertes que reciben la presión de su franja tributaria (mitad de la distancia a las vigas vecinas, a la base o a la corona). Flexión horizontal: acero en la cara del relleno sobre los contrafuertes (Mu = w·Ls²/12) y en la cara frontal al centro de la luz (Mu = w·Ls²/16); la pantalla se diseña con la presión completa, de manera conservadora e independiente de las vigas.');
   notes.push('La zona inferior de la pantalla trabaja en dos direcciones: se recomienda acero vertical adicional del 25 % del horizontal en una franja de altura igual a la luz libre.');
   return {
     kind: internal ? 'interno' : 'externo', s, Ls, sections, bar: uBar, nBars: uN, AsMax, AsProv: uN * uBar.area, stirrup: uStir, stirrupSpacing: rb.stirS,
@@ -1028,8 +1144,9 @@ function counterfortDesign(g: WallGeom, uls: { label: string; res: CaseResult }[
     stemShear,
     vertDet: uStemV,
     vertBottomDet,
+    vertical, AsVertCalc, AsVertMin, beams,
     ratios, req, suggest,
-    sectionOk: sections.every((x) => isFinite(x.AsReq) && x.AsReq < 1e5) && ratiosOk && stemShear.ratio <= 1 && stemSlab.every((x) => x.AsNeg < 1e5 && x.AsPos < 1e5),
+    sectionOk: beams.every((b) => b.ok) && sections.every((x) => isFinite(x.AsReq) && x.AsReq < 1e5) && ratiosOk && stemShear.ratio <= 1 && stemSlab.every((x) => x.AsNeg < 1e5 && x.AsPos < 1e5),
     notes,
   };
 }
