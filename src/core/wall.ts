@@ -1,5 +1,5 @@
 // Análisis completo de un muro de retención.
-import { WallInput, isGravity, normalizeWall } from './wallTypes';
+import { WallInput, isGravity, normalizeWall, canPool } from './wallTypes';
 import { WallGeom, buildWallGeom } from './wallGeom';
 import { CaseResult, EarthModel, SERVICE_FACTORS, earthModel, evalCase } from './wallStability';
 import { WallDesign, designWall } from './wallDesign';
@@ -14,8 +14,17 @@ export interface WallCheck {
   advisory?: boolean;
 }
 
+/** Condición de la piscina: vacía (solo relleno) o llena (agua interior + relleno) */
+export interface PoolState {
+  id: 'vacia' | 'llena';
+  label: string;
+  res: WallResults;
+}
+
 export interface WallResults {
   inp: WallInput;
+  /** con piscina: resultados completos de cada condición; los campos principales corresponden a la condición mostrada */
+  pool?: { states: PoolState[]; view: 'vacia' | 'llena'; hwi: number };
   geom: WallGeom;
   earth: EarthModel;
   earthSeismic: EarthModel | null;
@@ -31,7 +40,22 @@ export interface WallResults {
 
 const res0h = (g: { hb: number }) => g.hb * 1e4;
 
-export function analyzeWall(input: WallInput): WallResults {
+/** Análisis con piscina: se evalúan las condiciones vacía y llena y se combinan las verificaciones. */
+export function analyzeWall(input: WallInput, view: 'vacia' | 'llena' = 'llena'): WallResults {
+  const inp0 = normalizeWall(input);
+  if (!inp0.pool.on || !canPool(inp0.type)) return analyzeWallCore({ ...inp0, poolDepth: 0 });
+  const hwi = Math.min(Math.max(inp0.pool.hwi, 0.05), inp0.H);
+  const states: PoolState[] = [
+    { id: 'vacia', label: 'Piscina vacía', res: analyzeWallCore({ ...inp0, poolDepth: 0 }) },
+    { id: 'llena', label: 'Piscina llena', res: analyzeWallCore({ ...inp0, poolDepth: hwi }) },
+  ];
+  const main = states.find((q) => q.id === view)!.res;
+  const checks: WallCheck[] = states.flatMap((q) => q.res.checks.map((c) => ({ ...c, name: `${q.label} — ${c.name}` })));
+  const warnings = [...new Set(states.flatMap((q) => q.res.warnings.map((w) => (states.length ? `${q.label}: ${w}` : w))))];
+  return { ...main, pool: { states, view, hwi }, checks, warnings, ok: checks.filter((c) => !c.advisory).every((c) => c.ok) };
+}
+
+function analyzeWallCore(input: WallInput): WallResults {
   const inp = normalizeWall(input);
   const geom = buildWallGeom(inp);
   const warnings: string[] = [];
@@ -46,6 +70,7 @@ export function analyzeWall(input: WallInput): WallResults {
 
   const stab = (c: CaseResult, tag: string) => {
     add({ group: 'Estabilidad', name: `Volcamiento ${tag}`, ratio: c.fsOTreq / c.FSot, detail: `FS = ${isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} (mín. ${c.fsOTreq})`, ok: c.ok.ot });
+    if (isFinite(c.FSotBack)) add({ group: 'Estabilidad', name: `Volcamiento hacia el relleno ${tag}`, ratio: c.fsOTreq / c.FSotBack, detail: `FS = ${c.FSotBack.toFixed(2)} (mín. ${c.fsOTreq}) respecto al extremo del talón`, ok: c.FSotBack >= c.fsOTreq });
     add({ group: 'Estabilidad', name: `Deslizamiento ${tag}`, ratio: c.fsSLreq / c.FSsl, detail: `FS = ${isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'} (mín. ${c.fsSLreq})`, ok: c.ok.sl });
     add({ group: 'Estabilidad', name: `Presión sobre el suelo ${tag}`, ratio: c.qmax / c.qaAllow, detail: `qmax = ${isFinite(c.qmax) ? c.qmax.toFixed(1) : '∞'} kPa (q adm. = ${c.qaAllow.toFixed(1)} kPa)`, ok: c.ok.q });
     add({ group: 'Estabilidad', name: `Excentricidad ${tag}`, ratio: Math.abs(c.e) / (c.B / (c.seismic ? 3 : 6)), detail: `e = ${c.e.toFixed(3)} m (límite B/${c.seismic ? 3 : 6} = ${(c.B / (c.seismic ? 3 : 6)).toFixed(3)} m)`, ok: c.ok.e, advisory: true });
@@ -58,6 +83,10 @@ export function analyzeWall(input: WallInput): WallResults {
     const worst = Math.max(...d.stem.sections.map((s) => (s.phiMn > 0 ? s.Mu / s.phiMn : 0)));
     add({ group: 'Estructural', name: 'Pantalla: flexión', ratio: worst, detail: `Acero ${d.stem.base.text} en la base`, ok: d.stem.sections.every((s) => s.ok) && worst <= 1.0001 });
     add({ group: 'Estructural', name: 'Pantalla: cortante', ratio: d.stem.critical.ratio, detail: `Vu = ${d.stem.critical.Vu.toFixed(1)} kN/m, φVc = ${d.stem.critical.phiVc.toFixed(1)} kN/m`, ok: d.stem.critical.ratio <= 1 });
+  }
+  if (d.stem?.front) {
+    const fr = d.stem.front;
+    add({ group: 'Estructural', name: 'Pantalla: acero de la cara frontal (momento invertido)', ratio: fr.ratio, detail: `Mu(−) máx. = ${fr.maxMu.toFixed(1)} kN·m/m; requerido ${fr.req.toFixed(2)} cm²/m, colocado ${fr.prov.toFixed(2)} cm²/m${d.stem.layers === 1 && !d.stem.centered ? ' (active dos capas de acero vertical)' : ''}`, ok: fr.ok });
   }
   if (d.stem) {
     add({ group: 'Estructural', name: 'Pantalla: acero vertical adoptado', ratio: d.stem.vertRatio, detail: `${d.stem.base.text}${d.stem.layers === 2 ? ' en cada cara' : d.stem.centered ? ' (barra centrada)' : ''}`, ok: d.stem.vertRatio <= 1.0001 });

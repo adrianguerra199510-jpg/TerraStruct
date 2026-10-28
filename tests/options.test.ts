@@ -265,3 +265,71 @@ describe('diagramas de momento y cortante (zapatas y muros)', () => {
     expect(ft).toContain('Diagrama de cortante a lo largo de X');
   });
 });
+
+import { sectionLoad, stemLateral } from '../src/core/wallDesign';
+import { GAMMA_W } from '../src/core/earth';
+describe('muros de piscina (agua interior, vacía y llena)', () => {
+  const mk = (t: 'cantilever' | 'masonryReinforced' = 'cantilever', hwi = 2.2) => {
+    const w = defaultWall(t);
+    w.pool = { on: true, hwi };
+    return w;
+  };
+  it('se evalúan dos condiciones y el resultado combina ambas', () => {
+    const r = analyzeWall(mk());
+    expect(r.pool!.states.map((s) => s.id)).toEqual(['vacia', 'llena']);
+    expect(r.ok).toBe(r.pool!.states.every((s) => s.res.ok));
+    expect(r.checks.some((c) => /^Piscina vacía — /.test(c.name))).toBe(true);
+    expect(r.checks.some((c) => /^Piscina llena — /.test(c.name))).toBe(true);
+    // sin piscina el análisis es el de siempre
+    const w0 = defaultWall('cantilever');
+    expect(analyzeWall(w0).pool).toBeUndefined();
+  });
+  it('empuje hidrostático ½γw·h² hacia el relleno, peso del agua sobre el pie y sin suelo en el pie', () => {
+    const w = mk('cantilever', 2.0);
+    const llena = analyzeWall(w).pool!.states[1].res.staticCase;
+    const vacia = analyzeWall(w).pool!.states[0].res.staticCase;
+    const hf = llena.h.find((q) => /agua de la piscina/.test(q.name))!;
+    expect(hf.H).toBeCloseTo(-0.5 * GAMMA_W * 2.0 ** 2, 6);
+    expect(llena.v.some((q) => /Agua de la piscina sobre el pie/.test(q.name))).toBe(true);
+    expect(llena.v.some((q) => /Suelo sobre el pie/.test(q.name))).toBe(false);
+    expect(vacia.h.some((q) => /agua de la piscina/.test(q.name))).toBe(false);
+    // el agua interior reduce el volcamiento hacia el frente: FS llena > FS vacía
+    expect(llena.FSot).toBeGreaterThan(vacia.FSot);
+    expect(llena.passive).toBeNull();
+  });
+  it('momento del agua en la sección: γw·(hw − y)³/6 y cortante ½γw·(hw − y)²', () => {
+    const w = mk('cantilever', 2.0);
+    const llena = analyzeWall(w).pool!.states[1].res;
+    const L = sectionLoad(llena.geom, stemLateral(llena.geom), 0.5);
+    expect(L.M.pool).toBeCloseTo((GAMMA_W * 1.5 ** 3) / 6, 6);
+    expect(L.V.pool).toBeCloseTo(0.5 * GAMMA_W * 1.5 ** 2, 6);
+    expect(sectionLoad(llena.geom, stemLateral(llena.geom), 2.3).M.pool).toBe(0);
+  });
+  it('la condición llena exige acero en la cara frontal; sin dos capas no cumple (hormigón)', () => {
+    const w = mk('cantilever', defaultWall('cantilever').H);
+    const r = analyzeWall(w);
+    const llena = r.pool!.states[1].res;
+    expect(llena.design.stem!.front).not.toBeNull();
+    expect(r.pool!.states[0].res.design.stem!.front).toBeNull();
+    w.mat.stemLayers = 1;
+    const r1 = analyzeWall(w);
+    const chk = r1.checks.find((c) => /Piscina llena — Pantalla: acero de la cara frontal/.test(c.name))!;
+    expect(chk.ok).toBe(false);
+    expect(r1.ok).toBe(false);
+  });
+  it('mampostería con la barra al centro resiste el momento invertido', () => {
+    const r = analyzeWall(mk('masonryReinforced', 2.0));
+    const f = r.pool!.states[1].res.design.stem!.front!;
+    expect(f.prov).toBeGreaterThan(0);
+    expect(f.ok).toBe(true);
+  });
+  it('las tipologías sin voladizo ignoran la piscina y la memoria incluye ambas condiciones', () => {
+    const g = defaultWall('gravityConcrete');
+    g.pool = { on: true, hwi: 1 };
+    expect(analyzeWall(g).pool).toBeUndefined();
+    const txt = JSON.stringify(reportForWall(mk(), makeFmt('SI'), newProject().info).blocks);
+    expect(txt).toContain('Piscina: condiciones de carga evaluadas');
+    expect(txt).toContain('Condición: Piscina llena');
+    expect(txt).toContain('Condición: Piscina vacía');
+  });
+});

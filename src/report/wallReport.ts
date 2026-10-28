@@ -113,6 +113,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
             ['Peso unitario de la mampostería', u('uw', mat.gammaM, 2)],
           ] as [string, string][])
         : []),
+      ...(inp.pool.on ? ([['Condición de la piscina', inp.poolDepth > 0 ? `llena, nivel del agua ${u('len', inp.poolDepth, 2)} sobre la zapata` : 'vacía (sin agua)']] as [string, string][]) : []),
       ['Recubrimiento pantalla / zapata', `${cm(mat.cover)} / ${cm(mat.coverFound)}`],
     ],
     2,
@@ -514,8 +515,40 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   void PHI_SHEAR;
 }
 
+/** Con piscina: resumen comparativo y el desarrollo completo de cada condición (vacía y llena). */
+export function wallBlocksPool(res: WallResults, fmt: Fmt, d: DocBuilder, prefix = '') {
+  if (!res.pool) return wallBlocks(res, fmt, d);
+  const f = fmt.d;
+  d.h1('Piscina: condiciones de carga evaluadas');
+  d.p(
+    `El muro contiene una piscina en su lado interior (frente). Se evalúan dos condiciones con todas sus verificaciones: piscina vacía (empuje del relleno y de la sobrecarga) y piscina llena (agua interior hasta ${fmt.u('len', res.pool.hwi, 2)} sobre la zapata, que empuja la pantalla hacia el relleno y pesa sobre el pie). En la condición llena el relleno se considera presente; el momento invertido (tracción en la cara frontal) se diseña con el empuje del agua mayorado y el del relleno con su factor mínimo.`,
+    { align: 'justify' },
+  );
+  d.eq(
+    [
+      'Empuje del agua sobre la cara frontal:  Pw = ½·γw·hw²  (hacia el relleno), actuando a hw/3 sobre la zapata;  momento en la sección y:  Mw(y) = γw·(hw − y)³/6',
+      'Momento posterior (tracción en el relleno):  Mu = 1.6·(Msuelo + Msobrecarga) − 0.9·Mw ;   momento frontal (tracción en la cara frontal):  Mu(−) = 1.6·Mw − 0.9·Msuelo',
+      'Peso del agua sobre el pie:  W = γw·hw·Lpie  (favorable; se pondera con el factor mínimo); no se considera suelo sobre el pie ni empuje pasivo',
+      'Volcamiento hacia el relleno (agua llena): FS = Σ M(estabilizantes) / Σ M(del agua) respecto al extremo del talón',
+    ],
+    'Modelo',
+  );
+  d.table(
+    ['Condición', 'FS volcamiento', 'FS deslizamiento', `q máx. (${fmt.l('press')})`, 'Estado'],
+    res.pool.states.map((q) => [q.label, isFinite(q.res.staticCase.FSot) ? f(q.res.staticCase.FSot, 2) : '∞', isFinite(q.res.staticCase.FSsl) ? f(q.res.staticCase.FSsl, 2) : '∞', isFinite(q.res.staticCase.qmax) ? fmt.n('press', q.res.staticCase.qmax, 1) : '—', q.res.ok ? 'Cumple' : 'No cumple']),
+    { align: ['l', 'r', 'r', 'r', 'c'], caption: 'Tabla. Resultado de cada condición (servicio, estático)' },
+  );
+  res.pool.states.forEach((q, i) => {
+    d.pagebreak();
+    d.blocks.push({ t: 'h1', text: `Condición: ${q.label}` });
+    const b = new DocBuilder(`${prefix}${i === 0 ? 'V' : 'L'}-`);
+    wallBlocks(q.res, fmt, b);
+    d.blocks.push(...b.blocks);
+  });
+}
+
 export function buildWallReport(res: WallResults, fmt: Fmt, info: ProjectInfo): ReportDoc {
   const d = new DocBuilder();
-  wallBlocks(res, fmt, d);
+  wallBlocksPool(res, fmt, d);
   return { title: `Diseño del muro de retención ${res.inp.name}`, subtitle: 'Muro de retención — estabilidad y diseño estructural', info, blocks: d.blocks, footer: `TerraStruct · ${res.inp.name}` };
 }

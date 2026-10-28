@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer, Plus, Trash2,
 } from 'lucide-react';
-import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal, defaultCrownBeam, CrownBeam } from '../core/wallTypes';
+import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, canPool, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal, defaultCrownBeam, CrownBeam } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
@@ -18,14 +18,15 @@ type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'diagramas' | 'armado' | 'memo
 
 export function WallPage({ data, onChange, theme, info }: { data: WallInput; onChange: (w: WallInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const [tab, setTab] = useState<Tab>('seccion');
+  const [poolView, setPoolView] = useState<'vacia' | 'llena'>('llena');
   const res = useMemo(() => {
     try {
-      return analyzeWall(data);
+      return analyzeWall(data, poolView);
     } catch (e) {
       console.error(e);
       return null;
     }
-  }, [data]);
+  }, [data, poolView]);
   const set = (patch: Partial<WallInput>) => onChange({ ...data, ...patch });
   const th = theme === 'dark' ? DARK : LIGHT;
   const t = data.type;
@@ -168,6 +169,19 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
           )}
           <Check label="Ignorar el peso de la sobrecarga en volcamiento y deslizamiento" value={data.ignoreSurchargeWeight} onChange={(v) => set({ ignoreSurchargeWeight: v })} hint="Criterio conservador usual" />
           <Check label="Incluir el suelo sobre el pie" value={data.includeToeSoil} onChange={(v) => set({ includeToeSoil: v })} />
+          {canPool(t) && (
+            <>
+              <Check label="Piscina: agua en el lado interior (frente del muro)" value={data.pool.on} onChange={(v) => set({ pool: { ...data.pool, on: v } })} hint="Se evalúan dos condiciones: piscina vacía (solo relleno) y piscina llena (agua interior + relleno)" />
+              {data.pool.on && (
+                <>
+                  <div className="grid2">
+                    <Num label="Nivel del agua (sobre la zapata)" q="len" value={data.pool.hwi} onChange={(v) => set({ pool: { ...data.pool, hwi: Math.min(Math.max(v, 0.1), data.H) } })} min={0.1} hint="Hasta la altura de la pantalla" />
+                  </div>
+                  <div className="hint">Con la piscina activa se ignoran el suelo sobre el pie y el empuje pasivo (el frente es el interior de la piscina). El agua llena genera un momento invertido (tracción en la cara frontal) que se verifica con el acero de esa cara.</div>
+                </>
+              )}
+            </>
+          )}
         </Acc>
 
         <Acc title="Sismo (Mononobe–Okabe)" icon={<Activity size={18} />}>
@@ -362,6 +376,20 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
           ]}
         />
+        {res?.pool && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="hint">Condición mostrada</span>
+            {(['vacia', 'llena'] as const).map((k) => {
+              const st = res.pool!.states.find((q) => q.id === k)!;
+              return (
+                <button key={k} className={'btn small' + (poolView === k ? ' primary' : '')} onClick={() => setPoolView(k)}>
+                  {st.label} {st.res.ok ? '✓' : '✗'}
+                </button>
+              );
+            })}
+            <span className="hint">h agua = {res.pool.hwi.toFixed(2)} m</span>
+          </div>
+        )}
         {!res && <Alert>No fue posible calcular con los datos actuales.</Alert>}
         {res && tab === 'seccion' && <WallSection res={res} theme={th} />}
         {res && tab === 'estabilidad' && <WallStability res={res} />}
@@ -384,6 +412,13 @@ function Summary({ res }: { res: WallResults }) {
         {res.ok ? <CheckCircle2 /> : <XCircle />}
         {res.ok ? 'El muro cumple todas las verificaciones.' : 'El muro NO cumple alguna verificación: ajuste la geometría.'}
       </div>
+      {res.pool && (
+        <div className="kpis">
+          {res.pool.states.map((q) => (
+            <Kpi key={q.id} label={q.label} value={q.res.ok ? 'Cumple' : 'No cumple'} sub={`FS vol. ${isFinite(q.res.staticCase.FSot) ? q.res.staticCase.FSot.toFixed(2) : '∞'} · FS desl. ${isFinite(q.res.staticCase.FSsl) ? q.res.staticCase.FSsl.toFixed(2) : '∞'} · q máx. ${isFinite(q.res.staticCase.qmax) ? q.res.staticCase.qmax.toFixed(0) : '—'} kPa`} />
+          ))}
+        </div>
+      )}
       {res.warnings.length > 0 && <div className="stack" style={{ gap: 8 }}>{res.warnings.map((w, i) => <Alert key={i}>{w}</Alert>)}</div>}
       <div className="kpis">
         <Kpi label="FS volcamiento" value={isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} sub={`mín. ${c.fsOTreq}`} />

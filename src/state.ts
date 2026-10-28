@@ -323,6 +323,22 @@ export function exampleFootings(): { title: string; desc: string; make: () => Fo
   ];
 }
 
-export function exampleWalls(): { type: WallType; make: () => WallInput }[] {
-  return (['cantilever', 'counterfortInt', 'counterfortExt', 'gravityConcrete', 'gravityMasonry', 'masonryReinforced', 'masonryCfInt', 'masonryCfExt', 'gabion'] as WallType[]).map((t) => ({ type: t, make: () => defaultWall(t) }));
+export function exampleWalls(): { type: WallType; title?: string; desc?: string; make: () => WallInput }[] {
+  const base = (['cantilever', 'counterfortInt', 'counterfortExt', 'gravityConcrete', 'gravityMasonry', 'masonryReinforced', 'masonryCfInt', 'masonryCfExt', 'gabion'] as WallType[]).map((t) => ({ type: t, make: () => defaultWall(t) }));
+  const pool = (title: string, desc: string, type: WallType, hwi: number) => ({
+    type,
+    title,
+    desc,
+    make: () => {
+      const w = defaultWall(type);
+      w.name = type === 'cantilever' ? 'Muro de piscina' : 'Muro de piscina (bloque)';
+      w.pool = { on: true, hwi };
+      return w;
+    },
+  });
+  return [
+    ...base,
+    pool('Muro de piscina de concreto', 'Voladizo con agua en el lado interior: se evalúan piscina vacía y llena.', 'cantilever', 2.4),
+    pool('Muro de piscina de bloque', 'Mampostería reforzada con agua interior: vacía y llena.', 'masonryReinforced', 2.0),
+  ];
 }

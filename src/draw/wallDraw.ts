@@ -65,6 +65,20 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += text(X(xR) - 4, Y(yw) - 5, `N.F. (${fx(yw)})`, { size: 11, fill: th.water, anchor: 'end', weight: 600 });
   }
 
+  // Agua de la piscina (lado frontal) en la condición llena
+  if (inp.pool.on && inp.poolDepth > 0) {
+    const hw = Math.min(inp.poolDepth, inp.H);
+    const xl = -Math.min(1.0, Math.max(g.xFb, 0.6));
+    s += `<rect x="${X(xl).toFixed(1)}" y="${Y(g.hb + hw).toFixed(1)}" width="${(X(g.xFb) - X(xl)).toFixed(1)}" height="${(hw * sc).toFixed(1)}" fill="${th.water}" opacity=".32"/>`;
+    s += line(X(xl), Y(g.hb + hw), X(g.xFb), Y(g.hb + hw), th.water, 2, '7 4');
+    s += text(X(xl) + 6, Y(g.hb + hw) - 6, `Agua de la piscina (h = ${fx(hw)})`, { size: 11, fill: th.water, weight: 700 });
+    for (let k = 1; k <= 4; k++) {
+      const yy = g.hb + (hw * k) / 5;
+      const len = ((hw - (hw * k) / 5) / hw) * 0.5 + 0.08;
+      s += arrow(X(g.stemFrontX(yy - g.hb)) - len * sc, Y(yy), X(g.stemFrontX(yy - g.hb)), Y(yy), th.water, 1.4, 5);
+    }
+  }
+
   // Elementos
   const masonryStem = inp.type === 'gravityMasonry' || isMasonryStem(inp.type);
   if (g.basePoly) s += poly(g.basePoly.map(P), inp.type === 'gravityMasonry' ? 'url(#wmas)' : th.concrete, th.concreteStroke, 2);
@@ -450,7 +464,8 @@ export function wallDiagramFigures(res: WallResults, o: { theme?: Theme; fmt: Fm
     vert('Pantalla — momento mayorado por metro de muro', 'stem-M', [
       { s: st.y, v: st.Mst, color: th.concreteStroke, width: 2.4, fill: true },
       ...(st.seismic ? [{ s: st.y, v: st.Mse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),
-    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', st.seismic ? 'azul: estático · naranja: con sismo · tracción en la cara del relleno' : 'tracción en la cara del relleno');
+      ...(st.Mfront.some((q) => q < -1e-6) ? [{ s: st.y, v: st.Mfront, color: th.bad, width: 2.2, fill: true } as DgSeries] : []),
+    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', st.Mfront.some((q) => q < -1e-6) ? 'derecha: tracción en la cara del relleno · izquierda (rojo): momento invertido por el agua de la piscina' : st.seismic ? 'azul: estático · naranja: con sismo · tracción en la cara del relleno' : 'tracción en la cara del relleno');
     vert('Pantalla — cortante mayorado por metro de muro', 'stem-V', [
       { s: st.y, v: st.Vst, color: th.concreteStroke, width: 2.4, fill: true },
       ...(st.seismic ? [{ s: st.y, v: st.Vse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),

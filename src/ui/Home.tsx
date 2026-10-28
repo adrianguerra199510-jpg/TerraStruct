@@ -100,8 +100,8 @@ export function Home({
             {exw.map((e) => {
               const t = WALL_TYPES.find((w) => w.id === e.type)!;
               return (
-                <button key={e.type} className="btn ghost" style={{ justifyContent: 'space-between', textAlign: 'left' }} onClick={() => onAddWall(e.make())}>
-                  <span><b>{t.label}</b><br /><span className="hint">{t.desc}</span></span>
+                <button key={e.title ?? e.type} className="btn ghost" style={{ justifyContent: 'space-between', textAlign: 'left' }} onClick={() => onAddWall(e.make())}>
+                  <span><b>{e.title ?? t.label}</b><br /><span className="hint">{e.desc ?? t.desc}</span></span>
                   <ArrowRight size={16} />
                 </button>
               );

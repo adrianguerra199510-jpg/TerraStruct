@@ -145,6 +145,10 @@ export interface WallInput {
   delta: number;
   seismic: { on: boolean; kh: number; kv: number };
   includeToeSoil: boolean;
+  /** piscina: agua en el lado interior (frente) del muro; se evalúan las condiciones vacía y llena */
+  pool: { on: boolean; hwi: number };
+  /** (interno) profundidad del agua de la piscina en la condición evaluada, m; 0 = vacía */
+  poolDepth: number;
   /** si es true, el peso de la sobrecarga sobre el talón no se cuenta en volcamiento ni deslizamiento */
   ignoreSurchargeWeight: boolean;
   // --- materiales ---
@@ -224,6 +228,8 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     delta: 20,
     seismic: { on: false, kh: 0.15, kv: 0 },
     includeToeSoil: true,
+    pool: { on: false, hwi: 2.0 },
+    poolDepth: 0,
     ignoreSurchargeWeight: true,
     mat: {
       fc: 28,
@@ -354,4 +360,6 @@ export function gabionWidths(g: GabionInput): number[] {
   const n = Math.max(1, Math.round(g.n));
   return Array.from({ length: n }, (_, k) => Math.max(g.b0 - k * g.step, 0.5));
 }
+/** tipologías en las que se puede activar la piscina (pantalla en voladizo) */
+export const canPool = (t: WallType) => t === 'cantilever' || t === 'masonryReinforced';
 export const isMasonry = (t: WallType) => t === 'gravityMasonry' || isMasonryStem(t);

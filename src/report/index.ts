@@ -8,7 +8,7 @@ import { buildPileReport, pileBlocks } from './pileReport';
 import { Fmt } from '../core/units';
 import { DocBuilder, ReportDoc } from './model';
 import { buildFootingReport, footingBlocks } from './footingReport';
-import { buildWallReport, wallBlocks } from './wallReport';
+import { buildWallReport, wallBlocksPool } from './wallReport';
 import { makePdfBlob } from './pdf';
 import { makeDocxBlob } from './docx';
 
@@ -61,7 +61,7 @@ export function reportForProject(p: Project, fmt: Fmt): ReportDoc {
     d.pagebreak();
     d.blocks.push({ t: 'h1', text: `Muro de retención ${w.data.name}` });
     const b = new DocBuilder(`M${i + 1}-`);
-    wallBlocks(r, fmt, b);
+    wallBlocksPool(r, fmt, b, `M${i + 1}-`);
     d.blocks.push(...b.blocks);
   });
   return { title: `Memoria de cálculo — ${p.info.name}`, subtitle: 'Fundaciones y muros de retención', info: p.info, blocks: d.blocks, footer: 'TerraStruct' };

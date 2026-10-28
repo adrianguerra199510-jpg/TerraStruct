@@ -71,8 +71,8 @@ export interface SectionLoad {
   /** profundidad bajo la corona */
   zs: number;
   /** cortante y momento de servicio por componente (kN/m, kN·m/m) */
-  V: { soil: number; sur: number; water: number; seis: number; inertia: number };
-  M: { soil: number; sur: number; water: number; seis: number; inertia: number };
+  V: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number };
+  M: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number };
 }
 
 export function sectionLoad(g: WallGeom, lat: StemLateral, y: number): SectionLoad {
@@ -86,10 +86,15 @@ export function sectionLoad(g: WallGeom, lat: StemLateral, y: number): SectionLo
   });
   const s = comp(lat.soil), q = comp(lat.sur), w = comp(lat.water), e = comp(lat.seis);
   const inertia = comp((z) => kh * gammaStem * g.stemT(H - z));
+  // Agua de la piscina sobre la cara frontal (empuja hacia el relleno; tracción en la cara frontal)
+  const hwi = g.inp.pool.on ? Math.min(Math.max(g.inp.poolDepth, 0), H) : 0;
+  const dw = Math.max(hwi - y, 0);
+  const poolV = 0.5 * GAMMA_W * dw * dw;
+  const poolM = (GAMMA_W * dw * dw * dw) / 6;
   return {
     y, zs,
-    V: { soil: s.V, sur: q.V, water: w.V, seis: e.V, inertia: inertia.V },
-    M: { soil: s.M, sur: q.M, water: w.M, seis: e.M, inertia: inertia.M },
+    V: { soil: s.V, sur: q.V, water: w.V, seis: e.V, inertia: inertia.V, pool: poolV },
+    M: { soil: s.M, sur: q.M, water: w.M, seis: e.M, inertia: inertia.M, pool: poolM },
   };
 }
 
@@ -103,6 +108,8 @@ export interface StemSection {
   MuStatic: number;
   MuSeismic: number;
   Mu: number;
+  /** momento de la cara frontal (piscina llena: agua interior con el relleno como carga favorable), kN·m/m */
+  MuFront: number;
   Vu: number;
   AsReq: number;
   AsMin: number;
@@ -140,6 +147,8 @@ export interface StemDesign {
   /** relación acero horizontal requerido / adoptado */
   horizRatio: number;
   governing: 'estático' | 'sísmico';
+  /** acero de la cara frontal (piscina llena): requerido máximo, colocado y relación */
+  front: { req: number; prov: number; ratio: number; ok: boolean; maxMu: number } | null;
   sectionOk: boolean;
 }
 
@@ -314,7 +323,7 @@ export interface KeyDesign {
 
 export interface WallDiagrams {
   /** pantalla en voladizo (por metro): momento y cortante mayorados, estático y sísmico, según la altura sobre la zapata */
-  stem: { y: number[]; Mst: number[]; Mse: number[]; Vst: number[]; Vse: number[]; seismic: boolean } | null;
+  stem: { y: number[]; Mst: number[]; Mse: number[]; Vst: number[]; Vse: number[]; /** momento de la cara frontal (piscina llena), negativo */ Mfront: number[]; seismic: boolean } | null;
   /** muros de gravedad / gaviones: esfuerzos de servicio por metro en las secciones */
   gravity: { y: number[]; M: number[]; V: number[]; N: number[] } | null;
   /** contrafuerte (por contrafuerte) */
@@ -413,7 +422,8 @@ function downward(g: WallGeom, res: CaseResult, x: number, region: 'toe' | 'heel
   const tb = baseThickness(g, x);
   let w = inp.mat.gammaC * tb * dead;
   if (region === 'toe') {
-    if (inp.includeToeSoil) w += inp.found.gamma * Math.max(Math.max(inp.Df, g.hb) - tb, 0) * dead;
+    if (inp.pool.on && inp.poolDepth > 0) w += GAMMA_W * Math.min(inp.poolDepth, inp.H) * Math.min(fac.dead, 1);
+    if (inp.includeToeSoil && !inp.pool.on) w += inp.found.gamma * Math.max(Math.max(inp.Df, g.hb) - tb, 0) * dead;
   } else {
     w += soilColumn(g, x) * dead;
     if (inp.fill.q > 0 && fac.liveV > 0 && res.v.some((v) => v.name === 'Sobrecarga sobre el relleno')) w += inp.fill.q * fac.liveV;
@@ -538,19 +548,22 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     const L = sectionLoad(g, lat, y);
     const t = g.stemT(y);
     const d = t - m.cover - bar.db / 2000;
-    const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur;
-    const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + 1 * L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0;
-    const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur;
-    const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + 1 * L.V.sur + f.eq * (L.V.seis + L.V.inertia) : 0;
-    const Mu = Math.max(Mst, Mse);
+    // el agua de la piscina es favorable para la cara posterior (factor mínimo) y desfavorable para la frontal
+    const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool;
+    const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + 1 * L.M.sur + f.eq * (L.M.seis + L.M.inertia) - f.deadMin * L.M.pool : 0;
+    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0;
+    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil) : 0;
+    const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur - f.deadMin * L.V.pool;
+    const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + 1 * L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
+    const Mu = Math.max(Mst, Mse, 0);
     if (Mse > Mst && k === 0) seismicGov = true;
-    const Vu = Math.max(Vst, Vse);
+    const Vu = Math.max(Vst, Vse, VuFront);
     const fr = flexureAs(Mu, 1, d, m.fc, m.fy);
     const asReq = isFinite(fr.As) ? fr.As : 1e6;
     const asMinF = asMinFlex(d, m.fc, m.fy);
     const asMinW = rhoVertMin(bar.db, m.fy) * t * 1e4;
     const asDes = asDesign(asReq, asMinF, asMinW);
-    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, Vu, AsReq: asReq, AsMin: Math.max(asMinF, asMinW), AsDes: asDes, phiMn: 0, ok: fr.ok });
+    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, MuFront, Vu, AsReq: asReq, AsMin: Math.max(asMinF, asMinW), AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
   const layers = m.stemLayers;
   const vertAuto = !(m.stemVertS > 0);
@@ -579,9 +592,10 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const d0 = secs[0].d;
   const yCrit = Math.min(d0, inp.H);
   const Lc = sectionLoad(g, lat, yCrit);
-  const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur;
-  const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) : 0;
-  const Vu = Math.max(Vst, Vse);
+  const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
+  const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
+  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool - f.deadMin * Lc.V.soil) : 0;
+  const Vu = Math.max(Vst, Vse, VuFr);
   const dC = g.stemT(yCrit) - m.cover - bar.db / 2000;
   const cap = oneWayVc(1, dC, m.fc, (base.asProv * 1e-4) / dC, m.code, m.lambda);
   const phiVc = PHI_SHEAR * cap.Vc;
@@ -590,7 +604,15 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const rhoH = rhoHorizMin(barH.db, m.fy);
   const AsH = rhoH * tAvg * 1e4;
   const rhoV = rhoVertMin(bar.db, m.fy);
-  const front: Detailing = layers === 2 ? chooseSpacing(0.5 * rhoV * tAvg * 1e4, barH, 0.45) : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
+  // Cara frontal: acero mínimo o, con la piscina llena, el necesario para el momento invertido
+  const frontReq = Math.max(...secs.map((q) => (q.MuFront > 1e-6 ? (() => { const r = flexureAs(q.MuFront, 1, q.d, m.fc, m.fy); return isFinite(r.As) ? Math.max(r.As, asMinFlex(q.d, m.fc, m.fy)) : 1e6; })() : 0)));
+  const frontMu = Math.max(...secs.map((q) => q.MuFront));
+  const frontMin = 0.5 * rhoV * tAvg * 1e4;
+  const front: Detailing =
+    layers === 2
+      ? frontReq > frontMin ? chooseSpacing(frontReq, bar, 0.45) : chooseSpacing(frontMin, barH, 0.45)
+      : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
+  const frontInfo = frontMu > 1e-6 ? { req: frontReq, prov: front.asProv, ratio: frontReq / Math.max(front.asProv, 1e-9), ok: front.asProv + 1e-9 >= frontReq, maxMu: frontMu } : null;
   const horizAuto = !(m.horizS > 0);
   const hDet: Detailing = !m.horizOn
     ? { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true }
@@ -608,7 +630,8 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     critical: { y: yCrit, d: dC, Vu, phiVc, ratio: Vu / phiVc, formula: cap.formula },
     anchorage: { ldh, ld, available: avail, ok: avail >= ldh },
     governing: seismicGov ? 'sísmico' : 'estático',
-    sectionOk: secs.every((s) => s.ok) && Vu <= phiVc,
+    front: frontInfo,
+    sectionOk: secs.every((s) => s.ok) && Vu <= phiVc && (frontInfo ? frontInfo.ok : true),
   };
 }
 
@@ -669,17 +692,19 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     const L = sectionLoad(g, lat, y);
     const t = g.stemT(y);
     const d = layers === 1 ? t / 2 : t - 0.05 - bar.db / 2000; // 1 capa: barra centrada en la celda; 2 capas: barra del lado del relleno
-    const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur;
-    const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0;
-    const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur;
-    const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) : 0;
-    const Mu = Math.max(Mst, Mse);
+    const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool;
+    const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) - f.deadMin * L.M.pool : 0;
+    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0;
+    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil) : 0;
+    const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur - f.deadMin * L.V.pool;
+    const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
+    const Mu = Math.max(Mst, Mse, 0);
     if (Mse > Mst && k === 0) seismicGov = true;
     const fr = masonryFlexure(Mu, d, m.fm, m.fy);
     const asReq = isFinite(fr.As) ? fr.As : 1e6;
     const asMinW = 0.0007 * t * 1e4;
     const asDes = Math.max(asReq, asMinW);
-    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, Vu: Math.max(Vst, Vse), AsReq: asReq, AsMin: asMinW, AsDes: asDes, phiMn: 0, ok: fr.ok });
+    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, MuFront, Vu: Math.max(Vst, Vse, VuFront), AsReq: asReq, AsMin: asMinW, AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
   const vertAuto = !(m.stemVertS > 0);
   const base: Detailing = vertAuto ? chooseSpacingModule(secs[0].AsDes, bar) : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(0)} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
@@ -706,9 +731,10 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
   const d0 = secs[0].d;
   const yCrit = Math.min(d0, inp.H);
   const Lc = sectionLoad(g, lat, yCrit);
-  const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur;
-  const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) : 0;
-  const Vu = Math.max(Vst, Vse);
+  const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
+  const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
+  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool - f.deadMin * Lc.V.soil) : 0;
+  const Vu = Math.max(Vst, Vse, VuFr);
   const Mcrit = Math.max(secs[0].Mu, 1e-6);
   const mvd = Math.min(1, Mcrit / Math.max(Vu * d0, 1e-6));
   const fmPsi = m.fm * 145.038;
@@ -725,6 +751,11 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     ? { text: 'No se coloca', spacing: 0.4, asProv: 0, ok: true }
     : horizAuto ? chooseSpacingModule(AsH, barH, 0.2, 1.2) : { text: `${barH.id} @ ${(m.horizS * 100).toFixed(0)} cm`, spacing: m.horizS, asProv: barH.area / m.horizS, ok: true };
   const horizRatio = m.horizOn ? AsH / Math.max(hDet.asProv, 1e-9) : Infinity;
+  // Cara frontal (piscina llena): la barra centrada, o la de la segunda capa, resiste el momento invertido con la misma sección
+  const frontMu = Math.max(...secs.map((q) => q.MuFront));
+  const frontProv = layers === 2 || layers === 1 ? base.asProv : 0;
+  const frontReq = Math.max(...secs.map((q) => (q.MuFront > 1e-6 ? (() => { const r = masonryFlexure(q.MuFront, q.d, m.fm, m.fy); return isFinite(r.As) ? Math.max(r.As, 0.0007 * q.t * 1e4) : 1e6; })() : 0)));
+  const mFront = frontMu > 1e-6 ? { req: frontReq, prov: frontProv, ratio: frontReq / Math.max(frontProv, 1e-9), ok: frontProv + 1e-9 >= frontReq, maxMu: frontMu } : null;
   const ld = developmentLength(bar.db, m.fy, m.fc, { lambda: m.lambda });
   const ldh = hookDevelopment(bar.db, m.fy, m.fc, m.lambda);
   return {
@@ -734,7 +765,8 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     critical: { y: yCrit, d: d0, Vu, phiVc: phiVn, ratio: Vu / phiVn, formula: 'φVn = 0.8·[(4.0 − 1.75·Mu/(Vu·dv))·An·√f′m] (TMS 402 SD, simplificado)' },
     anchorage: { ldh, ld, available: g.hb - m.coverFound, ok: g.hb - m.coverFound >= ldh },
     masonry: true, governing: seismicGov ? 'sísmico' : 'estático',
-    sectionOk: secs.every((s) => s.ok) && Vu <= phiVn,
+    front: mFront,
+    sectionOk: secs.every((s) => s.ok) && Vu <= phiVn && (mFront ? mFront.ok : true),
   };
 }
 
@@ -1184,17 +1216,18 @@ function wallDiagrams(g: WallGeom, uls: { label: string; res: CaseResult }[], d:
   } else if (d.stem) {
     const lat = stemLateral(g);
     const N = 40;
-    const y: number[] = [], Mst: number[] = [], Mse: number[] = [], Vst: number[] = [], Vse: number[] = [];
+    const y: number[] = [], Mst: number[] = [], Mse: number[] = [], Vst: number[] = [], Vse: number[] = [], Mfr: number[] = [];
     for (let k = 0; k <= N; k++) {
       const yy = (H * k) / N;
       const L = sectionLoad(g, lat, yy);
       y.push(yy);
-      Mst.push(f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur);
-      Vst.push(f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur);
-      Mse.push(inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) : 0);
-      Vse.push(inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) : 0);
+      Mst.push(f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool);
+      Vst.push(f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur - f.deadMin * L.V.pool);
+      Mse.push(inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) - f.deadMin * L.M.pool : 0);
+      Vse.push(inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0);
+      Mfr.push(L.M.pool > 0 ? -Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0);
     }
-    out.stem = { y, Mst, Mse, Vst, Vse, seismic: inp.seismic.on };
+    out.stem = { y, Mst, Mse, Vst, Vse, Mfront: Mfr, seismic: inp.seismic.on };
   }
   // zapata: pie y talón como voladizos (muros sin contrafuertes en la zapata)
   if (!isGravity(inp.type) && g.hb > 1e-6 && !isCounterfort(inp.type)) {

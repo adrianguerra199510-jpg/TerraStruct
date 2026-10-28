@@ -3,7 +3,7 @@
 
 import { WallGeom, soilWeight } from './wallGeom';
 import { FaceThrust, faceThrust, kaCoulomb, kaRankine, kaeMononobe, kpRankine, passiveForce, rad, GAMMA_W, Thrust } from './earth';
-import { isGravity, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
+import { isGravity, canPool, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
 import { clipHalfPlane, polyProps } from './geometry';
 
 export interface Factors {
@@ -116,6 +116,8 @@ export interface CaseResult {
   Mres: number;
   Mot: number;
   FSot: number;
+  /** volcamiento hacia el relleno (alrededor del extremo del talón): solo con agua de piscina; ∞ si no aplica */
+  FSotBack: number;
   mu: number;
   cohesion: number;
   Rfric: number;
@@ -198,7 +200,9 @@ export function evalCase(
   const cf = g.parts.find((p) => p.id === 'cf');
   if (cf && cfInternal(inp.type)) heelW -= cf.W * (inp.fill.gamma / (isMasonryStem(inp.type) ? inp.mat.gammaM : inp.mat.gammaC));
   addV('Suelo sobre el talón', heelW * dead, hs.x);
-  if (inp.includeToeSoil && g.toeSoilPoly) {
+  const poolOn = inp.pool.on && canPool(inp.type);
+  const hwi = poolOn ? Math.min(Math.max(inp.poolDepth, 0), inp.H) : 0;
+  if (inp.includeToeSoil && g.toeSoilPoly && !poolOn) {
     const ts = soilWeight(g.toeSoilPoly, inp.found.gamma, inp.found.gamma, -Infinity);
     let toeW = ts.W;
     if (cf && cfExternal(inp.type)) {
@@ -207,6 +211,11 @@ export function evalCase(
       toeW -= polyProps(below).A * (inp.cf.t / inp.cf.s) * inp.found.gamma;
     }
     addV('Suelo sobre el pie', toeW * dead, ts.x);
+  }
+  // Piscina llena: agua sobre el pie (peso favorable) y empuje hidrostático sobre la cara frontal (hacia el relleno)
+  if (hwi > 1e-6) {
+    if (g.xFb > 1e-6) addV('Agua de la piscina sobre el pie', GAMMA_W * hwi * g.xFb * Math.min(fac.dead, 1), g.xFb / 2);
+    addH('Empuje del agua de la piscina (cara frontal)', -0.5 * GAMMA_W * hwi * hwi * Math.min(fac.water, 1), g.hb + hwi / 3);
   }
   // Sobrecarga sobre el relleno
   if (opts.surchargeV && inp.fill.q > 0 && fac.liveV > 0) {
@@ -251,11 +260,15 @@ export function evalCase(
   const Mres = v.reduce((s, a) => s + a.M, 0);
   const Mot = h.reduce((s, a) => s + a.M, 0);
   const FSot = Mot > 1e-9 ? Mres / Mot : Infinity;
+  // Volcamiento hacia el relleno (piscina llena): momentos respecto al extremo del talón
+  const MotBack = h.reduce((a, q) => a - q.M, 0);
+  const MresBack = v.reduce((a, q) => a + q.V * (g.B - q.x), 0);
+  const FSotBack = MotBack > 1e-9 ? MresBack / MotBack : Infinity;
 
   // Pasivo (solo comprobación de servicio al deslizamiento)
   let passive: CaseResult['passive'] = null;
   let Rpass = 0;
-  if (opts.passive && inp.passive.use) {
+  if (opts.passive && inp.passive.use && !poolOn) {
     const Kp = em.kpFront;
     const z2 = Math.max(inp.Df, g.hb) + (inp.key.enabled ? inp.key.d : 0);
     const z1 = Math.min(inp.passive.ignoreTop, z2);
@@ -309,7 +322,8 @@ export function evalCase(
   const Bc = fullContact ? g.B : contactLen;
   const Rfric = mu * Math.max(SumV, 0);
   const Rcoh = cohesion * Bc;
-  const FSsl = SumH > 1e-9 ? (Rfric + Rcoh + Rpass) / SumH : Infinity;
+  // Si la resultante horizontal empuja hacia el relleno (piscina llena) resisten la fricción y la cohesión de la base
+  const FSsl = SumH > 1e-9 ? (Rfric + Rcoh + Rpass) / SumH : SumH < -1e-9 ? (Rfric + Rcoh) / -SumH : Infinity;
 
   const qAt = (x: number) => {
     if (SumV <= 1e-9 || xbar <= 0) return 0;
@@ -326,10 +340,10 @@ export function evalCase(
   const fsOTreq = seismic ? inp.factors.fsOTe : inp.factors.fsOT;
   const fsSLreq = seismic ? inp.factors.fsSLe : inp.factors.fsSL;
   return {
-    label, seismic, factors: fac, v, h, passive, SumV, SumH, Mres, Mot, FSot, mu, cohesion, Rfric, Rcoh, Rpass, FSsl, xbar, e, B: g.B, fullContact, contactLen,
+    label, seismic, factors: fac, v, h, passive, SumV, SumH, Mres, Mot, FSot, FSotBack, mu, cohesion, Rfric, Rcoh, Rpass, FSsl, xbar, e, B: g.B, fullContact, contactLen,
     qToe, qHeel, qmax, qmin, qaAllow, bearing, fsOTreq, fsSLreq, uplift,
     ok: {
-      ot: FSot >= fsOTreq,
+      ot: FSot >= fsOTreq && FSotBack >= fsOTreq,
       sl: FSsl >= fsSLreq,
       q: qmax <= qaAllow + 1e-9,
       e: Math.abs(e) <= (seismic ? g.B / 3 : g.B / 6) + 1e-9,
