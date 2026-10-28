@@ -2,12 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { FileText, FileDown, Loader2, FileType2, Eye, X } from 'lucide-react';
 import { FootingInput } from '../core/footing';
 import { WallInput } from '../core/wallTypes';
+import { PileInput } from '../core/pileTypes';
 import { Project, ProjectInfo } from '../state';
 import { Card, Alert, useUnits } from './common';
 import { ReportView } from './ReportView';
-import { reportForFooting, reportForProject, reportForWall, renderReport, downloadBlob, safeFile, Format } from '../report';
+import { reportForFooting, reportForPile, reportForProject, reportForWall, renderReport, downloadBlob, safeFile, Format } from '../report';
 
-export function ReportButtons({ kind, footing, wall, project, info: infoProp }: { kind: 'footing' | 'wall' | 'project'; footing?: FootingInput; wall?: WallInput; project?: Project; info: ProjectInfo }) {
+export function ReportButtons({ kind, footing, wall, pile, project, info: infoProp }: { kind: 'footing' | 'wall' | 'pile' | 'project'; footing?: FootingInput; wall?: WallInput; pile?: PileInput; project?: Project; info: ProjectInfo }) {
   const { fmt } = useUnits();
   const [busy, setBusy] = useState<Format | 'preview' | null>(null);
   const [error, setError] = useState('');
@@ -20,9 +21,9 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
     try {
       await new Promise((r) => setTimeout(r, 30));
       const inf = info;
-      const doc = kind === 'footing' ? reportForFooting(footing!, fmt, inf) : kind === 'wall' ? reportForWall(wall!, fmt, inf) : reportForProject(project!, fmt);
+      const doc = kind === 'footing' ? reportForFooting(footing!, fmt, inf) : kind === 'pile' ? reportForPile(pile!, fmt, inf) : kind === 'wall' ? reportForWall(wall!, fmt, inf) : reportForProject(project!, fmt);
       const blob = await renderReport(doc, format);
-      const name = safeFile(kind === 'footing' ? `Memoria_${footing!.name}` : kind === 'wall' ? `Memoria_${wall!.name}` : `Memoria_${inf.name}`) + (format === 'pdf' ? '.pdf' : '.docx');
+      const name = safeFile(kind === 'footing' ? `Memoria_${footing!.name}` : kind === 'pile' ? `Memoria_${pile!.name}` : kind === 'wall' ? `Memoria_${wall!.name}` : `Memoria_${inf.name}`) + (format === 'pdf' ? '.pdf' : '.docx');
       if (preview) setPreview({ url: URL.createObjectURL(blob), name });
       else downloadBlob(blob, name);
     } catch (e: any) {
@@ -36,17 +37,19 @@ export function ReportButtons({ kind, footing, wall, project, info: infoProp }: 
   const what =
     kind === 'footing'
       ? 'datos de entrada, hipótesis, presiones sobre el suelo, deslizamiento y volcamiento, diseño a flexión, cortante y punzonamiento con las fórmulas y los valores sustituidos, figuras y cuadro de armado.'
-      : kind === 'wall'
+      : kind === 'pile'
+        ? 'datos, capacidad geotécnica y estructural de los pilotes, reacciones del grupo, diseño del cabezal (flexión, cortante, punzonamiento) con fórmulas y valores, figuras y cuadro de armado.'
+        : kind === 'wall'
         ? 'datos, coeficientes de empuje, fuerzas y momentos, verificaciones de estabilidad, diseño estructural de cada elemento con fórmulas y valores, figuras y cuadro de armado.'
         : 'carátula con los datos del proyecto, resumen y la memoria de todas las fundaciones y muros del proyecto.';
   const view = useMemo(() => {
     try {
-      return kind === 'footing' ? reportForFooting(footing!, fmt, info) : kind === 'wall' ? reportForWall(wall!, fmt, info) : reportForProject(project!, fmt);
+      return kind === 'footing' ? reportForFooting(footing!, fmt, info) : kind === 'pile' ? reportForPile(pile!, fmt, info) : kind === 'wall' ? reportForWall(wall!, fmt, info) : reportForProject(project!, fmt);
     } catch (e: any) {
       console.error(e);
       return null;
     }
-  }, [kind, footing, wall, project, fmt, info]);
+  }, [kind, footing, wall, pile, project, fmt, info]);
   const closePreview = () => {
     if (preview) URL.revokeObjectURL(preview.url);
     setPreview(null);

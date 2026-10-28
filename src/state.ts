@@ -1,5 +1,6 @@
 import { FootingInput, defaultFooting, defaultColumn } from './core/footing';
 import { WallInput, WallType, defaultWall } from './core/wallTypes';
+import { PileInput, PileKind, defaultPileInput } from './core/pileTypes';
 import { UnitSystem } from './core/units';
 import { footingPresetPoly, defaultPresetParams } from './core/shapes';
 
@@ -24,6 +25,7 @@ export interface Project {
   info: ProjectInfo;
   footings: Item<FootingInput>[];
   walls: Item<WallInput>[];
+  piles: Item<PileInput>[];
   units: UnitSystem;
   theme: 'light' | 'dark';
 }
@@ -45,6 +47,7 @@ export function newProject(): Project {
     info: defaultInfo(),
     footings: [{ id: uid(), data: defaultFooting() }],
     walls: [{ id: uid(), data: defaultWall('cantilever') }],
+    piles: [],
     units: 'SI',
     theme: 'light',
   };
@@ -72,6 +75,7 @@ export function normalizeProject(raw: any): Project {
   p.walls = Array.isArray(raw?.walls)
     ? raw.walls.map((it: any) => ({ id: it.id ?? uid(), data: normalizeWall(it.data) }))
     : base.walls;
+  p.piles = Array.isArray(raw?.piles) ? raw.piles.map((it: any) => ({ id: it.id ?? uid(), data: normalizePile(it.data) })) : [];
   return p;
 }
 
@@ -84,6 +88,44 @@ export function normalizeFooting(raw: any): FootingInput {
   if (Array.isArray(raw?.vertices)) f.vertices = raw.vertices;
   if (Array.isArray(raw?.combos)) f.combos = raw.combos;
   return f;
+}
+
+export function normalizePile(raw: any): PileInput {
+  const k: PileKind = raw?.pile?.kind ?? 'concrete';
+  return deepMerge(defaultPileInput(k), raw);
+}
+
+export function examplePiles(): { title: string; desc: string; make: () => PileInput }[] {
+  return [
+    { title: 'Cabezal de 4 pilotes de concreto', desc: 'Pilotes preexcavados Ø50 cm de 18 m, columna 50×50 cm con momento sísmico.', make: () => defaultPileInput('concrete') },
+    {
+      title: 'Cabezal con pilotes de tubo de acero',
+      desc: 'Tubo Ø356 mm (e = 9.5 mm), 10 pilotes hincados.',
+      make: () => {
+        const i = defaultPileInput('pipe');
+        i.name = 'Cabezal CP-T';
+        i.layout = { ...i.layout, mode: 'custom', pts: [0, 1].flatMap((j) => [0, 1, 2, 3, 4].map((k) => ({ x: (k - 2) * 1.1, y: (j - 0.5) * 1.1 }))) };
+        i.cap.h = 0.9;
+        i.cap.edge = 0.5;
+        return i;
+      },
+    },
+    {
+      title: 'Cabezal con pilotes H de acero',
+      desc: 'Perfiles HP12x74 hincados a rechazo, grupo de 6.',
+      make: () => {
+        const i = defaultPileInput('hpile');
+        i.name = 'Cabezal CP-H';
+        i.layout = { ...i.layout, mode: 'grid', nx: 3, ny: 2, sx: 1.1, sy: 1.1 };
+        i.cap.h = 0.9;
+        i.cap.edge = 0.5;
+        i.geo.mode = 'user';
+        i.geo.QaC = 600;
+        i.geo.QaT = 150;
+        return i;
+      },
+    },
+  ];
 }
 
 export function normalizeWall(raw: any): WallInput {

@@ -1,20 +1,23 @@
 import { ICON_PNG } from '../report/iconData';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Home as HomeIcon, Building2, BrickWall, Plus, Copy, Trash2, Moon, Sun, FileText, FolderOpen, Download, ClipboardList, FileSpreadsheet,
+  Home as HomeIcon, Building2, BrickWall, Plus, Copy, Trash2, Moon, Sun, FileText, FolderOpen, Download, ClipboardList, FileSpreadsheet, Pickaxe,
 } from 'lucide-react';
 import { Project, Item, loadProject, saveProject, newProject, normalizeProject, uid } from '../state';
 import { FootingInput, defaultFooting } from '../core/footing';
 import { WallInput, defaultWall } from '../core/wallTypes';
+import { PileInput } from '../core/pileTypes';
+import { defaultPileInput } from '../core/pileTypes';
 import { UnitsContext, Card, Txt, useToast } from './common';
 import { makeFmt } from '../core/units';
 import { Home } from './Home';
 import { FootingPage } from './FootingPage';
 import { WallPage } from './WallPage';
+import { PilePage } from './PilePage';
 import { ImportDialog } from './ImportDialog';
 import { ReportButtons } from './ReportButtons';
 
-type Route = { m: 'home' } | { m: 'project' } | { m: 'footing'; id: string } | { m: 'wall'; id: string };
+type Route = { m: 'home' } | { m: 'project' } | { m: 'footing'; id: string } | { m: 'wall'; id: string } | { m: 'pile'; id: string };
 
 export function App() {
   const [project, setProject] = useState<Project>(() => loadProject());
@@ -32,6 +35,7 @@ export function App() {
   const ctx = useMemo(() => ({ sys: project.units, fmt }), [project.units, fmt]);
 
   const footing = route.m === 'footing' ? project.footings.find((f) => f.id === route.id) : undefined;
+  const pile = route.m === 'pile' ? project.piles.find((w) => w.id === route.id) : undefined;
   const wall = route.m === 'wall' ? project.walls.find((w) => w.id === route.id) : undefined;
 
   const addFooting = (data: FootingInput = defaultFooting()) => {
@@ -50,6 +54,15 @@ export function App() {
     setProject((p) => ({ ...p, footings: [...p.footings, ...its] }));
     setRoute({ m: 'footing', id: its[0].id });
     toast.show(`${its.length} zapata(s) creadas`);
+  };
+  const addPile = (data: PileInput = defaultPileInput()) => {
+    const it: Item<PileInput> = { id: uid(), data: { ...data, name: uniqueName(data.name, project.piles.map((f) => f.data.name)) } };
+    setProject((p) => ({ ...p, piles: [...p.piles, it] }));
+    setRoute({ m: 'pile', id: it.id });
+  };
+  const removePile = (id: string) => {
+    setProject((p) => ({ ...p, piles: p.piles.filter((f) => f.id !== id) }));
+    if (route.m === 'pile' && route.id === id) setRoute({ m: 'home' });
   };
   const addWall = (data: WallInput = defaultWall('cantilever')) => {
     const it: Item<WallInput> = { id: uid(), data: { ...data, name: uniqueName(data.name, project.walls.map((w) => w.data.name)) } };
@@ -89,9 +102,9 @@ export function App() {
   };
 
   const title =
-    route.m === 'home' ? 'Inicio' : route.m === 'project' ? 'Datos del proyecto y memoria completa' : route.m === 'footing' ? footing?.data.name ?? 'Fundación' : wall?.data.name ?? 'Muro';
+    route.m === 'home' ? 'Inicio' : route.m === 'project' ? 'Datos del proyecto y memoria completa' : route.m === 'footing' ? footing?.data.name ?? 'Fundación' : route.m === 'pile' ? pile?.data.name ?? 'Pilotes' : wall?.data.name ?? 'Muro';
   const sub =
-    route.m === 'footing' ? 'Fundación superficial · ACI 318' : route.m === 'wall' ? 'Muro de retención' : route.m === 'project' ? project.info.name : 'Fundaciones y muros de retención';
+    route.m === 'footing' ? 'Fundación superficial · ACI 318' : route.m === 'pile' ? 'Pilotes y cabezal · ACI 318 / AISC 360' : route.m === 'wall' ? 'Muro de retención' : route.m === 'project' ? project.info.name : 'Fundaciones y muros de retención';
 
   return (
     <UnitsContext.Provider value={ctx}>
@@ -121,6 +134,20 @@ export function App() {
               </button>
               <button className="nav-mini" title="Duplicar" onClick={() => addFooting(structuredClone(f.data))}><Copy size={14} /></button>
               <button className="nav-mini" title="Eliminar" onClick={() => confirm(`¿Eliminar «${f.data.name}»?`) && removeFooting(f.id)}><Trash2 size={14} /></button>
+            </div>
+          ))}
+
+          <div className="nav-title">
+            <span>Pilotes y cabezales</span>
+            <button className="nav-mini" title="Nuevo cabezal con pilotes" onClick={() => addPile()}><Plus size={15} /></button>
+          </div>
+          {project.piles.map((f) => (
+            <div className="nav-item-row" key={f.id}>
+              <button className={'nav-btn' + (route.m === 'pile' && route.id === f.id ? ' active' : '')} onClick={() => setRoute({ m: 'pile', id: f.id })}>
+                <Pickaxe size={17} /> <span className="grow">{f.data.name}</span>
+              </button>
+              <button className="nav-mini" title="Duplicar" onClick={() => addPile(structuredClone(f.data))}><Copy size={14} /></button>
+              <button className="nav-mini" title="Eliminar" onClick={() => confirm(`¿Eliminar «${f.data.name}»?`) && removePile(f.id)}><Trash2 size={14} /></button>
             </div>
           ))}
 
@@ -169,16 +196,18 @@ export function App() {
             <span className="spacer" />
             <span className="chip"><FileText size={13} /> {project.info.name}</span>
           </div>
-          <div className={'content' + (route.m === 'footing' || route.m === 'wall' ? ' fill' : '')}>
+          <div className={'content' + (route.m === 'footing' || route.m === 'wall' || route.m === 'pile' ? ' fill' : '')}>
             {route.m === 'home' && (
               <Home
                 onGo={(m) => {
                   if (m === 'project') setRoute({ m: 'project' });
+                  else if (m === 'pile') (project.piles[0] ? setRoute({ m: 'pile', id: project.piles[0].id }) : addPile());
                   else if (m === 'footing') setRoute(project.footings[0] ? { m: 'footing', id: project.footings[0].id } : { m: 'home' });
                   else setRoute(project.walls[0] ? { m: 'wall', id: project.walls[0].id } : { m: 'home' });
                 }}
                 onAddFooting={(f) => addFooting(f)}
                 onAddWall={(w) => addWall(w)}
+                onAddPile={(x) => addPile(x)}
                 onOpen={() => fileRef.current?.click()}
                 onSave={saveFile}
                 onNew={() => confirm('¿Descartar el proyecto actual y empezar uno nuevo?') && (setProject(newProject()), setRoute({ m: 'home' }))}
@@ -191,6 +220,15 @@ export function App() {
                 theme={project.theme}
                 info={project.info}
                 onChange={(d) => setProject((p) => ({ ...p, footings: p.footings.map((f) => (f.id === footing.id ? { ...f, data: d } : f)) }))}
+              />
+            )}
+            {route.m === 'pile' && pile && (
+              <PilePage
+                key={pile.id}
+                data={pile.data}
+                theme={project.theme}
+                info={project.info}
+                onChange={(d) => setProject((p) => ({ ...p, piles: p.piles.map((w) => (w.id === pile.id ? { ...w, data: d } : w)) }))}
               />
             )}
             {route.m === 'wall' && wall && (

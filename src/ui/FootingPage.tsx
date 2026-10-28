@@ -360,7 +360,7 @@ function FootingShapeEditor({ data, onChange }: { data: FootingInput; onChange: 
   );
 }
 
-function ColumnEditor({ col, setCol }: { col: FootingColumn; setCol: (p: Partial<FootingColumn>) => void }) {
+export function ColumnEditor({ col, setCol }: { col: FootingColumn; setCol: (p: Partial<FootingColumn>) => void }) {
   const g = col.geom;
   const setG = (patch: Partial<typeof g>) => setCol({ geom: { ...g, ...patch } });
   const s = g.shape;

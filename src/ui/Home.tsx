@@ -1,16 +1,18 @@
 import { ICON_PNG } from '../report/iconData';
 import React from 'react';
-import { Building2, BrickWall, FilePlus2, FolderOpen, Download, ArrowRight, FileText, Shapes, ShieldCheck, Sparkles } from 'lucide-react';
+import { Building2, BrickWall, Pickaxe, FilePlus2, FolderOpen, Download, ArrowRight, FileText, Shapes, ShieldCheck, Sparkles } from 'lucide-react';
 import { Card } from './common';
-import { exampleFootings, exampleWalls } from '../state';
+import { exampleFootings, exampleWalls, examplePiles } from '../state';
+import { PileInput } from '../core/pileTypes';
 import { WALL_TYPES } from '../core/wallTypes';
 import { FootingInput } from '../core/footing';
 import { WallInput } from '../core/wallTypes';
 
 export function Home({
-  onGo, onAddFooting, onAddWall, onOpen, onSave, onNew,
+  onGo, onAddFooting, onAddWall, onAddPile, onOpen, onSave, onNew,
 }: {
-  onGo: (m: 'footing' | 'wall' | 'project') => void;
+  onGo: (m: 'footing' | 'wall' | 'pile' | 'project') => void;
+  onAddPile: (p: PileInput) => void;
   onAddFooting: (f: FootingInput) => void;
   onAddWall: (w: WallInput) => void;
   onOpen: () => void;
@@ -19,6 +21,7 @@ export function Home({
 }) {
   const ex = exampleFootings();
   const exw = exampleWalls();
+  const exp = examplePiles();
   return (
     <div className="stack" style={{ maxWidth: 1180, margin: '0 auto' }}>
       <div className="hero">
@@ -42,6 +45,15 @@ export function Home({
             <h3>Fundaciones</h3>
             <p className="hint" style={{ fontSize: 13, margin: '4px 0 0' }}>
               Zapatas aisladas o combinadas con forma poligonal libre, columnas rectangulares, circulares, en L, T, I, cruz o libres. Presiones sin tracción, deslizamiento, volcamiento, flexión, cortante y punzonamiento (ACI 318).
+            </p>
+          </div>
+        </div>
+        <div className="card big-card" onClick={() => onGo('pile')}>
+          <div className="bub" style={{ background: 'linear-gradient(135deg,#6c4fd8,#9a7cf0)' }}><Pickaxe size={28} /></div>
+          <div>
+            <h3>Pilotes y cabezales</h3>
+            <p className="hint" style={{ fontSize: 13, margin: '4px 0 0' }}>
+              Pilotes de concreto o de acero (tubo y perfil H), capacidad geotécnica, reacciones del grupo, flexión lateral y diseño del cabezal por flexión, cortante y punzonamiento.
             </p>
           </div>
         </div>
@@ -77,7 +89,14 @@ export function Home({
             ))}
           </div>
           <div className="stack" style={{ gap: 8 }}>
-            <b style={{ fontSize: 13 }}>Muros de retención</b>
+            <b style={{ fontSize: 13 }}>Pilotes y cabezales</b>
+            {exp.map((e) => (
+              <button key={e.title} className="btn ghost" style={{ justifyContent: 'space-between', textAlign: 'left' }} onClick={() => onAddPile(e.make())}>
+                <span><b>{e.title}</b><br /><span className="hint">{e.desc}</span></span>
+                <ArrowRight size={16} />
+              </button>
+            ))}
+            <b style={{ fontSize: 13, marginTop: 8 }}>Muros de retención</b>
             {exw.map((e) => {
               const t = WALL_TYPES.find((w) => w.id === e.type)!;
               return (

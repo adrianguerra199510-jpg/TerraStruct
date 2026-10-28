@@ -1,0 +1,429 @@
+import React, { useMemo, useState } from 'react';
+import { Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe } from 'lucide-react';
+import { PileInput, PileKind, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
+import { analyzePile, autoSizePile, findCapThickness, PileResults } from '../core/pile';
+import { barList } from '../core/materials';
+import { FootingColumn, defaultColumn } from '../core/footing';
+import { Acc, Alert, Card, Check, CheckCard, CellNum, CellText, Kpi, Num, Sel, Tabs, Tbl, Txt, useUnits } from './common';
+import { DARK, LIGHT } from '../draw/svg';
+import { pilePlanSvg, pileRebarPlanSvg, pileSectionSvg } from '../draw/pileDraw';
+import { ColumnEditor } from './FootingPage';
+import { ReportButtons } from './ReportButtons';
+import { ProjectInfo } from '../state';
+
+type Tab = 'planta' | 'resultados' | 'armado' | 'memoria';
+
+export function PilePage({ data, onChange, theme, info }: { data: PileInput; onChange: (f: PileInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
+  const { fmt } = useUnits();
+  const [tab, setTab] = useState<Tab>('planta');
+  const [comboId, setComboId] = useState('');
+  const [busy, setBusy] = useState('');
+  const res = useMemo(() => {
+    try {
+      return analyzePile(data);
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }, [data]);
+  const th = theme === 'dark' ? DARK : LIGHT;
+  const set = (patch: Partial<PileInput>) => onChange({ ...data, ...patch });
+  const setPile = (patch: Partial<PileInput['pile']>) => set({ pile: { ...data.pile, ...patch } });
+  const setCap = (patch: Partial<PileInput['cap']>) => set({ cap: { ...data.cap, ...patch } });
+  const setGeo = (patch: Partial<PileInput['geo']>) => set({ geo: { ...data.geo, ...patch } });
+  const setLay = (patch: Partial<PileInput['layout']>) => set({ layout: { ...data.layout, ...patch } });
+  const p = data.pile;
+  const combo = res?.service.find((s) => s.combo.id === comboId) ?? (res ? res.service.reduce<any>((a, b) => (!a || b.ratioC > a.ratioC ? b : a), null) : null);
+  const bars = barList(data.cap.barSystem).map((b) => ({ id: b.id, label: b.label }));
+  const pseudoCol: FootingColumn = { ...defaultColumn('c', 'Columna'), geom: data.column.geom, x: data.column.x, y: data.column.y };
+
+  const run = (key: string, fn: () => void) => {
+    setBusy(key);
+    setTimeout(() => {
+      try { fn(); } finally { setBusy(''); }
+    }, 20);
+  };
+
+  return (
+    <div className="split">
+      <div className="left stack">
+        <Acc title="Datos generales" icon={<Settings2 size={18} />} open>
+          <Txt label="Nombre" value={data.name} onChange={(v) => set({ name: v })} />
+        </Acc>
+
+        <Acc title="Pilote" icon={<Pickaxe size={18} />} open>
+          <Sel label="Tipo de pilote" value={p.kind} onChange={(k: PileKind) => set({ pile: { ...defaultPile(k), L: p.L, Lu: p.Lu, nh: p.nh, head: p.head, yAllow: p.yAllow } })} options={PILE_KINDS} />
+          <div className="grid2">
+            {p.kind === 'concrete' && (
+              <>
+                <Sel label="Sección" value={p.shape} onChange={(v) => setPile({ shape: v })} options={[{ id: 'circle', label: 'Circular' }, { id: 'square', label: 'Cuadrada' }]} />
+                <Num label={p.shape === 'circle' ? 'Diámetro' : 'Lado'} q="lencm" value={p.D} onChange={(v) => setPile({ D: v })} min={0.2} />
+                <Num label="f′c" q="stress" value={p.fc} onChange={(v) => setPile({ fc: v })} min={14} />
+                <Num label="fy" q="stress" value={p.fy} onChange={(v) => setPile({ fy: v })} min={240} />
+                <Num label="N.º de barras" value={p.nBars} onChange={(v) => setPile({ nBars: Math.max(4, Math.round(v)) })} min={4} />
+                <Sel label="Barra longitudinal" value={p.bar} onChange={(v) => setPile({ bar: v })} options={bars} />
+                <Sel label="Refuerzo transversal" value={p.spiral ? 's' : 'e'} onChange={(v) => setPile({ spiral: v === 's' })} options={[{ id: 's', label: 'Espiral (φ = 0.75)' }, { id: 'e', label: 'Estribos (φ = 0.65)' }]} />
+                <Sel label="Barra transversal" value={p.tieBar} onChange={(v) => setPile({ tieBar: v })} options={bars} />
+                <Num label="Paso / separación" q="lencm" value={p.tieS} onChange={(v) => setPile({ tieS: v })} min={0.03} />
+                <Num label="Recubrimiento" q="lencm" value={p.cover} onChange={(v) => setPile({ cover: v })} min={0.04} />
+              </>
+            )}
+            {p.kind === 'pipe' && (
+              <>
+                <Num label="Diámetro exterior" q="lencm" value={p.D} onChange={(v) => setPile({ D: v })} min={0.1} />
+                <Num label="Espesor de pared" unit="mm" value={+(p.t * 1000).toFixed(2)} onChange={(v) => setPile({ t: v / 1000 })} min={3} />
+              </>
+            )}
+            {p.kind === 'hpile' && (
+              <>
+                <Sel label="Perfil HP" value={p.hp} onChange={(v) => setPile({ hp: v })} options={HP_SHAPES.map((h) => ({ id: h.id, label: h.id }))} />
+                <Sel label="Eje de flexión" value={p.axis} onChange={(v) => setPile({ axis: v })} options={[{ id: 'weak', label: 'Eje débil' }, { id: 'strong', label: 'Eje fuerte' }]} />
+              </>
+            )}
+            {p.kind !== 'concrete' && (
+              <>
+                <Num label="Fy del acero" q="stress" value={p.Fy} onChange={(v) => setPile({ Fy: v })} min={200} />
+                <Num label="Corrosión por cara" unit="mm" value={+(p.tc * 1000).toFixed(2)} onChange={(v) => setPile({ tc: v / 1000 })} min={0} />
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <Check label="Tapón de suelo en la punta" value={p.plug} onChange={(v) => setPile({ plug: v })} hint="Tubo abierto o perfil H: la punta trabaja con el área total" />
+                </div>
+              </>
+            )}
+            <Num label="Longitud embebida L" q="len" value={p.L} onChange={(v) => setPile({ L: v })} min={2} />
+            <Num label="Longitud libre sobre el terreno" q="len" value={p.Lu} onChange={(v) => setPile({ Lu: v })} min={0} />
+            {p.kind !== 'concrete' && <Num label="K (pandeo)" value={p.K} onChange={(v) => setPile({ K: v })} min={0.5} />}
+            <Sel label="Cabeza del pilote" value={p.head} onChange={(v) => setPile({ head: v })} options={[{ id: 'fixed', label: 'Empotrada en el cabezal' }, { id: 'free', label: 'Libre (articulada)' }]} />
+            <Num label="nh (suelo lateral)" unit="kN/m³" value={p.nh} onChange={(v) => setPile({ nh: v })} min={100} hint="Arena suelta ≈ 2000, media ≈ 5000, densa ≈ 12000; arcilla blanda ≈ 500" />
+            <Num label="Deflexión lateral adm." unit="mm" value={+(p.yAllow * 1000).toFixed(2)} onChange={(v) => setPile({ yAllow: v / 1000 })} min={1} />
+          </div>
+        </Acc>
+
+        <Acc title="Distribución de los pilotes" icon={<Shapes size={18} />} open>
+          <div className="grid2">
+            <Sel label="Disposición" value={data.layout.mode} onChange={(v) => setLay({ mode: v })} options={[{ id: 'grid', label: 'Malla rectangular' }, { id: 'ring', label: 'Anillo (+ centro)' }, { id: 'custom', label: 'Coordenadas libres' }]} />
+            {data.layout.mode === 'grid' && (
+              <>
+                <Num label="Pilotes en X" value={data.layout.nx} onChange={(v) => setLay({ nx: Math.max(1, Math.round(v)) })} min={1} />
+                <Num label="Pilotes en Y" value={data.layout.ny} onChange={(v) => setLay({ ny: Math.max(1, Math.round(v)) })} min={1} />
+                <Num label="Separación en X" q="len" value={data.layout.sx} onChange={(v) => setLay({ sx: v })} min={0.3} />
+                <Num label="Separación en Y" q="len" value={data.layout.sy} onChange={(v) => setLay({ sy: v })} min={0.3} />
+              </>
+            )}
+            {data.layout.mode === 'ring' && (
+              <>
+                <Num label="Pilotes en el anillo" value={data.layout.nRing} onChange={(v) => setLay({ nRing: Math.max(3, Math.round(v)) })} min={3} />
+                <Num label="Radio del anillo" q="len" value={data.layout.R} onChange={(v) => setLay({ R: v })} min={0.3} />
+                <div style={{ gridColumn: '1 / -1' }}><Check label="Pilote central" value={data.layout.center} onChange={(v) => setLay({ center: v })} /></div>
+              </>
+            )}
+          </div>
+          {data.layout.mode === 'custom' && (
+            <div className="tbl-wrap">
+              <table className="tbl">
+                <thead><tr><th>#</th><th className="r">x ({fmt.l('len')})</th><th className="r">y ({fmt.l('len')})</th><th /></tr></thead>
+                <tbody>
+                  {data.layout.pts.map((q, i) => (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td><CellNum q="len" value={q.x} onChange={(x) => setLay({ pts: data.layout.pts.map((w, j) => (j === i ? { ...w, x } : w)) })} /></td>
+                      <td><CellNum q="len" value={q.y} onChange={(y) => setLay({ pts: data.layout.pts.map((w, j) => (j === i ? { ...w, y } : w)) })} /></td>
+                      <td><button className="icon-btn danger" onClick={() => setLay({ pts: data.layout.pts.filter((_, j) => j !== i) })}><Trash2 size={14} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button className="btn small" onClick={() => setLay({ pts: [...data.layout.pts, { x: 0, y: 0 }] })}><Plus size={14} /> Pilote</button>
+            </div>
+          )}
+          <div className="hint">Distribuciones usuales con separación 3·D:</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+              <button key={n} className="btn small ghost" onClick={() => set({ layout: standardLayout(n, Math.ceil((3 * (res?.props.Dp ?? p.D)) / 0.05) * 0.05) })}>{n}</button>
+            ))}
+          </div>
+        </Acc>
+
+        <Acc title="Cabezal" icon={<Layers size={18} />} open>
+          <div className="grid2">
+            <Num label="Espesor h" q="len" value={data.cap.h} onChange={(v) => setCap({ h: v })} min={0.4} />
+            <Num label="Vuelo desde el eje del pilote" q="len" value={data.cap.edge} onChange={(v) => setCap({ edge: v })} min={0.2} />
+            <div style={{ gridColumn: '1 / -1' }}><Check label="Dimensiones del cabezal manuales" value={data.cap.manualSize} onChange={(v) => setCap({ manualSize: v, B: res?.capRect.B ?? data.cap.B, L: res?.capRect.L ?? data.cap.L })} /></div>
+            {data.cap.manualSize && (
+              <>
+                <Num label="B (x)" q="len" value={data.cap.B} onChange={(v) => setCap({ B: v })} min={0.5} />
+                <Num label="L (y)" q="len" value={data.cap.L} onChange={(v) => setCap({ L: v })} min={0.5} />
+              </>
+            )}
+            <Num label="Recubrimiento" q="lencm" value={data.cap.cover} onChange={(v) => setCap({ cover: v })} min={0.05} />
+            <Num label="Penetración del pilote" q="lencm" value={data.cap.embed} onChange={(v) => setCap({ embed: v })} min={0.05} />
+            <Sel label="Barras" value={data.cap.barSystem} onChange={(v) => setCap({ barSystem: v, barX: barList(v)[5].id, barY: barList(v)[5].id, barTopX: barList(v)[2].id, barTopY: barList(v)[2].id })} options={[{ id: 'astm', label: 'ASTM (#)' }, { id: 'metric', label: 'Métricas (mm)' }]} />
+            <Sel label="Capa inferior" value={data.cap.lowerLayer} onChange={(v) => setCap({ lowerLayer: v })} options={[{ id: 'x', label: 'Barras en X abajo' }, { id: 'y', label: 'Barras en Y abajo' }]} />
+            <Sel label="Barras en X" value={data.cap.barX} onChange={(v) => setCap({ barX: v })} options={bars} />
+            <Sel label="Barras en Y" value={data.cap.barY} onChange={(v) => setCap({ barY: v })} options={bars} />
+            <div style={{ gridColumn: '1 / -1' }}><Check label="Con acero superior" value={data.cap.topSteel} onChange={(v) => setCap({ topSteel: v })} hint="Se diseña con los momentos negativos (pilotes en tracción)" /></div>
+            {data.cap.topSteel && (
+              <>
+                <Sel label="Superior en X" value={data.cap.barTopX} onChange={(v) => setCap({ barTopX: v })} options={bars} />
+                <Sel label="Superior en Y" value={data.cap.barTopY} onChange={(v) => setCap({ barTopY: v })} options={bars} />
+              </>
+            )}
+            <div style={{ gridColumn: '1 / -1' }}><Check label="Ajustar el acero manualmente (separaciones)" value={data.cap.manual.on} onChange={(v) => setCap({ manual: { ...data.cap.manual, on: v } })} /></div>
+            {data.cap.manual.on && (
+              <>
+                <Num label="Sep. inferior X" q="lencm" value={data.cap.manual.sBotX} onChange={(v) => setCap({ manual: { ...data.cap.manual, sBotX: v } })} min={0.05} />
+                <Num label="Sep. inferior Y" q="lencm" value={data.cap.manual.sBotY} onChange={(v) => setCap({ manual: { ...data.cap.manual, sBotY: v } })} min={0.05} />
+                {data.cap.topSteel && (
+                  <>
+                    <Num label="Sep. superior X" q="lencm" value={data.cap.manual.sTopX} onChange={(v) => setCap({ manual: { ...data.cap.manual, sTopX: v } })} min={0.05} />
+                    <Num label="Sep. superior Y" q="lencm" value={data.cap.manual.sTopY} onChange={(v) => setCap({ manual: { ...data.cap.manual, sTopY: v } })} min={0.05} />
+                  </>
+                )}
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <button className="btn small" onClick={() => {
+                    const r = analyzePile({ ...data, cap: { ...data.cap, manual: { ...data.cap.manual, on: false } } });
+                    const rd = (v: number | undefined, d: number) => (v && isFinite(v) ? Math.round(v * 200) / 200 : d);
+                    setCap({ manual: { ...data.cap.manual, sBotX: rd(r.flexX?.det.spacing, 0.15), sBotY: rd(r.flexY?.det.spacing, 0.15), sTopX: rd(r.flexX?.top?.det.spacing, 0.2), sTopY: rd(r.flexY?.top?.det.spacing, 0.2) } });
+                  }}><Wand2 size={14} /> Copiar valores del cálculo automático</button>
+                </div>
+              </>
+            )}
+            <Num label="f′c del cabezal" q="stress" value={data.cap.fc} onChange={(v) => setCap({ fc: v })} min={14} />
+            <Num label="fy" q="stress" value={data.cap.fy} onChange={(v) => setCap({ fy: v })} min={240} />
+            <Sel label="Norma de cortante" value={data.cap.code} onChange={(v) => setCap({ code: v })} options={[{ id: 'ACI318_14', label: 'ACI 318-14 / NSR-10' }, { id: 'ACI318_19', label: 'ACI 318-19' }]} />
+          </div>
+        </Acc>
+
+        <Acc title="Columna" icon={<Columns3 size={18} />}>
+          <ColumnEditor col={pseudoCol} setCol={(patch) => set({ column: { geom: patch.geom ?? data.column.geom, x: patch.x ?? data.column.x, y: patch.y ?? data.column.y } })} />
+        </Acc>
+
+        <Acc title="Cargas (envolvente ES / EU)" icon={<Layers size={18} />} open>
+          <CombosEditor data={data} onChange={onChange} />
+        </Acc>
+
+        <Acc title="Suelo y capacidad del pilote" icon={<Mountain size={18} />}>
+          <GeoEditor data={data} onChange={onChange} />
+        </Acc>
+      </div>
+
+      <div className="stack right" style={{ minWidth: 0 }}>
+        <Tabs<Tab>
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: 'planta', label: 'Planta y reacciones', icon: <Eye size={16} /> },
+            { id: 'resultados', label: 'Resultados', icon: <ListChecks size={16} /> },
+            { id: 'armado', label: 'Armado', icon: <Grid3x3 size={16} /> },
+            { id: 'memoria', label: 'Memoria de cálculo', icon: <FileText size={16} /> },
+          ]}
+        />
+        {!res && <Alert>No fue posible calcular con los datos actuales.</Alert>}
+        {res && tab === 'planta' && (
+          <>
+            <div className="draw">
+              <div className="draw-tools">
+                <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <span className="hint">Combinación</span>
+                  <div className="inp" style={{ minWidth: 190 }}>
+                    <select value={combo?.combo.id ?? ''} onChange={(e) => setComboId(e.target.value)}>
+                      {res.service.map((s) => <option key={s.combo.id} value={s.combo.id}>{s.combo.name}</option>)}
+                    </select>
+                  </div>
+                </label>
+                <span className="spacer" />
+                <span className="hint">Verde = poco cargado · rojo = en el límite · azul = tracción</span>
+              </div>
+              <div dangerouslySetInnerHTML={{ __html: pilePlanSvg(data, res, { W: 820, H: 560, theme: th, fmt, combo }) }} />
+            </div>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileSectionSvg(data, res, { W: 820, H: 480, theme: th, fmt }) }} /></div>
+          </>
+        )}
+        {res && tab === 'resultados' && (
+          <>
+            <div className={'banner ' + (res.ok ? 'ok' : 'bad')}>
+              {res.ok ? <CheckCircle2 /> : <XCircle />}
+              {res.ok ? 'El grupo de pilotes y el cabezal cumplen todas las verificaciones.' : 'Alguna verificación NO se cumple.'}
+              <span className="spacer" />
+              <button className="btn small primary" disabled={!!busy} title="Elige n.º de pilotes, espesor y acero" onClick={() => run('a', () => { const r = autoSizePile(data); onChange(r.input); if (!r.ok) alert(r.note); })}>
+                <Wand2 size={14} /> Dimensionar automáticamente
+              </button>
+              <button className="btn small" disabled={!!busy} onClick={() => run('h', () => { const h = findCapThickness(data); if (h) set({ cap: { ...data.cap, h } }); else alert('No se encontró un espesor que cumpla hasta 3.5 m.'); })}>
+                <Wand2 size={14} /> Espesor mínimo del cabezal
+              </button>
+            </div>
+            {res.warnings.length > 0 && <div className="stack" style={{ gap: 8 }}>{res.warnings.map((w, i) => <Alert key={i}>{w}</Alert>)}</div>}
+            <Card title="Verificaciones" icon={<ListChecks size={18} />}>
+              <div className="checks">{res.checks.map((c, i) => <CheckCard key={i} name={c.name} ratio={c.ratio} ok={c.ok} detail={c.detail} advisory={c.advisory} />)}</div>
+            </Card>
+            <PileResultTables res={res} data={data} />
+          </>
+        )}
+        {res && tab === 'armado' && (
+          <>
+            <Card title="Cuadro de armado" icon={<Grid3x3 size={18} />}>
+              <Tbl
+                head={['Elemento', 'Armado', 'As (cm²)']}
+                align={['l', 'l', 'r']}
+                rows={[
+                  ['Cabezal — inferior X', res.flexX!.det.text, res.flexX!.asProv.toFixed(1)],
+                  ['Cabezal — inferior Y', res.flexY!.det.text, res.flexY!.asProv.toFixed(1)],
+                  ...(res.flexX?.top ? [['Cabezal — superior X', res.flexX.top.det.text, res.flexX.top.asProv.toFixed(1)], ['Cabezal — superior Y', res.flexY!.top!.det.text, res.flexY!.top!.asProv.toFixed(1)]] : []),
+                  p.kind === 'concrete' ? ['Pilote — longitudinal', `${p.nBars} ${p.bar}`, res.conc!.ratio.Ast.toFixed(1)] : ['Pilote', res.props.label, (res.props.A * 1e4).toFixed(1)],
+                  ...(p.kind === 'concrete' ? [['Pilote — transversal', `${p.tieBar} @ ${(p.tieS * 100).toFixed(0)} cm (${p.spiral ? 'espiral' : 'estribos'})`, '—']] : []),
+                ]}
+              />
+            </Card>
+            <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileRebarPlanSvg(data, res, { W: 820, H: 560, theme: th, fmt }) }} /></div>
+            {data.cap.topSteel && <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileRebarPlanSvg(data, res, { W: 820, H: 560, theme: th, fmt, layer: 'top' }) }} /></div>}
+          </>
+        )}
+        {res && tab === 'memoria' && <ReportButtons kind="pile" pile={data} info={info} />}
+      </div>
+    </div>
+  );
+}
+
+function PileResultTables({ res, data }: { res: PileResults; data: PileInput }) {
+  const { fmt } = useUnits();
+  return (
+    <>
+      <div className="grid3" style={{ gap: 12 }}>
+        <Kpi label="Pilotes" value={`${res.n} × ${res.props.label}`} sub={`L = ${data.pile.L} m`} />
+        <Kpi label="Qa por pilote" value={fmt.u('force', res.QaCeff, 0)} sub={res.geo.mode === 'static' ? `Qs ${fmt.n('force', res.geo.Qs, 0)} + Qb ${fmt.n('force', res.geo.Qb, 0)}` : 'ingresada'} />
+        <Kpi label="Cabezal" value={`${res.capRect.B.toFixed(2)} × ${res.capRect.L.toFixed(2)} × ${data.cap.h.toFixed(2)} m`} sub={`${res.concreteVolume.toFixed(1)} m³`} />
+      </div>
+      <Card title="Reacciones de servicio" icon={<Mountain size={18} />}>
+        <Tbl
+          head={['Combinación', `Ptot (${fmt.l('force')})`, `R máx (${fmt.l('force')})`, `R mín (${fmt.l('force')})`, `Qa adm. (${fmt.l('force')})`, 'R máx / Qa']}
+          align={['l', 'r', 'r', 'r', 'r', 'r']}
+          rows={res.service.map((s) => [s.combo.name, fmt.n('force', s.Ptot, 0), fmt.n('force', s.Rmax, 0), fmt.n('force', s.Rmin, 0), fmt.n('force', res.QaCeff * s.combo.qaFactor, 0), s.ratioC.toFixed(2)])}
+        />
+      </Card>
+      <Card title="Reacciones últimas y flexión del pilote" icon={<Layers size={18} />}>
+        <Tbl
+          head={['Combinación', `Pu máx (${fmt.l('force')})`, `Pu mín (${fmt.l('force')})`, `Hu/pilote (${fmt.l('force')})`, `Mu cabeza (${fmt.l('moment')})`]}
+          align={['l', 'r', 'r', 'r', 'r']}
+          rows={res.ultimate.map((s) => [s.combo.name, fmt.n('force', s.Pu?.max ?? 0, 0), fmt.n('force', s.Pu?.min ?? 0, 0), fmt.n('force', s.Hpile, 1), fmt.n('moment', s.Mu ?? 0, 1)])}
+        />
+      </Card>
+      <Card title="Cabezal: flexión, cortante y punzonamiento" icon={<Grid3x3 size={18} />}>
+        <Tbl
+          head={['Verificación', 'Demanda', 'Capacidad / provisto', 'Relación']}
+          align={['l', 'r', 'r', 'r']}
+          rows={[
+            ...([['X', res.flexX], ['Y', res.flexY]] as const).map(([a, f]) => [`Flexión ${a}: ${f!.det.text}`, `Mu ${fmt.n('moment', f!.Mpos, 0)} ${fmt.l('moment')}`, `As ${f!.AsReq.toFixed(1)} → ${f!.asProv.toFixed(1)} cm²`, f!.ratio.toFixed(2)]),
+            ...([['X', res.shearX], ['Y', res.shearY]] as const).map(([a, s]) => [`Cortante ${a}`, `Vu ${fmt.n('force', s!.Vu, 0)} ${fmt.l('force')}`, `φVc ${fmt.n('force', s!.phiVc, 0)}`, s!.ratio.toFixed(2)]),
+            ...(res.punch ? [['Punzonamiento columna', `vu ${res.punch.vu.toFixed(2)} MPa`, `φvc ${res.punch.phivc.toFixed(2)} MPa`, res.punch.ratio.toFixed(2)]] : []),
+          ]}
+        />
+      </Card>
+    </>
+  );
+}
+
+function CombosEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInput) => void }) {
+  const { fmt } = useUnits();
+  const upd = (id: string, patch: Partial<PileCombo>) => onChange({ ...data, combos: data.combos.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const add = (kind: 'service' | 'ultimate') => onChange({ ...data, combos: [...data.combos, { id: 'C' + Date.now().toString(36), name: kind === 'service' ? 'ES nueva' : 'EU nueva', kind, P: 0, Vx: 0, Vy: 0, Mx: 0, My: 0, qaFactor: 1 }] });
+  return (
+    <>
+      <div className="hint">Cargas de la columna en la cara superior del cabezal. <b>ES</b> (servicio): capacidad del suelo y deflexión; <b>EU</b> (última): diseño estructural. P positiva hacia abajo; Mx / My aumentan la reacción hacia +y / +x.</div>
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr><th>Combinación</th><th>Tipo</th><th className="r">P ({fmt.l('force')})</th><th className="r">Vx</th><th className="r">Vy</th><th className="r">Mx ({fmt.l('moment')})</th><th className="r">My</th><th className="r">Qa×</th><th /></tr>
+          </thead>
+          <tbody>
+            {data.combos.map((c) => (
+              <tr key={c.id}>
+                <td><CellText value={c.name} onChange={(v) => upd(c.id, { name: v })} /></td>
+                <td>
+                  <select value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value as any })} style={{ border: 0, background: 'transparent' }}>
+                    <option value="service">ES</option>
+                    <option value="ultimate">EU</option>
+                  </select>
+                </td>
+                <td><CellNum q="force" value={c.P} onChange={(v) => upd(c.id, { P: v })} decimals={1} /></td>
+                <td><CellNum q="force" value={c.Vx} onChange={(v) => upd(c.id, { Vx: v })} decimals={1} /></td>
+                <td><CellNum q="force" value={c.Vy} onChange={(v) => upd(c.id, { Vy: v })} decimals={1} /></td>
+                <td><CellNum q="moment" value={c.Mx} onChange={(v) => upd(c.id, { Mx: v })} decimals={1} /></td>
+                <td><CellNum q="moment" value={c.My} onChange={(v) => upd(c.id, { My: v })} decimals={1} /></td>
+                <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => upd(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
+                <td><button className="icon-btn danger" onClick={() => onChange({ ...data, combos: data.combos.filter((x) => x.id !== c.id) })}><Trash2 size={14} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button className="btn small" onClick={() => add('service')}><Plus size={14} /> ES (servicio)</button>
+        <button className="btn small" onClick={() => add('ultimate')}><Plus size={14} /> EU (última)</button>
+        <button className="btn small ghost" onClick={() => onChange({ ...data, combos: defaultCombos() })}>Restablecer</button>
+      </div>
+    </>
+  );
+}
+
+function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInput) => void }) {
+  const g = data.geo;
+  const set = (patch: Partial<typeof g>) => onChange({ ...data, geo: { ...g, ...patch } });
+  const updL = (i: number, patch: Partial<SoilLayer>) => set({ layers: g.layers.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
+  return (
+    <>
+      <Sel label="Capacidad del pilote" value={g.mode} onChange={(v) => set({ mode: v })} options={[{ id: 'static', label: 'Método estático (estratos)' }, { id: 'user', label: 'Admisible dada por el estudio de suelos' }]} />
+      {g.mode === 'user' ? (
+        <div className="grid2">
+          <Num label="Qa a compresión" q="force" value={g.QaC} onChange={(v) => set({ QaC: v })} min={10} />
+          <Num label="Qta a tracción" q="force" value={g.QaT} onChange={(v) => set({ QaT: v })} min={0} />
+        </div>
+      ) : (
+        <>
+          <div className="grid2">
+            <Num label="FS a compresión" value={g.FS} onChange={(v) => set({ FS: v })} min={1} />
+            <Num label="FS a tracción" value={g.FSt} onChange={(v) => set({ FSt: v })} min={1} />
+            <Num label="η fricción en tracción" value={g.etaT} onChange={(v) => set({ etaT: v })} min={0} max={1} />
+            <Num label="Prof. base del cabezal Df" q="len" value={g.Df} onChange={(v) => set({ Df: v })} min={0} />
+            <Num label="qb máximo" q="press" value={g.qbMax} onChange={(v) => set({ qbMax: v })} min={100} />
+          </div>
+          {g.layers.map((l, i) => (
+            <div key={i} className="card" style={{ padding: 10 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}><Txt label={`Estrato ${i + 1}`} value={l.name} onChange={(v) => updL(i, { name: v })} /></div>
+                <button className="icon-btn danger" title="Quitar" onClick={() => set({ layers: g.layers.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
+              </div>
+              <div className="grid3">
+                <Sel label="Tipo" value={l.kind} onChange={(v) => updL(i, { kind: v })} options={[{ id: 'cohesive', label: 'Cohesivo (α·su)' }, { id: 'granular', label: 'Granular (K·tanδ)' }, { id: 'direct', label: 'fs directo' }]} />
+                <Num label="Espesor" q="len" value={l.thk} onChange={(v) => updL(i, { thk: v })} min={0.5} />
+                <Num label="γ efectivo" q="uw" value={l.gamma} onChange={(v) => updL(i, { gamma: v })} min={1} />
+                {l.kind === 'cohesive' && (
+                  <>
+                    <Num label="su" q="press" value={l.su} onChange={(v) => updL(i, { su: v })} min={1} />
+                    <Num label="α (0 = API)" value={l.alpha} onChange={(v) => updL(i, { alpha: v })} min={0} max={1.2} />
+                  </>
+                )}
+                {l.kind === 'granular' && (
+                  <>
+                    <Num label="φ" unit="°" value={l.phi} onChange={(v) => updL(i, { phi: v })} min={20} max={45} />
+                    <Num label="K" value={l.K} onChange={(v) => updL(i, { K: v })} min={0.2} />
+                    <Num label="Nq (0 = auto)" value={l.Nq} onChange={(v) => updL(i, { Nq: v })} min={0} />
+                  </>
+                )}
+                {l.kind === 'direct' && (
+                  <>
+                    <Num label="fs" q="press" value={l.fs} onChange={(v) => updL(i, { fs: v })} min={0} />
+                    <Num label="qb (si es la punta)" q="press" value={l.qb} onChange={(v) => updL(i, { qb: v })} min={0} />
+                  </>
+                )}
+                <Num label="fs máx" q="press" value={l.fsMax} onChange={(v) => updL(i, { fsMax: v })} min={5} />
+              </div>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn small" onClick={() => set({ layers: [...g.layers, { ...defaultLayers()[1], name: `Estrato ${g.layers.length + 1}` }] })}><Plus size={14} /> Estrato</button>
+          </div>
+        </>
+      )}
+      <Check label="Aplicar eficiencia de grupo (Converse–Labarre)" value={g.groupEff} onChange={(v) => set({ groupEff: v })} hint="Recomendado para pilotes de fricción en arcilla" />
+    </>
+  );
+}
