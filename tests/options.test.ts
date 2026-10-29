@@ -286,6 +286,7 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
   });
   it('empuje hidrostático ½γw·h² hacia el relleno, peso del agua sobre el pie y sin suelo en el pie', () => {
     const w = mk('cantilever', 2.0);
+    w.pool.closed = false;
     const llena = analyzeWall(w).pool!.states[1].res.staticCase;
     const vacia = analyzeWall(w).pool!.states[0].res.staticCase;
     const hf = llena.h.find((q) => /agua de la piscina/.test(q.name))!;
@@ -339,6 +340,7 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
   });
   it('sismo: presión hidrodinámica de Westergaard 7/12·kh·γw·h²', () => {
     const w = mk('cantilever', 2);
+    w.pool.closed = false;
     w.seismic = { on: true, kh: 0.2, kv: 0 };
     const sc = analyzeWall(w).pool!.states[1].res.seismicCase!;
     const dyn = sc.h.find((q) => q.name.includes('Westergaard'))!;
@@ -347,6 +349,23 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
     const L = sectionLoad(g, stemLateral(g), 0);
     expect(L.V.poolDyn).toBeCloseTo((7 / 12) * 0.2 * GAMMA_W * 4, 6);
     expect(L.M.poolDyn).toBeCloseTo((7 / 8) * 0.2 * GAMMA_W * Math.sqrt(2) * (4 / 15) * 2 ** 2.5, 6);
+  });
+  it('recinto cerrado: el agua no genera fuerza horizontal externa y el fondo se verifica como tirante', () => {
+    const w = mk('cantilever', 2.0);
+    w.seismic = { on: true, kh: 0.2, kv: 0 };
+    const r = analyzeWall(w);
+    const llena = r.pool!.states[1].res;
+    expect(llena.staticCase.h.some((q) => /agua de la piscina/i.test(q.name))).toBe(false);
+    expect(llena.seismicCase!.h.some((q) => /Westergaard/.test(q.name))).toBe(false);
+    expect(llena.staticCase.v.some((q) => /Agua de la piscina sobre el pie/.test(q.name))).toBe(true);
+    const tie = llena.checks.find((c) => /tirante/.test(c.name))!;
+    expect(tie.ratio).toBeGreaterThan(0);
+    expect(r.pool!.states[0].res.checks.some((c) => /tirante/.test(c.name))).toBe(false);
+    // aislado: el empuje sí se considera y no hay verificación de tirante
+    w.pool.closed = false;
+    const iso = analyzeWall(w).pool!.states[1].res;
+    expect(iso.staticCase.h.some((q) => /agua de la piscina/i.test(q.name))).toBe(true);
+    expect(iso.checks.some((c) => /tirante/.test(c.name))).toBe(false);
   });
   it('flotación con la piscina vacía y nivel freático', () => {
     const w = mk();

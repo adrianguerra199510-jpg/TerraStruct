@@ -3,7 +3,7 @@
 
 import { WallGeom, soilWeight } from './wallGeom';
 import { FaceThrust, faceThrust, kaCoulomb, kaRankine, kaeMononobe, kpRankine, passiveForce, rad, GAMMA_W, Thrust } from './earth';
-import { isGravity, canPool, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
+import { isGravity, canPool, cfInternal, cfExternal, isMasonryStem, poolClosed } from './wallTypes';
 import { clipHalfPlane, polyProps } from './geometry';
 
 export interface Factors {
@@ -215,9 +215,9 @@ export function evalCase(
   // Piscina llena: agua sobre el pie (peso favorable) y empuje hidrostático sobre la cara frontal (hacia el relleno)
   if (hwi > 1e-6) {
     if (g.xFb > 1e-6) addV('Agua de la piscina sobre el pie', GAMMA_W * hwi * g.xFb * Math.min(fac.dead, 1), g.xFb / 2);
-    addH('Empuje del agua de la piscina (cara frontal)', -0.5 * GAMMA_W * hwi * hwi * Math.min(fac.water, 1), g.hb + hwi / 3);
+    if (!poolClosed(inp)) addH('Empuje del agua de la piscina (cara frontal)', -0.5 * GAMMA_W * hwi * hwi * Math.min(fac.water, 1), g.hb + hwi / 3);
     // Presión hidrodinámica del agua con sismo (Westergaard): 7/12·kh·γw·h², a 0.4·h sobre la zapata, hacia el relleno
-    if (seismic && kh > 0) addH('Presión hidrodinámica del agua de la piscina (Westergaard)', -(7 / 12) * kh * GAMMA_W * hwi * hwi * fac.eq, g.hb + 0.4 * hwi);
+    if (seismic && kh > 0 && !poolClosed(inp)) addH('Presión hidrodinámica del agua de la piscina (Westergaard)', -(7 / 12) * kh * GAMMA_W * hwi * hwi * fac.eq, g.hb + 0.4 * hwi);
   }
   // Sobrecarga sobre el relleno
   if (opts.surchargeV && inp.fill.q > 0 && fac.liveV > 0) {

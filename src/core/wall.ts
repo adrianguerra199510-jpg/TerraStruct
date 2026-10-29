@@ -1,5 +1,7 @@
 // Análisis completo de un muro de retención.
-import { WallInput, isGravity, normalizeWall, canPool } from './wallTypes';
+import { WallInput, isGravity, normalizeWall, canPool, poolClosed } from './wallTypes';
+import { findBar } from './materials';
+import { GAMMA_W } from './earth';
 import { WallGeom, buildWallGeom } from './wallGeom';
 import { CaseResult, EarthModel, SERVICE_FACTORS, earthModel, evalCase } from './wallStability';
 import { WallDesign, designWall } from './wallDesign';
@@ -89,6 +91,20 @@ function analyzeWallCore(input: WallInput): WallResults {
     const Wstab = staticCase.uplift > 0 ? staticCase.SumV + staticCase.uplift : 0;
     const FSf = staticCase.uplift > 0 ? Wstab / staticCase.uplift : Infinity;
     add({ group: 'Estabilidad', name: 'Flotación del fondo (subpresión)', ratio: 1.1 / FSf, detail: `FS = ΣW / U = ${Wstab.toFixed(1)} / ${staticCase.uplift.toFixed(1)} = ${isFinite(FSf) ? FSf.toFixed(2) : '∞'} (mín. 1.10)`, ok: FSf >= 1.1 });
+  }
+  // Recinto cerrado con agua: la losa de fondo trabaja como tirante entre las dos paredes (T = empuje del agua)
+  if (inp.pool.on && inp.poolDepth > 0 && poolClosed(inp) && inp.mat.mesh) {
+    const mesh = inp.mat.mesh;
+    const hw = inp.poolDepth;
+    const P = 0.5 * GAMMA_W * hw * hw;
+    const Pdyn = inp.seismic.on ? (7 / 12) * inp.seismic.kh * GAMMA_W * hw * hw : 0;
+    const Tu = Math.max(inp.factors.lateral * P, inp.factors.lateral * P + inp.factors.eq * Pdyn);
+    const fy = inp.mat.fy;
+    const Areq = (Tu / (0.9 * fy * 1e3)) * 1e4; // cm²/m (Tu kN/m, fy MPa)
+    const bot = findBar(mesh.botBar);
+    const top = mesh.topOn ? findBar(mesh.topBar) : null;
+    const Aprov = bot.area / mesh.botS + (top ? top.area / mesh.topS : 0);
+    add({ group: 'Estructural', name: 'Fondo como tirante entre paredes (recinto cerrado)', ratio: Areq / Math.max(Aprov, 1e-9), detail: `Tu = ${Tu.toFixed(1)} kN/m (empuje del agua${Pdyn > 0 ? ' + Westergaard' : ''}); As req. = ${Areq.toFixed(2)} cm²/m, malla transversal = ${Aprov.toFixed(2)} cm²/m (sin sumar la flexión del fondo)`, ok: Areq <= Aprov + 1e-9 });
   }
   const d = design;
   if (d.stem) {

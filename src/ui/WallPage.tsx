@@ -177,6 +177,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                   <div className="grid2">
                     <Num label="Nivel del agua (sobre la zapata)" q="len" value={data.pool.hwi} onChange={(v) => set({ pool: { ...data.pool, hwi: Math.min(Math.max(v, 0.1), data.H) } })} min={0.1} hint="Hasta la altura de la pantalla" />
                   </div>
+                  <Check label="Recinto cerrado (paredes en ambos lados)" value={data.pool.closed !== false} onChange={(v) => set({ pool: { ...data.pool, closed: v } })} hint="El empuje del agua es interno: lo equilibra la pared opuesta a través del fondo (tirante) y no afecta el deslizamiento ni el volcamiento. Desactívelo para tratar la pared como muro aislado" />
                   <div className="hint">Con la piscina activa se ignoran el suelo sobre el pie y el empuje pasivo (el frente es el interior de la piscina). El agua llena genera un momento invertido (tracción en la cara frontal) que se verifica con el acero de esa cara.</div>
                 </>
               )}

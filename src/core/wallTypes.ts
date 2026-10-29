@@ -146,7 +146,7 @@ export interface WallInput {
   seismic: { on: boolean; kh: number; kv: number };
   includeToeSoil: boolean;
   /** piscina: agua en el lado interior (frente) del muro; se evalúan las condiciones vacía y llena */
-  pool: { on: boolean; hwi: number };
+  pool: { on: boolean; hwi: number; /** recinto cerrado (paredes en ambos lados): el empuje del agua es interno y lo equilibra la otra pared a través del fondo; por defecto true */ closed?: boolean };
   /** (interno) profundidad del agua de la piscina en la condición evaluada, m; 0 = vacía */
   poolDepth: number;
   /** (interno) acero mínimo de la cara frontal exigido por la condición más severa de la piscina, cm²/m */
@@ -232,7 +232,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     delta: 20,
     seismic: { on: false, kh: 0.15, kv: 0 },
     includeToeSoil: true,
-    pool: { on: false, hwi: 2.0 },
+    pool: { on: false, hwi: 2.0, closed: true },
     poolDepth: 0,
     poolFrontMin: 0,
     poolNoFill: false,
@@ -335,6 +335,9 @@ export const isGravity = (t: WallType) => t === 'gravityConcrete' || t === 'grav
 export const isGabion = (t: WallType) => t === 'gabion';
 
 /** Para gaviones, deriva la geometría general (altura, anchos, sin zapata) a partir de los cuerpos. */
+/** Piscina como recinto cerrado: el empuje horizontal del agua no es una fuerza externa */
+export const poolClosed = (w: { pool: { closed?: boolean } }) => w.pool.closed !== false;
+
 export function normalizeWall(w: WallInput): WallInput {
   if (isMasonryStem(w.type)) {
     const t = blockThickness(w.block);
