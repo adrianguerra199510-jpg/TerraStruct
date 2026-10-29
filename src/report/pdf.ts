@@ -159,10 +159,7 @@ export async function buildPdfDefinition(doc: ReportDoc): Promise<any> {
       layout: { ...tableLayout(), fillColor: () => null, paddingTop: () => 5, paddingBottom: () => 5 },
     },
     ...(info.notes ? [{ text: S(info.notes), fontSize: 9.5, italics: true, color: C.muted, margin: [0, 14, 0, 0] }] : []),
-    {
-      text: 'Este documento es una ayuda de cálculo generada automáticamente. Los resultados deben ser revisados, verificados y avalados por un ingeniero responsable antes de su uso en obra.',
-      fontSize: 8.5, color: C.muted, margin: [0, 40, 0, 0],
-    },
+    ...(info.disclaimer?.trim() ? [{ text: S(info.disclaimer), fontSize: 8.5, color: C.muted, margin: [0, 40, 0, 0] }] : []),
     { text: '', pageBreak: 'after' },
     { toc: { title: { text: 'CONTENIDO', style: 'h1' } }, margin: [0, 0, 0, 10] },
     { text: '', pageBreak: 'after' },

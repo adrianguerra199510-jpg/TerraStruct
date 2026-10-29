@@ -14,6 +14,8 @@ export interface ProjectInfo {
   date: string;
   revision: string;
   notes: string;
+  /** nota al pie de la carátula; vacía = no se muestra */
+  disclaimer?: string;
 }
 
 export interface Item<T> {

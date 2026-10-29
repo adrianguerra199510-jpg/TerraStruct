@@ -279,6 +279,12 @@ function ProjectPage({ project, setProject }: { project: Project; setProject: (p
             <textarea rows={3} style={{ width: '100%', border: 0, background: 'transparent', padding: 8, resize: 'vertical' }} value={i.notes} onChange={(e) => set({ notes: e.target.value })} />
           </div>
         </div>
+        <div className="field" style={{ marginTop: 10 }}>
+          <label>Nota al pie de la carátula (déjela vacía para que no aparezca)</label>
+          <div className="inp">
+            <textarea rows={2} style={{ width: '100%', border: 0, background: 'transparent', padding: 8, resize: 'vertical' }} value={i.disclaimer ?? ''} onChange={(e) => set({ disclaimer: e.target.value })} />
+          </div>
+        </div>
       </Card>
       <ReportButtons kind="project" project={project} info={project.info} />
     </div>

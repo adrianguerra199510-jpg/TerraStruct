@@ -213,7 +213,7 @@ export async function makeDocxBlob(doc: ReportDoc): Promise<Blob> {
       ['Revisión', info.revision || '—'],
     ]),
     ...(info.notes ? [new Paragraph({ spacing: { before: 240, after: 0 }, children: [run(info.notes, { size: 19, italics: true, color: MUTED })] })] : []),
-    new Paragraph({ spacing: { before: 700, after: 0 }, children: [run('Este documento es una ayuda de cálculo generada automáticamente. Los resultados deben ser revisados, verificados y avalados por un ingeniero responsable antes de su uso en obra.', { size: 16, color: MUTED })] }),
+    ...(info.disclaimer?.trim() ? [new Paragraph({ spacing: { before: 700, after: 0 }, children: [run(info.disclaimer, { size: 16, color: MUTED })] })] : []),
     new Paragraph({ pageBreakBefore: true, children: [run('CONTENIDO', { size: 30, bold: true, color: NAVY })], spacing: { after: 160 } }),
   ];
   for (const b of doc.blocks) {
