@@ -411,3 +411,17 @@ describe('muros de concreto: 2.ª capa de la pantalla y anclaje', () => {
     expect(analyzeWall(w).warnings.some((x) => /espesor mínimo de/.test(x))).toBe(true);
   });
 });
+
+describe('piscina cerrada: empujes autoequilibrados', () => {
+  it('sin empujes horizontales de tierras en la estabilidad y deslizamiento sin fallo', () => {
+    const w = defaultWall('cantilever');
+    w.pool = { on: true, hwi: 1.7, closed: true };
+    const r = analyzeWall(w);
+    for (const st of r.pool!.states) {
+      expect(st.res.staticCase.h.length).toBe(0);
+      expect(st.res.staticCase.ok.sl).toBe(true);
+    }
+    w.pool.closed = false;
+    expect(analyzeWall(w).pool!.states[0].res.staticCase.h.length).toBeGreaterThan(0);
+  });
+});

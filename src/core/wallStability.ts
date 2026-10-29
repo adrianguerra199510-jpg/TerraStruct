@@ -228,8 +228,11 @@ export function evalCase(
 
   // Empuje de tierras
   const f = em.face;
+  // Piscina cerrada: los empujes del relleno actúan en ambas paredes y se equilibran entre sí a través del fondo (tirante)
+  const selfBalanced = poolOn && poolClosed(inp);
   const mk = (name: string, t: Thrust, factor: number, vertKind: 'soil' | 'sur' | 'water') => {
     void vertKind;
+    if (selfBalanced) return;
     const yAbs = em.y0 + t.y;
     addH(name, t.Ph * factor, yAbs);
     if (Math.abs(t.Pv) > 1e-9) {
@@ -241,7 +244,7 @@ export function evalCase(
   if (inp.fill.q > 0) mk('Empuje por sobrecarga', f.surcharge, fac.liveH, 'sur');
   if (f.water.Ph > 1e-9) mk('Empuje hidrostático', f.water, fac.water, 'water');
   if (seismic && f.seismic.Ph > 1e-9) mk('Incremento sísmico ΔPae', f.seismic, fac.eq, 'soil');
-  if (em.band && (em.band.Ph > 1e-9 || Math.abs(em.band.Pv) > 1e-9)) {
+  if (!selfBalanced && em.band && (em.band.Ph > 1e-9 || Math.abs(em.band.Pv) > 1e-9)) {
     addH('Empuje sobre el talón (cara de la zapata)', em.band.Ph * fac.soilH, em.band.y);
     if (Math.abs(em.band.Pv) > 1e-9) addV('Empuje sobre el talón (componente vertical)', em.band.Pv * fac.soilH, g.B);
   }
