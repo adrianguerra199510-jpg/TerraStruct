@@ -173,6 +173,9 @@ export interface WallInput {
     /** pantalla: capas de acero vertical (1 o 2 caras), separación vertical (0 = automática), barras horizontales y su separación (0 = automática) */
     mesh: FootMesh;
     stemLayers: 1 | 2;
+    /** segunda capa de la pantalla (cara frontal): barra ('' = automática) y separación (0 = automática) */
+    barStemF?: string;
+    stemFrontS?: number;
     stemVertS: number;
     horizOn: boolean;
     horizS: number;

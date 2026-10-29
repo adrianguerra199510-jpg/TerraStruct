@@ -251,7 +251,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
         `Cortante a d de la base: Vu = ${u('lforce', st.critical.Vu, 2)} ;  φVc = ${u('lforce', st.critical.phiVc, 2)}  (relación ${f(st.critical.ratio, 2)})`,
         `Capas de acero vertical: ${st.layers}${st.centered ? ' (barra centrada en la celda, d = t/2)' : st.layers === 2 && st.masonry ? ' (d medido a la barra del lado del relleno; la capa frontal se desprecia en flexión)' : ''}; separación ${st.vertAuto ? 'calculada' : 'elegida'}`,
         st.horizOn ? `Armado horizontal: ρh,mín = ${st.rhoH.toFixed(4)} → As = ${f(st.AsH, 2)} cm²/m → ${st.horizontalDet.text}${st.horizLayers === 2 ? ' en cada cara' : ''} (${st.horizAuto ? 'separación calculada' : 'separación elegida'})${st.layers === 2 && !st.masonry ? '; vertical en la cara frontal: ' + st.frontVertDet.text : ''}` : 'Sin barras horizontales (no se cubre el acero mínimo de retracción y temperatura).',
-        `Anclaje en la zapata: ldh = ${f(st.anchorage.ldh, 2)} m  ${st.anchorage.ok ? '≤' : '>'}  disponible ${f(st.anchorage.available, 2)} m`,
+        `Anclaje en la zapata: ldh = ${f(st.anchorage.ldh, 2)} m  ${st.anchorage.ok ? '≤' : '>'}  disponible ${f(st.anchorage.available, 2)} m (espesor de la zapata − recubrimiento; espesor mínimo = ldh + recubrimiento = ${f(st.anchorage.ldh + res.inp.mat.coverFound, 2)} m)`,
       ],
       'Cálculo en la base',
     );
@@ -468,7 +468,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   if (des.stem) {
     const st2 = des.stem;
     rows.push([st2.centered ? 'Pantalla: vertical (barra al centro de la celda)' : st2.layers === 2 ? 'Pantalla: vertical (cara del relleno)' : 'Pantalla: vertical (una capa, cara del relleno)', st2.base.text, f(st2.base.asProv, 2), st2.cutNote]);
-    if (st2.layers === 2) rows.push(['Pantalla: vertical (cara frontal)', st2.masonry ? st2.base.text : st2.frontVertDet.text, f((st2.masonry ? st2.base : st2.frontVertDet).asProv, 2), st2.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero mínimo']);
+    if (st2.layers === 2) rows.push(['Pantalla: vertical (cara frontal)', st2.masonry ? st2.base.text : st2.frontVertDet.text, f((st2.masonry ? st2.base : st2.frontVertDet).asProv, 2), st2.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero de la cara frontal']);
     rows.push([`Pantalla: horizontal${st2.horizOn && st2.horizLayers === 2 ? ' (cada cara)' : ''}`, st2.horizontalDet.text, st2.horizOn ? f(st2.horizontalDet.asProv * st2.horizLayers, 2) : '—', st2.horizOn ? `Requerido ${f(st2.AsH, 2)} cm²/m` : 'Sin barras horizontales']);
   }
   if (des.mesh) {

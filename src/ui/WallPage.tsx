@@ -245,6 +245,12 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
                       <Num label="Separación vertical (0 = automática)" q="lencm" value={data.mat.stemVertS} onChange={(v) => setMat({ stemVertS: v })} min={0} hint="Se verifica con el momento" />
                     )}
                   </div>
+                  {t === 'cantilever' && data.mat.stemLayers === 2 && (
+                    <div className="grid2">
+                      <Sel label="Barra de la 2.ª capa (cara frontal)" value={data.mat.barStemF ?? ''} onChange={(v) => setMat({ barStemF: v })} options={[{ id: '', label: 'Automática' }, ...bars]} />
+                      <Num label="Separación 2.ª capa (0 = automática)" q="lencm" value={data.mat.stemFrontS ?? 0} onChange={(v) => setMat({ stemFrontS: v })} min={0} hint="Acero de la cara frontal" />
+                    </div>
+                  )}
                   <Check label="Con barras horizontales" value={data.mat.horizOn} onChange={(v) => setMat({ horizOn: v })} hint={t === 'masonryReinforced' ? 'Vigas de amarre en las hiladas' : 'Retracción y temperatura'} />
                   {data.mat.horizOn && (t === 'masonryReinforced' ? (
                     <Sel label="Separación de las barras horizontales" value={String(data.mat.horizS)} onChange={(v) => setMat({ horizS: parseFloat(v) })} options={SPACINGS} />
@@ -701,9 +707,9 @@ function WallArmado({ res, theme }: { res: WallResults; theme: typeof LIGHT }) {
   const rows: React.ReactNode[][] = [];
   if (d.stem) {
     rows.push([d.stem.centered ? 'Pantalla — vertical (barra al centro)' : d.stem.layers === 2 ? 'Pantalla — vertical (cara del relleno)' : 'Pantalla — vertical (una capa, cara del relleno)', d.stem.base.text, d.stem.base.asProv.toFixed(2), d.stem.cutNote]);
-    if (d.stem.layers === 2) rows.push(['Pantalla — vertical (cara frontal)', d.stem.masonry ? d.stem.base.text : d.stem.frontVertDet.text, (d.stem.masonry ? d.stem.base : d.stem.frontVertDet).asProv.toFixed(2), d.stem.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero mínimo']);
+    if (d.stem.layers === 2) rows.push(['Pantalla — vertical (cara frontal)', d.stem.masonry ? d.stem.base.text : d.stem.frontVertDet.text, (d.stem.masonry ? d.stem.base : d.stem.frontVertDet).asProv.toFixed(2), d.stem.masonry ? 'Segunda capa, igual a la del relleno' : 'Acero de la cara frontal']);
     rows.push([`Pantalla — horizontal${d.stem.horizOn ? (d.stem.horizLayers === 2 ? ' (cada cara)' : '') : ''}`, d.stem.horizontalDet.text, d.stem.horizOn ? (d.stem.horizontalDet.asProv * d.stem.horizLayers).toFixed(2) : '—', d.stem.horizOn ? `Requerido ${d.stem.AsH.toFixed(2)} cm²/m; ${d.stem.horizAuto ? 'separación automática' : 'separación elegida'}` : 'Sin barras horizontales']);
-    rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm`]);
+    rows.push(['Anclaje de barras verticales en la zapata', d.stem.anchorage.ok ? 'Gancho estándar' : 'Insuficiente', '—', `ldh = ${(d.stem.anchorage.ldh * 100).toFixed(0)} cm; disponible ${(d.stem.anchorage.available * 100).toFixed(0)} cm (espesor − recubrimiento); espesor mínimo ${((d.stem.anchorage.ldh + res.inp.mat.coverFound) * 100).toFixed(0)} cm`]);
   }
   if (d.mesh) {
     const mm = d.mesh;

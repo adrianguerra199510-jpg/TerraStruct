@@ -613,9 +613,15 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const frontMu = Math.max(...secs.map((q) => q.MuFront));
   const frontMin = 0.5 * rhoV * tAvg * 1e4;
   const frontReqAll = Math.max(frontReq, inp.poolFrontMin || 0);
+  const barF = m.barStemF ? findBar(m.barStemF) : null;
+  const frontAuto = !(m.stemFrontS && m.stemFrontS > 0);
   const front: Detailing =
     layers === 2
-      ? frontReqAll > frontMin ? chooseSpacing(frontReqAll, bar, 0.45) : chooseSpacing(frontMin, barH, 0.45)
+      ? !frontAuto
+        ? { text: `${(barF ?? bar).id} @ ${(m.stemFrontS! * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing: m.stemFrontS!, asProv: (barF ?? bar).area / m.stemFrontS!, ok: true }
+        : barF
+          ? chooseSpacing(Math.max(frontReqAll, frontMin), barF, 0.45)
+          : frontReqAll > frontMin ? chooseSpacing(frontReqAll, bar, 0.45) : chooseSpacing(frontMin, barH, 0.45)
       : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
   const frontInfo = frontMu > 1e-6 ? { req: frontReq, prov: front.asProv, ratio: frontReq / Math.max(front.asProv, 1e-9), ok: front.asProv + 1e-9 >= frontReq, maxMu: frontMu } : null;
   const horizAuto = !(m.horizS > 0);
@@ -1368,7 +1374,7 @@ export function designWall(g: WallGeom): WallDesign {
   if (out.stem) notes.push(`Las barras verticales de la pantalla terminan en gancho estándar dentro de la zapata, orientado hacia el ${stemHookSide(g) === -1 ? 'pie' : 'talón'}${stemHookSide(g) === 1 ? ' (no hay pie, o no cabe el gancho)' : ''}.`);
   out.key = keyDesign(g);
   if (inp.hb > 1e-6 && inp.hb < 0.3 && !isGravity(inp.type)) warnings.push('El espesor de la zapata es menor que 0.30 m: verificar anclaje de las barras de la pantalla.');
-  if (out.stem && !out.stem.anchorage.ok) warnings.push(`El espesor de la zapata no alcanza para el gancho estándar de las barras de la pantalla (${(out.stem.anchorage.ldh * 100).toFixed(0)} cm requeridos).`);
+  if (out.stem && !out.stem.anchorage.ok) warnings.push(`El espesor de la zapata no alcanza para el gancho estándar de las barras de la pantalla: se requiere ldh = ${(out.stem.anchorage.ldh * 100).toFixed(0)} cm más el recubrimiento inferior, es decir, un espesor mínimo de ${((out.stem.anchorage.ldh + g.inp.mat.coverFound) * 100).toFixed(0)} cm (actual ${(g.hb * 100).toFixed(0)} cm).`);
   out.diagrams = wallDiagrams(g, uls, out);
   void beta1;
   void isMasonry;

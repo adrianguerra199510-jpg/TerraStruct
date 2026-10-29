@@ -388,3 +388,26 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
     expect(txt).toContain('Condición: Piscina llena sin relleno');
   });
 });
+
+describe('muros de concreto: 2.ª capa de la pantalla y anclaje', () => {
+  it('la barra y la separación de la cara frontal se pueden definir', () => {
+    const w = defaultWall('cantilever');
+    w.mat.stemLayers = 2;
+    w.mat.barStemF = '#6';
+    w.mat.stemFrontS = 0.2;
+    const st = analyzeWall(w).design.stem!;
+    expect(st.frontVertDet.text).toContain('#6');
+    expect(st.frontVertDet.spacing).toBeCloseTo(0.2, 6);
+    expect(st.frontVertDet.asProv).toBeCloseTo(2.84 / 0.2, 1);
+  });
+  it('el espesor mínimo de la zapata para el gancho es ldh + recubrimiento', () => {
+    const w = defaultWall('cantilever');
+    const a0 = analyzeWall(w).design.stem!.anchorage;
+    w.hb = a0.ldh + w.mat.coverFound + 0.005;
+    const r = analyzeWall(w);
+    expect(r.design.stem!.anchorage.ok).toBe(true);
+    expect(r.warnings.some((x) => /gancho/.test(x))).toBe(false);
+    w.hb = a0.ldh + w.mat.coverFound - 0.01;
+    expect(analyzeWall(w).warnings.some((x) => /espesor mínimo de/.test(x))).toBe(true);
+  });
+});
