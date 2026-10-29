@@ -76,8 +76,77 @@ export function dimLine(x1: number, y1: number, x2: number, y2: number, label: s
   return s;
 }
 
+interface TBox { x: number; y: number; w: number; h: number; fixed: boolean; start: number; end: number; m: RegExpExecArray; rot: number }
+
+/**
+ * Evita que los rótulos queden fuera del recuadro o se solapen: estima el cuadro de cada <text> y lo desplaza
+ * (primero hacia dentro del lienzo y luego en vertical u horizontal) hasta que no choque con los ya colocados.
+ */
+export function declutterText(body: string, W: number, H: number): string {
+  const re = /<text x="([\d.\-]+)" y="([\d.\-]+)"([^>]*?)font-size="([\d.]+)"([^>]*?)text-anchor="(\w+)"([^>]*?)>([^<]*)<\/text>/g;
+  const items: TBox[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    const x = +m[1], y = +m[2], size = +m[4], anchor = m[6];
+    const rm = /rotate\(([\-\d.]+) /.exec(m[7]);
+    const rot = rm ? +rm[1] : 0;
+    const bold = /font-weight="(6|7|8|9)\d\d"/.test(m[3] + m[5] + m[7]);
+    const len = m[8].replace(/&[a-z#0-9]+;/g, 'x').length * size * (bold ? 0.58 : 0.54);
+    const vertical = Math.abs(rot) > 45;
+    let box: { x: number; y: number; w: number; h: number };
+    if (vertical) box = { x: x - size, y: anchor === 'middle' ? y - len / 2 : anchor === 'end' ? y - len : y, w: size, h: len };
+    else box = { x: anchor === 'middle' ? x - len / 2 : anchor === 'end' ? x - len : x, y: y - size * 0.8, w: len, h: size };
+    items.push({ ...box, fixed: size >= 13, start: m.index, end: m.index + m[0].length, m, rot });
+  }
+  if (!items.length) return body;
+  const placed: TBox[] = [];
+  const shifts: { dx: number; dy: number }[] = [];
+  const hit = (a: TBox, b: TBox) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 2 && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 2;
+  const inside = (a: TBox) => a.x >= 3 && a.x + a.w <= W - 3 && a.y >= 3 && a.y + a.h <= H - 3;
+  const free = (a: TBox) => !placed.some((b) => hit(a, b));
+  for (const it of items) {
+    let dx = 0, dy = 0;
+    const cur = { ...it };
+    // dentro del lienzo
+    if (cur.x < 3) dx = 3 - cur.x;
+    else if (cur.x + cur.w > W - 3) dx = W - 3 - cur.w - cur.x;
+    if (cur.y < 3) dy = 3 - cur.y;
+    else if (cur.y + cur.h > H - 3) dy = H - 3 - cur.h - cur.y;
+    cur.x += dx; cur.y += dy;
+    if (!it.fixed && !free(cur)) {
+      const vert = Math.abs(it.rot) > 45;
+      const step = vert ? it.w + 2 : it.h + 1;
+      let found = false;
+      for (let k = 1; k <= 16 && !found; k++) {
+        const cands = vert
+          ? [{ x: step * k, y: 0 }, { x: -step * k, y: 0 }, { x: 0, y: step * k }, { x: 0, y: -step * k }]
+          : [{ x: 0, y: step * k }, { x: 0, y: -step * k }, { x: (it.w + 4) * Math.min(k, 2), y: 0 }, { x: -(it.w + 4) * Math.min(k, 2), y: 0 }, { x: (it.w / 2 + 4) * Math.min(k, 3), y: step * k }, { x: -(it.w / 2 + 4) * Math.min(k, 3), y: step * k }, { x: (it.w / 2 + 4) * Math.min(k, 3), y: -step * k }, { x: -(it.w / 2 + 4) * Math.min(k, 3), y: -step * k }];
+        for (const c of cands) {
+          const t = { ...cur, x: cur.x + c.x, y: cur.y + c.y };
+          if (inside(t) && free(t)) { dx += c.x; dy += c.y; cur.x = t.x; cur.y = t.y; found = true; break; }
+        }
+      }
+    }
+    placed.push(cur);
+    shifts.push({ dx, dy });
+  }
+  let out = '';
+  let last = 0;
+  items.forEach((it, i) => {
+    const { dx, dy } = shifts[i];
+    out += body.slice(last, it.start);
+    last = it.end;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) { out += it.m[0]; return; }
+    let t = it.m[0].replace(/^<text x="([\d.\-]+)" y="([\d.\-]+)"/, (_, a, b) => `<text x="${(+a + dx).toFixed(2)}" y="${(+b + dy).toFixed(2)}"`);
+    t = t.replace(/rotate\(([\-\d.]+) ([\d.\-]+) ([\d.\-]+)\)/, (_, r, a, b) => `rotate(${r} ${(+a + dx).toFixed(2)} ${(+b + dy).toFixed(2)})`);
+    out += t;
+  });
+  return out + body.slice(last);
+}
+
 export function svgWrap(w: number, h: number, body: string, bg?: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" ${FONT}>${bg ? `<rect width="${w}" height="${h}" fill="${bg}"/>` : ''}${body}</svg>`;
+  const b = declutterText(body, w, h);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" ${FONT}>${bg ? `<rect width="${w}" height="${h}" fill="${bg}"/>` : ''}${b}</svg>`;
 }
 
 /** Escala de colores secuencial (azul claro → naranja intenso) para presiones. */

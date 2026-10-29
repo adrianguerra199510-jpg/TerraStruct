@@ -31,8 +31,8 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   const xR = g.B + backExt;
   const yTopW = g.surfaceY(xR);
   const pressH = showPress ? 56 : 0;
-  const dimsH = o.showDims !== false ? 58 : 12;
-  const topPad = 58;
+  const dimsH = o.showDims !== false ? 58 + (showPress ? 14 : 0) + (o.showRebar ? 44 : 0) : 12 + (o.showRebar ? 44 : 0);
+  const topPad = o.showRebar ? 110 : inp.fill.q > 0 ? 74 : 58;
   const spanX = xR - xL, spanY = yTopW + kd;
   const m = { l: 30, r: 30 };
   const sc = Math.min((W - m.l - m.r) / spanX, (H - topPad - pressH - dimsH - 22) / spanY);
@@ -101,7 +101,9 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   if (g.cfPoly) {
     s += poly(g.cfPoly.map(P), isMasonryStem(inp.type) ? 'url(#wmas)' : 'none', th.accent, 2, 'stroke-dasharray="7 4"' + (isMasonryStem(inp.type) ? ' fill-opacity=".35"' : ''));
     const c = g.cfPoly;
-    const cx = c.reduce((a, p) => a + p.x, 0) / c.length, cy = c.reduce((a, p) => a + p.y, 0) / c.length;
+    const cx = c.reduce((a, p) => a + p.x, 0) / c.length;
+    const cyMin = Math.min(...c.map((p) => p.y)), cyMax = Math.max(...c.map((p) => p.y));
+    const cy = cyMin + 0.22 * (cyMax - cyMin); // en la parte baja, lejos del texto de la cota H
     s += text(X(cx), Y(cy), inp.type === 'counterfortInt' ? 'contrafuerte' : 'contrafuerte', { size: 11, fill: th.accent, anchor: 'middle', weight: 600 });
     s += text(X(cx), Y(cy) + 13, '(fuera del plano)', { size: 9.5, fill: th.accent, anchor: 'middle' });
   }
@@ -111,7 +113,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += poly(p.poly.map(P), th.concrete, th.concreteStroke, 2);
     const bm = inp.beams[i];
     const c = p.poly.reduce((a, q) => ({ x: a.x + q.x / p.poly.length, y: a.y + q.y / p.poly.length }), { x: 0, y: 0 });
-    if (bm) s += text(X(c.x) - 16, Y(c.y) + 4, `VC${i + 1} ${(bm.b * 100).toFixed(0)}×${(bm.h * 100).toFixed(0)}`, { size: 10.5, fill: th.concreteStroke, anchor: 'end', weight: 700, halo: th.bg });
+    if (bm) s += text(X(Math.max(...p.poly.map((q) => q.x))) + 6, Y(c.y) + 4, `VC${i + 1} ${(bm.b * 100).toFixed(0)}×${(bm.h * 100).toFixed(0)}`, { size: 10.5, fill: th.concreteStroke, weight: 700, halo: th.bg });
   });
 
   // Sobrecarga
@@ -137,7 +139,11 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
       const xr = (res.earth.mode === 'virtual' ? g.B : g.stemBackX(Math.max(Math.min(h.y - res.earth.y0, inp.H), 0))) + 0.02;
       const dx = Math.min(0.9 + 0.35 * i, 1.7);
       s += arrow(X(xr + dx), yy, X(xr), yy, th.bad, 2, 8);
-      s += text(X(xr + dx) + 4, yy + (i % 2 ? 14 : 4), `${h.name.replace('Empuje ', '').replace(' del suelo', '')} = ${o.fmt.u('lforce', h.H, 1)}`, { size: 10.5, fill: th.bad, weight: 600 });
+      const lbl = `${h.name.replace('Empuje ', '').replace(' del suelo', '')} = ${o.fmt.u('lforce', h.H, 1)}`;
+      const lw = lbl.length * 10.5 * 0.56;
+      // si el rótulo no cabe a la derecha de la flecha, se alinea al borde derecho y se coloca sobre la flecha
+      if (X(xr + dx) + 4 + lw > W - 8) s += text(W - 8, yy - 6, lbl, { size: 10.5, fill: th.bad, weight: 600, anchor: 'end', halo: th.bg });
+      else s += text(X(xr + dx) + 4, yy + (i % 2 ? 14 : 4), lbl, { size: 10.5, fill: th.bad, weight: 600 });
       i++;
     }
     void x0;
@@ -221,16 +227,20 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
       }
     }
     // zapata corrida: malla transversal (inferior y superior) y barras longitudinales definidas por el usuario
+    // rótulos de la zapata y de la llave: columna alineada bajo la zapata
+    const colX = X(0);
+    let colY = Y(-kd) + 20;
+    const colLine = (str: string, fill: string) => { s += text(colX, colY, str, { size: 10.5, fill, weight: 700, halo }); colY += 14; };
     if (g.hb > 0.05 && res.design.mesh) {
       const mm = res.design.mesh;
       const OPP = '#d9822b';
       const yB = covF + 0.012;
       s += polyline([pt(covF, yB), pt(g.B - covF, yB)], MAIN, 3.2);
-      s += text(X(g.B / 2), Y(0) + 15, `Transversal inferior ${mm.botDet.text}`, { size: 10.5, fill: MAIN, weight: 700, anchor: 'middle', halo });
+      colLine(`Transversal inferior ${mm.botDet.text}`, MAIN);
       if (mm.top) {
         const yT = g.hb - covF - 0.012;
         s += polyline([pt(covF, yT), pt(g.B - covF, yT)], OPP, 3.2);
-        s += text(X(g.B / 2), Y(g.hb) - 8, `Transversal superior ${mm.top.det.text}`, { size: 10.5, fill: OPP, weight: 700, anchor: 'middle', halo });
+        colLine(`Transversal superior ${mm.top.det.text}`, OPP);
       }
       if (mm.long) {
         const spL = Math.max(mm.long.det.spacing, 0.1);
@@ -241,13 +251,13 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
         };
         s += dots(yB + 0.055);
         if (mm.top) s += dots(g.hb - covF - 0.012 - 0.055);
-        s += text(X(g.B / 2), Y(0) + 29, `Longitudinal ${mm.long.det.text}${mm.long.layers === 2 ? ' (en cada capa)' : ''}`, { size: 10.5, fill: DIST, weight: 700, anchor: 'middle', halo });
+        colLine(`Longitudinal ${mm.long.det.text}${mm.long.layers === 2 ? ' (en cada capa)' : ''}`, DIST);
       }
     }
     if (res.design.key && g.keyPoly) {
       const kx = inp.key.x + inp.key.b / 2;
       s += polyline([pt(kx, -inp.key.d + covF), pt(kx, g.hb - covF - 0.04)], MAIN, 3);
-      s += text(X(kx) + 8, Y(-inp.key.d / 2), `Llave ${res.design.key.slab.det.text}`, { size: 10.5, fill: MAIN, weight: 700, halo });
+      colLine(`Llave ${res.design.key.slab.det.text}`, MAIN);
     }
     // leyenda
     const ly = 44;
@@ -258,7 +268,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
 
   // Cotas
   if (o.showDims !== false) {
-    const ybd = yb0 + pressH + 22 + (o.showRebar ? 22 : 0);
+    const ybd = yb0 + pressH + (showPress ? 36 : 22) + (o.showRebar ? 66 : 0);
     // Línea inferior: Lt | tBot | Lh
     if (g.hb > 0) {
       s += dimLine(X(0), ybd, X(g.xFb), ybd, fx(inp.Lt), th.dim, 0, 11);
