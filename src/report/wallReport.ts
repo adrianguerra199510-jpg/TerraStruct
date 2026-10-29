@@ -113,7 +113,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
             ['Peso unitario de la mampostería', u('uw', mat.gammaM, 2)],
           ] as [string, string][])
         : []),
-      ...(inp.pool.on ? ([['Condición de la piscina', inp.poolDepth > 0 ? `llena, nivel del agua ${u('len', inp.poolDepth, 2)} sobre la zapata` : 'vacía (sin agua)']] as [string, string][]) : []),
+      ...(inp.pool.on ? ([['Condición de la piscina', inp.poolDepth > 0 ? `llena${inp.poolNoFill ? ' sin relleno detrás del muro' : ''}, nivel del agua ${u('len', inp.poolDepth, 2)} sobre la zapata` : 'vacía (sin agua)']] as [string, string][]) : []),
       ['Recubrimiento pantalla / zapata', `${cm(mat.cover)} / ${cm(mat.coverFound)}`],
     ],
     2,
@@ -521,7 +521,7 @@ export function wallBlocksPool(res: WallResults, fmt: Fmt, d: DocBuilder, prefix
   const f = fmt.d;
   d.h1('Piscina: condiciones de carga evaluadas');
   d.p(
-    `El muro contiene una piscina en su lado interior (frente). Se evalúan dos condiciones con todas sus verificaciones: piscina vacía (empuje del relleno y de la sobrecarga) y piscina llena (agua interior hasta ${fmt.u('len', res.pool.hwi, 2)} sobre la zapata, que empuja la pantalla hacia el relleno y pesa sobre el pie). En la condición llena el relleno se considera presente; el momento invertido (tracción en la cara frontal) se diseña con el empuje del agua mayorado y el del relleno con su factor mínimo.`,
+    `El muro contiene una piscina en su lado interior (frente). Se evalúan tres condiciones con todas sus verificaciones: (1) piscina vacía (empuje del relleno y de la sobrecarga, y flotación del fondo si hay nivel freático); (2) piscina llena (agua interior hasta ${fmt.u('len', res.pool.hwi, 2)} sobre la zapata, que empuja la pantalla hacia el relleno y pesa sobre el pie) con el relleno presente; y (3) piscina llena sin relleno detrás del muro (prueba hidráulica o relleno aún no colocado), que es el caso más desfavorable para la cara frontal: no se descuenta ningún empuje de tierras y se ignora el nivel freático lateral. El momento invertido (tracción en la cara frontal) se diseña con el empuje del agua mayorado y el del relleno con su factor mínimo; el acero frontal adoptado cubre las tres condiciones. Con sismo se añade la presión hidrodinámica del agua (Westergaard), y en el cálculo se supone el muro rígido, el agua incompresible y kh igual al del relleno.`,
     { align: 'justify' },
   );
   d.eq(
@@ -530,6 +530,8 @@ export function wallBlocksPool(res: WallResults, fmt: Fmt, d: DocBuilder, prefix
       'Momento posterior (tracción en el relleno):  Mu = 1.6·(Msuelo + Msobrecarga) − 0.9·Mw ;   momento frontal (tracción en la cara frontal):  Mu(−) = 1.6·Mw − 0.9·Msuelo',
       'Peso del agua sobre el pie:  W = γw·hw·Lpie  (favorable; se pondera con el factor mínimo); no se considera suelo sobre el pie ni empuje pasivo',
       'Volcamiento hacia el relleno (agua llena): FS = Σ M(estabilizantes) / Σ M(del agua) respecto al extremo del talón',
+      'Presión hidrodinámica (Westergaard, con sismo):  p(z) = 7/8·kh·γw·√(hw·z);  Pe = 7/12·kh·γw·hw², aplicada a 0.4·hw sobre la zapata, hacia el relleno',
+      'Flotación del fondo (piscina vacía, nivel freático hw sobre la base):  U = γw·hw·B ;  FS = ΣW / U ≥ 1.10, con ΣW el peso del muro y del suelo sobre el talón',
     ],
     'Modelo',
   );
@@ -541,7 +543,7 @@ export function wallBlocksPool(res: WallResults, fmt: Fmt, d: DocBuilder, prefix
   res.pool.states.forEach((q, i) => {
     d.pagebreak();
     d.blocks.push({ t: 'h1', text: `Condición: ${q.label}` });
-    const b = new DocBuilder(`${prefix}${i === 0 ? 'V' : 'L'}-`);
+    const b = new DocBuilder(`${prefix}${['V', 'L', 'S'][i]}-`);
     wallBlocks(q.res, fmt, b);
     d.blocks.push(...b.blocks);
   });

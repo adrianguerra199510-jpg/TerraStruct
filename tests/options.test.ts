@@ -276,7 +276,7 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
   };
   it('se evalúan dos condiciones y el resultado combina ambas', () => {
     const r = analyzeWall(mk());
-    expect(r.pool!.states.map((s) => s.id)).toEqual(['vacia', 'llena']);
+    expect(r.pool!.states.map((s) => s.id)).toEqual(['vacia', 'llena', 'llenaSinRelleno']);
     expect(r.ok).toBe(r.pool!.states.every((s) => s.res.ok));
     expect(r.checks.some((c) => /^Piscina vacía — /.test(c.name))).toBe(true);
     expect(r.checks.some((c) => /^Piscina llena — /.test(c.name))).toBe(true);
@@ -323,6 +323,41 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
     expect(f.prov).toBeGreaterThan(0);
     expect(f.ok).toBe(true);
   });
+  it('sin relleno: no hay empuje de tierras y el momento frontal es el del agua', () => {
+    const r = analyzeWall(mk());
+    const sr = r.pool!.states[2].res;
+    expect(sr.inp.poolNoFill).toBe(true);
+    const names = sr.staticCase.h.map((q) => q.name).join('|');
+    expect(names).not.toContain('Empuje activo del suelo');
+    const L = sectionLoad(sr.geom, stemLateral(sr.geom), 0);
+    expect(L.M.soil).toBeCloseTo(0, 6);
+    const fr = sr.design.stem!.front!;
+    expect(fr.maxMu).toBeCloseTo(1.6 * (GAMMA_W * 2.2 ** 3) / 6, 3);
+    expect(fr.ok).toBe(true);
+    // el acero frontal adoptado en la condición con relleno ya cubre la condición sin relleno
+    expect(r.pool!.states[1].res.design.stem!.frontVertDet.asProv).toBeGreaterThanOrEqual(fr.req - 1e-6);
+  });
+  it('sismo: presión hidrodinámica de Westergaard 7/12·kh·γw·h²', () => {
+    const w = mk('cantilever', 2);
+    w.seismic = { on: true, kh: 0.2, kv: 0 };
+    const sc = analyzeWall(w).pool!.states[1].res.seismicCase!;
+    const dyn = sc.h.find((q) => q.name.includes('Westergaard'))!;
+    expect(Math.abs(dyn.H)).toBeGreaterThan(0);
+    const g = analyzeWall(w).pool!.states[1].res.geom;
+    const L = sectionLoad(g, stemLateral(g), 0);
+    expect(L.V.poolDyn).toBeCloseTo((7 / 12) * 0.2 * GAMMA_W * 4, 6);
+    expect(L.M.poolDyn).toBeCloseTo((7 / 8) * 0.2 * GAMMA_W * Math.sqrt(2) * (4 / 15) * 2 ** 2.5, 6);
+  });
+  it('flotación con la piscina vacía y nivel freático', () => {
+    const w = mk();
+    w.hw = 1.5;
+    const r = analyzeWall(w);
+    expect(r.checks.some((c) => c.name === 'Piscina vacía — Flotación del fondo (subpresión)')).toBe(true);
+    const f = r.checks.find((c) => c.name.includes('Flotación'))!;
+    expect(f.ratio).toBeGreaterThan(0);
+    w.hw = 0;
+    expect(analyzeWall(w).checks.some((c) => c.name.includes('Flotación'))).toBe(false);
+  });
   it('las tipologías sin voladizo ignoran la piscina y la memoria incluye ambas condiciones', () => {
     const g = defaultWall('gravityConcrete');
     g.pool = { on: true, hwi: 1 };
@@ -331,5 +366,6 @@ describe('muros de piscina (agua interior, vacía y llena)', () => {
     expect(txt).toContain('Piscina: condiciones de carga evaluadas');
     expect(txt).toContain('Condición: Piscina llena');
     expect(txt).toContain('Condición: Piscina vacía');
+    expect(txt).toContain('Condición: Piscina llena sin relleno');
   });
 });

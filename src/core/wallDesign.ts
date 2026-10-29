@@ -71,8 +71,8 @@ export interface SectionLoad {
   /** profundidad bajo la corona */
   zs: number;
   /** cortante y momento de servicio por componente (kN/m, kN·m/m) */
-  V: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number };
-  M: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number };
+  V: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number; poolDyn: number };
+  M: { soil: number; sur: number; water: number; seis: number; inertia: number; pool: number; poolDyn: number };
 }
 
 export function sectionLoad(g: WallGeom, lat: StemLateral, y: number): SectionLoad {
@@ -91,10 +91,14 @@ export function sectionLoad(g: WallGeom, lat: StemLateral, y: number): SectionLo
   const dw = Math.max(hwi - y, 0);
   const poolV = 0.5 * GAMMA_W * dw * dw;
   const poolM = (GAMMA_W * dw * dw * dw) / 6;
+  // presión hidrodinámica de Westergaard (sismo): p(z) = 7/8·kh·γw·√(h·z)
+  const cW = hwi > 0 ? (7 / 8) * kh * GAMMA_W * Math.sqrt(hwi) : 0;
+  const dynV = cW * (2 / 3) * Math.pow(dw, 1.5);
+  const dynM = cW * (4 / 15) * Math.pow(dw, 2.5);
   return {
     y, zs,
-    V: { soil: s.V, sur: q.V, water: w.V, seis: e.V, inertia: inertia.V, pool: poolV },
-    M: { soil: s.M, sur: q.M, water: w.M, seis: e.M, inertia: inertia.M, pool: poolM },
+    V: { soil: s.V, sur: q.V, water: w.V, seis: e.V, inertia: inertia.V, pool: poolV, poolDyn: dynV },
+    M: { soil: s.M, sur: q.M, water: w.M, seis: e.M, inertia: inertia.M, pool: poolM, poolDyn: dynM },
   };
 }
 
@@ -551,8 +555,8 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     // el agua de la piscina es favorable para la cara posterior (factor mínimo) y desfavorable para la frontal
     const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool;
     const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + 1 * L.M.sur + f.eq * (L.M.seis + L.M.inertia) - f.deadMin * L.M.pool : 0;
-    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0;
-    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil) : 0;
+    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil, f.lateral * L.M.pool + f.eq * L.M.poolDyn - f.deadMin * L.M.soil) : 0;
+    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil, f.lateral * L.V.pool + f.eq * L.V.poolDyn - f.deadMin * L.V.soil) : 0;
     const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur - f.deadMin * L.V.pool;
     const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + 1 * L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
     const Mu = Math.max(Mst, Mse, 0);
@@ -594,7 +598,7 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const Lc = sectionLoad(g, lat, yCrit);
   const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
   const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
-  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool - f.deadMin * Lc.V.soil) : 0;
+  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool + f.eq * Lc.V.poolDyn - f.deadMin * Lc.V.soil) : 0;
   const Vu = Math.max(Vst, Vse, VuFr);
   const dC = g.stemT(yCrit) - m.cover - bar.db / 2000;
   const cap = oneWayVc(1, dC, m.fc, (base.asProv * 1e-4) / dC, m.code, m.lambda);
@@ -608,9 +612,10 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
   const frontReq = Math.max(...secs.map((q) => (q.MuFront > 1e-6 ? (() => { const r = flexureAs(q.MuFront, 1, q.d, m.fc, m.fy); return isFinite(r.As) ? Math.max(r.As, asMinFlex(q.d, m.fc, m.fy)) : 1e6; })() : 0)));
   const frontMu = Math.max(...secs.map((q) => q.MuFront));
   const frontMin = 0.5 * rhoV * tAvg * 1e4;
+  const frontReqAll = Math.max(frontReq, inp.poolFrontMin || 0);
   const front: Detailing =
     layers === 2
-      ? frontReq > frontMin ? chooseSpacing(frontReq, bar, 0.45) : chooseSpacing(frontMin, barH, 0.45)
+      ? frontReqAll > frontMin ? chooseSpacing(frontReqAll, bar, 0.45) : chooseSpacing(frontMin, barH, 0.45)
       : { text: 'No se coloca', spacing: 0.45, asProv: 0, ok: true };
   const frontInfo = frontMu > 1e-6 ? { req: frontReq, prov: front.asProv, ratio: frontReq / Math.max(front.asProv, 1e-9), ok: front.asProv + 1e-9 >= frontReq, maxMu: frontMu } : null;
   const horizAuto = !(m.horizS > 0);
@@ -694,8 +699,8 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     const d = layers === 1 ? t / 2 : t - 0.05 - bar.db / 2000; // 1 capa: barra centrada en la celda; 2 capas: barra del lado del relleno
     const Mst = f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool;
     const Mse = inp.seismic.on ? f.lateral * (L.M.soil + L.M.water) + L.M.sur + f.eq * (L.M.seis + L.M.inertia) - f.deadMin * L.M.pool : 0;
-    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0;
-    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil) : 0;
+    const MuFront = L.M.pool > 0 ? Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil, f.lateral * L.M.pool + f.eq * L.M.poolDyn - f.deadMin * L.M.soil) : 0;
+    const VuFront = L.V.pool > 0 ? Math.max(0, f.lateral * L.V.pool - f.deadMin * L.V.soil, f.lateral * L.V.pool + f.eq * L.V.poolDyn - f.deadMin * L.V.soil) : 0;
     const Vst = f.lateral * (L.V.soil + L.V.water) + f.live * L.V.sur - f.deadMin * L.V.pool;
     const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
     const Mu = Math.max(Mst, Mse, 0);
@@ -733,7 +738,7 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
   const Lc = sectionLoad(g, lat, yCrit);
   const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
   const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
-  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool - f.deadMin * Lc.V.soil) : 0;
+  const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool + f.eq * Lc.V.poolDyn - f.deadMin * Lc.V.soil) : 0;
   const Vu = Math.max(Vst, Vse, VuFr);
   const Mcrit = Math.max(secs[0].Mu, 1e-6);
   const mvd = Math.min(1, Mcrit / Math.max(Vu * d0, 1e-6));

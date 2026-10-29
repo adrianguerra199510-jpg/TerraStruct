@@ -16,7 +16,7 @@ export interface WallCheck {
 
 /** Condición de la piscina: vacía (solo relleno) o llena (agua interior + relleno) */
 export interface PoolState {
-  id: 'vacia' | 'llena';
+  id: 'vacia' | 'llena' | 'llenaSinRelleno';
   label: string;
   res: WallResults;
 }
@@ -24,7 +24,7 @@ export interface PoolState {
 export interface WallResults {
   inp: WallInput;
   /** con piscina: resultados completos de cada condición; los campos principales corresponden a la condición mostrada */
-  pool?: { states: PoolState[]; view: 'vacia' | 'llena'; hwi: number };
+  pool?: { states: PoolState[]; view: PoolState['id']; hwi: number };
   geom: WallGeom;
   earth: EarthModel;
   earthSeismic: EarthModel | null;
@@ -41,15 +41,21 @@ export interface WallResults {
 const res0h = (g: { hb: number }) => g.hb * 1e4;
 
 /** Análisis con piscina: se evalúan las condiciones vacía y llena y se combinan las verificaciones. */
-export function analyzeWall(input: WallInput, view: 'vacia' | 'llena' = 'llena'): WallResults {
+export function analyzeWall(input: WallInput, view: PoolState['id'] = 'llena'): WallResults {
   const inp0 = normalizeWall(input);
   if (!inp0.pool.on || !canPool(inp0.type)) return analyzeWallCore({ ...inp0, poolDepth: 0 });
   const hwi = Math.min(Math.max(inp0.pool.hwi, 0.05), inp0.H);
+  // Piscina llena sin relleno: se anula el suelo, la sobrecarga y el agua freática detrás del muro
+  const noFillInp = { ...inp0, poolDepth: hwi, poolNoFill: true, hw: 0, fill: { ...inp0.fill, gamma: 0, gammaSat: 0, q: 0, beta: 0 } };
+  const sinRelleno = analyzeWallCore(noFillInp);
+  // el acero de la cara frontal debe cubrir también la condición sin relleno
+  const frontMin = sinRelleno.design.stem?.front?.req ?? 0;
   const states: PoolState[] = [
-    { id: 'vacia', label: 'Piscina vacía', res: analyzeWallCore({ ...inp0, poolDepth: 0 }) },
-    { id: 'llena', label: 'Piscina llena', res: analyzeWallCore({ ...inp0, poolDepth: hwi }) },
+    { id: 'vacia', label: 'Piscina vacía', res: analyzeWallCore({ ...inp0, poolDepth: 0, poolFrontMin: frontMin }) },
+    { id: 'llena', label: 'Piscina llena', res: analyzeWallCore({ ...inp0, poolDepth: hwi, poolFrontMin: frontMin }) },
+    { id: 'llenaSinRelleno', label: 'Piscina llena sin relleno', res: analyzeWallCore({ ...noFillInp, poolFrontMin: frontMin }) },
   ];
-  const main = states.find((q) => q.id === view)!.res;
+  const main = states.find((q) => q.id === view)?.res ?? states[1].res;
   const checks: WallCheck[] = states.flatMap((q) => q.res.checks.map((c) => ({ ...c, name: `${q.label} — ${c.name}` })));
   const warnings = [...new Set(states.flatMap((q) => q.res.warnings.map((w) => (states.length ? `${q.label}: ${w}` : w))))];
   return { ...main, pool: { states, view, hwi }, checks, warnings, ok: checks.filter((c) => !c.advisory).every((c) => c.ok) };
@@ -78,6 +84,12 @@ function analyzeWallCore(input: WallInput): WallResults {
   stab(staticCase, '(estático)');
   if (seismicCase) stab(seismicCase, '(sísmico)');
 
+  // Flotación del fondo con la piscina vacía: subpresión uniforme del nivel freático vs. peso estabilizante
+  if (inp.pool.on && inp.poolDepth <= 0 && inp.hw > 0) {
+    const Wstab = staticCase.uplift > 0 ? staticCase.SumV + staticCase.uplift : 0;
+    const FSf = staticCase.uplift > 0 ? Wstab / staticCase.uplift : Infinity;
+    add({ group: 'Estabilidad', name: 'Flotación del fondo (subpresión)', ratio: 1.1 / FSf, detail: `FS = ΣW / U = ${Wstab.toFixed(1)} / ${staticCase.uplift.toFixed(1)} = ${isFinite(FSf) ? FSf.toFixed(2) : '∞'} (mín. 1.10)`, ok: FSf >= 1.1 });
+  }
   const d = design;
   if (d.stem) {
     const worst = Math.max(...d.stem.sections.map((s) => (s.phiMn > 0 ? s.Mu / s.phiMn : 0)));

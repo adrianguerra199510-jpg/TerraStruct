@@ -216,6 +216,8 @@ export function evalCase(
   if (hwi > 1e-6) {
     if (g.xFb > 1e-6) addV('Agua de la piscina sobre el pie', GAMMA_W * hwi * g.xFb * Math.min(fac.dead, 1), g.xFb / 2);
     addH('Empuje del agua de la piscina (cara frontal)', -0.5 * GAMMA_W * hwi * hwi * Math.min(fac.water, 1), g.hb + hwi / 3);
+    // Presión hidrodinámica del agua con sismo (Westergaard): 7/12·kh·γw·h², a 0.4·h sobre la zapata, hacia el relleno
+    if (seismic && kh > 0) addH('Presión hidrodinámica del agua de la piscina (Westergaard)', -(7 / 12) * kh * GAMMA_W * hwi * hwi * fac.eq, g.hb + 0.4 * hwi);
   }
   // Sobrecarga sobre el relleno
   if (opts.surchargeV && inp.fill.q > 0 && fac.liveV > 0) {
@@ -251,8 +253,14 @@ export function evalCase(
   // Subpresión
   let uplift = 0;
   if (inp.hw > 0) {
-    uplift = 0.5 * GAMMA_W * inp.hw * g.B * fac.water;
-    addV('Subpresión del agua', -uplift, (2 * g.B) / 3);
+    // con piscina el nivel freático es el mismo bajo todo el fondo: subpresión uniforme
+    if (poolOn) {
+      uplift = GAMMA_W * inp.hw * g.B * fac.water;
+      addV('Subpresión del agua (uniforme bajo el fondo)', -uplift, g.B / 2);
+    } else {
+      uplift = 0.5 * GAMMA_W * inp.hw * g.B * fac.water;
+      addV('Subpresión del agua', -uplift, (2 * g.B) / 3);
+    }
   }
 
   const SumV = v.reduce((s, a) => s + a.V, 0);
@@ -332,7 +340,7 @@ export function evalCase(
     const x0 = g.B - contactLen;
     return x >= x0 ? qHeel * ((x - x0) / contactLen) : 0;
   };
-  const uAt = (x: number) => (inp.hw > 0 ? (GAMMA_W * inp.hw * x * fac.water) / g.B : 0);
+  const uAt = (x: number) => (inp.hw > 0 ? (poolOn ? GAMMA_W * inp.hw * fac.water : (GAMMA_W * inp.hw * x * fac.water) / g.B) : 0);
 
   const bearing = inp.found.bearingMode === 'calc' && SumV > 0 ? bearingCapacity(g, SumV, SumH, e) : null;
   const qaBase = bearing ? bearing.qa : inp.found.qa;

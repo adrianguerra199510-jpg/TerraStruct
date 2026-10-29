@@ -18,7 +18,7 @@ type Tab = 'seccion' | 'estabilidad' | 'diseno' | 'diagramas' | 'armado' | 'memo
 
 export function WallPage({ data, onChange, theme, info }: { data: WallInput; onChange: (w: WallInput) => void; theme: 'light' | 'dark'; info: ProjectInfo }) {
   const [tab, setTab] = useState<Tab>('seccion');
-  const [poolView, setPoolView] = useState<'vacia' | 'llena'>('llena');
+  const [poolView, setPoolView] = useState<'vacia' | 'llena' | 'llenaSinRelleno'>('llena');
   const res = useMemo(() => {
     try {
       return analyzeWall(data, poolView);
@@ -171,7 +171,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
           <Check label="Incluir el suelo sobre el pie" value={data.includeToeSoil} onChange={(v) => set({ includeToeSoil: v })} />
           {canPool(t) && (
             <>
-              <Check label="Piscina: agua en el lado interior (frente del muro)" value={data.pool.on} onChange={(v) => set({ pool: { ...data.pool, on: v } })} hint="Se evalúan dos condiciones: piscina vacía (solo relleno) y piscina llena (agua interior + relleno)" />
+              <Check label="Piscina: agua en el lado interior (frente del muro)" value={data.pool.on} onChange={(v) => set({ pool: { ...data.pool, on: v } })} hint="Se evalúan tres condiciones: piscina vacía (relleno + flotación), piscina llena (agua + relleno, con presión hidrodinámica si hay sismo) y piscina llena sin relleno (caso más desfavorable para la cara frontal)" />
               {data.pool.on && (
                 <>
                   <div className="grid2">
@@ -379,7 +379,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
         {res?.pool && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span className="hint">Condición mostrada</span>
-            {(['vacia', 'llena'] as const).map((k) => {
+            {(['vacia', 'llena', 'llenaSinRelleno'] as const).map((k) => {
               const st = res.pool!.states.find((q) => q.id === k)!;
               return (
                 <button key={k} className={'btn small' + (poolView === k ? ' primary' : '')} onClick={() => setPoolView(k)}>

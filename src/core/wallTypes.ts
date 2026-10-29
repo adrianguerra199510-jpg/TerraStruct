@@ -149,6 +149,10 @@ export interface WallInput {
   pool: { on: boolean; hwi: number };
   /** (interno) profundidad del agua de la piscina en la condición evaluada, m; 0 = vacía */
   poolDepth: number;
+  /** (interno) acero mínimo de la cara frontal exigido por la condición más severa de la piscina, cm²/m */
+  poolFrontMin: number;
+  /** (interno) condición de piscina llena sin relleno detrás del muro */
+  poolNoFill: boolean;
   /** si es true, el peso de la sobrecarga sobre el talón no se cuenta en volcamiento ni deslizamiento */
   ignoreSurchargeWeight: boolean;
   // --- materiales ---
@@ -230,6 +234,8 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     includeToeSoil: true,
     pool: { on: false, hwi: 2.0 },
     poolDepth: 0,
+    poolFrontMin: 0,
+    poolNoFill: false,
     ignoreSurchargeWeight: true,
     mat: {
       fc: 28,
