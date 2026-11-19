@@ -425,3 +425,30 @@ describe('piscina cerrada: empujes autoequilibrados', () => {
     expect(analyzeWall(w).pool!.states[0].res.staticCase.h.length).toBeGreaterThan(0);
   });
 });
+
+import { defaultCombos, analyzeFooting as analyzeF, defaultFooting as defF } from '../src/core/footing';
+describe('zapatas: combinaciones de viento (naves industriales)', () => {
+  it('incluye 0.6D ± 0.6W, viento reversible y FS = 1.0 propios de las combinaciones de estabilidad', () => {
+    const c = defaultCombos();
+    const s7 = c.find((x) => x.name === '0.6D + 0.6W')!;
+    expect([s7.D, s7.W, s7.fsOverturning, s7.fsSliding]).toEqual([0.6, 0.6, 1, 1]);
+    expect(c.find((x) => x.name === '0.6D − 0.6W')!.W).toBe(-0.6);
+    expect(c.find((x) => x.name === '0.9D − W')!.W).toBe(-1);
+    expect(c.find((x) => x.name === '1.2D + L − W')!.W).toBe(-1);
+    expect(new Set(c.map((x) => x.id)).size).toBe(c.length);
+  });
+  it('el volcamiento por viento se evalúa con 0.6D (y con FS propio), no solo con D completo', () => {
+    const f = defF();
+    f.columns[0].loads.D.P = 300;
+    f.columns[0].loads.W = { P: -80, Vx: 60, Vy: 0, Mx: 0, My: 250 };
+    const r = analyzeF(f);
+    const s7 = r.service.find((s) => s.combo.name === '0.6D + 0.6W')!;
+    const s3 = r.service.find((s) => s.combo.name === 'D + 0.6W')!;
+    expect(s7.FSot).toBeLessThan(s3.FSot);
+    expect(s7.reqOT).toBe(1);
+    expect(s3.reqOT).toBe(f.fsOverturning);
+    // el sentido contrario también se evalúa
+    expect(r.service.some((s) => s.combo.name === 'D − 0.6W')).toBe(true);
+    expect(r.checks.find((c) => c.name === 'Volcamiento')!.detail).toMatch(/mín\./);
+  });
+});

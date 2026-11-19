@@ -196,13 +196,13 @@ export function footingBlocks(inp: FootingInput, res: FootingResults, fmt: Fmt, 
     );
     d.img(footingPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt, combo: gov, showPressure: true, showCritical: false, idPrefix: 'r2' }), `Figura 2. Presión de contacto — ${gov.combo.name}. R = resultante.`);
   }
-  const worstSl = res.service.filter((s) => isFinite(s.FSsl)).sort((a, b) => a.FSsl - b.FSsl)[0];
-  const worstOt = res.service.filter((s) => isFinite(s.FSot)).sort((a, b) => a.FSot - b.FSot)[0];
+  const worstSl = res.service.filter((s) => isFinite(s.FSsl)).sort((a, b) => b.reqSL / b.FSsl - a.reqSL / a.FSsl)[0];
+  const worstOt = res.service.filter((s) => isFinite(s.FSot)).sort((a, b) => b.reqOT / b.FSot - a.reqOT / a.FSot)[0];
   if (worstSl) {
     d.h2('Deslizamiento y volcamiento');
     d.eq([
-      `Deslizamiento (${worstSl.combo.name}): FS = (μ·ΣV + c·Ac)/H = (${f(inp.mu, 2)} × ${n('force', worstSl.Ptot, 1)} + ${n('press', inp.adhesion, 1)} × ${f(worstSl.sol.contactArea, 2)}) / ${n('force', worstSl.H, 1)} = ${f(worstSl.FSsl, 2)}  ${worstSl.FSsl >= inp.fsSliding ? '≥' : '<'}  ${f(inp.fsSliding, 2)}`,
-      ...(worstOt ? [`Volcamiento (${worstOt.combo.name}): FS = ${f(worstOt.FSot, 2)}  ${worstOt.FSot >= inp.fsOverturning ? '≥' : '<'}  ${f(inp.fsOverturning, 2)}`] : []),
+      `Deslizamiento (${worstSl.combo.name}): FS = (μ·ΣV + c·Ac)/H = (${f(inp.mu, 2)} × ${n('force', worstSl.Ptot, 1)} + ${n('press', inp.adhesion, 1)} × ${f(worstSl.sol.contactArea, 2)}) / ${n('force', worstSl.H, 1)} = ${f(worstSl.FSsl, 2)}  ${worstSl.FSsl >= worstSl.reqSL ? '≥' : '<'}  ${f(worstSl.reqSL, 2)}`,
+      ...(worstOt ? [`Volcamiento (${worstOt.combo.name}): FS = ${f(worstOt.FSot, 2)}  ${worstOt.FSot >= worstOt.reqOT ? '≥' : '<'}  ${f(worstOt.reqOT, 2)}`] : []),
     ]);
   }
 

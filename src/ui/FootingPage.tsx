@@ -512,7 +512,7 @@ function CombosEditor({ data, onChange }: { data: FootingInput; onChange: (f: Fo
   const upd = (id: string, patch: Partial<LoadCombo>) => onChange({ ...data, combos: data.combos.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
   return (
     <>
-      <div className="hint">Servicio (suelo, deslizamiento, volcamiento) y últimas (diseño del concreto). Edite los factores libremente.</div>
+      <div className="hint">Servicio (suelo, deslizamiento, volcamiento) y últimas (diseño del concreto). Edite los factores libremente. El viento es reversible: las combinaciones con −W cubren el sentido contrario (ingrese W con su signo para un sentido). 0.6D + 0.6W gobierna el volcamiento, el deslizamiento y el levantamiento; con 0.6D ya incluido, se adopta FS = 1.0. El aumento de qa (×1.33) con W depende del código geotécnico: ajústelo o póngalo en 1.0 si no se permite. «Restablecer» incorpora estas combinaciones a proyectos antiguos.</div>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead>
@@ -524,6 +524,8 @@ function CombosEditor({ data, onChange }: { data: FootingInput; onChange: (f: Fo
               <th className="r">W</th>
               <th className="r">E</th>
               <th className="r">qa×</th>
+              <th className="r" title="FS mínimo al deslizamiento propio de la combinación (vacío = general)">FS desl.</th>
+              <th className="r" title="FS mínimo al volcamiento propio de la combinación (vacío = general)">FS vol.</th>
               <th />
             </tr>
           </thead>
@@ -542,6 +544,8 @@ function CombosEditor({ data, onChange }: { data: FootingInput; onChange: (f: Fo
                 <td><CellNum value={c.W} onChange={(v) => upd(c.id, { W: v })} decimals={3} /></td>
                 <td><CellNum value={c.E} onChange={(v) => upd(c.id, { E: v })} decimals={3} /></td>
                 <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => upd(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
+                <td>{c.kind === 'service' ? <CellNum value={c.fsSliding ?? data.fsSliding} onChange={(v) => upd(c.id, { fsSliding: v > 0 ? v : undefined })} decimals={2} /> : '—'}</td>
+                <td>{c.kind === 'service' ? <CellNum value={c.fsOverturning ?? data.fsOverturning} onChange={(v) => upd(c.id, { fsOverturning: v > 0 ? v : undefined })} decimals={2} /> : '—'}</td>
                 <td><button className="icon-btn danger" onClick={() => onChange({ ...data, combos: data.combos.filter((x) => x.id !== c.id) })}><Trash2 size={14} /></button></td>
               </tr>
             ))}

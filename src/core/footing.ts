@@ -50,6 +50,9 @@ export interface LoadCombo {
   E: number;
   /** aumento del esfuerzo admisible del suelo (service) */
   qaFactor: number;
+  /** FS mínimos propios de la combinación (vacío = los generales de la zapata); p. ej. 1.0 en 0.6D + 0.6W */
+  fsSliding?: number;
+  fsOverturning?: number;
 }
 
 export interface FootingInput {
@@ -110,7 +113,7 @@ export function defaultColumn(id: string, name: string, x = 0, y = 0, shape: Col
 }
 
 export function defaultCombos(): LoadCombo[] {
-  const s = (id: string, name: string, D: number, L: number, W: number, E: number, qaF: number): LoadCombo => ({ id, name, kind: 'service', D, L, W, E, qaFactor: qaF });
+  const s = (id: string, name: string, D: number, L: number, W: number, E: number, qaF: number, fs?: number): LoadCombo => ({ id, name, kind: 'service', D, L, W, E, qaFactor: qaF, ...(fs ? { fsSliding: fs, fsOverturning: fs } : {}) });
   const u = (id: string, name: string, D: number, L: number, W: number, E: number): LoadCombo => ({ id, name, kind: 'ultimate', D, L, W, E, qaFactor: 1 });
   return [
     s('S1', 'D', 1, 0, 0, 0, 1),
@@ -127,6 +130,14 @@ export function defaultCombos(): LoadCombo[] {
     u('U6', '0.9D − E', 0.9, 0, 0, -1),
     u('U7', '1.2D + L + W', 1.2, 1, 1, 0),
     u('U8', '0.9D + W', 0.9, 0, 1, 0),
+    // Viento reversible y combinaciones ASD de estabilidad (ASCE 7-16 §2.4.1): 0.6D + 0.6W gobierna volcamiento, deslizamiento y levantamiento
+    s('S7', '0.6D + 0.6W', 0.6, 0, 0.6, 0, 1.33, 1),
+    s('S8', 'D + 0.75L + 0.45W', 1, 0.75, 0.45, 0, 1.33),
+    s('S9', 'D − 0.6W', 1, 0, -0.6, 0, 1.33),
+    s('S10', '0.6D − 0.6W', 0.6, 0, -0.6, 0, 1.33, 1),
+    s('S11', 'D + 0.75L − 0.45W', 1, 0.75, -0.45, 0, 1.33),
+    u('U9', '1.2D + L − W', 1.2, 1, -1, 0),
+    u('U10', '0.9D − W', 0.9, 0, -1, 0),
   ];
 }
 
@@ -206,6 +217,9 @@ export interface ServiceResult {
   ratio: number;
   FSsl: number;
   FSot: number;
+  /** FS mínimos aplicados a esta combinación */
+  reqSL: number;
+  reqOT: number;
   pressureOk: boolean;
   slidingOk: boolean;
   overturningOk: boolean;
@@ -459,11 +473,13 @@ function analyzeService(inp: FootingInput, poly: Poly, combo: LoadCombo): Servic
   }
 
   const pressureOk = sol.ok && sol.qmax <= qaAllow + 1e-9;
-  const slidingOk = FSsl >= inp.fsSliding - 1e-9;
-  const overturningOk = FSot >= inp.fsOverturning - 1e-9;
+  const reqSL = combo.fsSliding ?? inp.fsSliding;
+  const reqOT = combo.fsOverturning ?? inp.fsOverturning;
+  const slidingOk = FSsl >= reqSL - 1e-9;
+  const overturningOk = FSot >= reqOT - 1e-9;
   return {
     combo, cols, weights, Pcol, Wtot, Ptot, Vx, Vy, H, Qx, Qy, ex, ey, sol, qaAllow,
-    ratio: sol.ok ? sol.qmax / qaAllow : Infinity, FSsl, FSot, pressureOk, slidingOk, overturningOk,
+    ratio: sol.ok ? sol.qmax / qaAllow : Infinity, FSsl, FSot, reqSL, reqOT, pressureOk, slidingOk, overturningOk,
     ok: pressureOk && slidingOk && overturningOk, tipDir,
   };
 }
@@ -850,10 +866,10 @@ export function analyzeFooting(inp: FootingInput): FootingResults {
   if (govPressure) {
     checks.push({ name: 'Presión máxima en el suelo', ratio: govPressure.ratio, ok: govPressure.pressureOk, detail: govPressure.combo.name });
   }
-  const worstSl = service.filter((s) => isFinite(s.FSsl)).sort((a, b) => a.FSsl - b.FSsl)[0];
-  if (worstSl) checks.push({ name: 'Deslizamiento', ratio: inp.fsSliding / worstSl.FSsl, ok: worstSl.slidingOk, detail: `${worstSl.combo.name}: FS = ${worstSl.FSsl.toFixed(2)}` });
-  const worstOt = service.filter((s) => isFinite(s.FSot)).sort((a, b) => a.FSot - b.FSot)[0];
-  if (worstOt) checks.push({ name: 'Volcamiento', ratio: inp.fsOverturning / worstOt.FSot, ok: worstOt.overturningOk, detail: `${worstOt.combo.name}: FS = ${worstOt.FSot.toFixed(2)}` });
+  const worstSl = service.filter((s) => isFinite(s.FSsl)).sort((a, b) => b.reqSL / b.FSsl - a.reqSL / a.FSsl)[0];
+  if (worstSl) checks.push({ name: 'Deslizamiento', ratio: worstSl.reqSL / worstSl.FSsl, ok: worstSl.slidingOk, detail: `${worstSl.combo.name}: FS = ${worstSl.FSsl.toFixed(2)} (mín. ${worstSl.reqSL})` });
+  const worstOt = service.filter((s) => isFinite(s.FSot)).sort((a, b) => b.reqOT / b.FSot - a.reqOT / a.FSot)[0];
+  if (worstOt) checks.push({ name: 'Volcamiento', ratio: worstOt.reqOT / worstOt.FSot, ok: worstOt.overturningOk, detail: `${worstOt.combo.name}: FS = ${worstOt.FSot.toFixed(2)} (mín. ${worstOt.reqOT})` });
   for (const dir of ['x', 'y'] as const) {
     const f = flex[dir];
     if (f) checks.push({ name: `Flexión dirección ${dir.toUpperCase()}`, ratio: f.ratio, ok: f.sectionOk && f.ratio <= 1 + 1e-9, detail: f.comboName });
