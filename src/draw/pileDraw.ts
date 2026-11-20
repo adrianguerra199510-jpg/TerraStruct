@@ -1,6 +1,5 @@
 import { PileInput } from '../core/pileTypes';
 import { PileResults, ComboRes } from '../core/pile';
-import { columnPoly } from '../core/shapes';
 import { findBar } from '../core/materials';
 import { hpShape } from '../core/pileStruct';
 import { Fmt } from '../core/units';
@@ -10,7 +9,7 @@ import { makePlanView, PlanView } from './footingDraw';
 import { lineSpan } from '../core/pileCap';
 
 export function pilePlanPoints(inp: PileInput, res: PileResults): Pt[] {
-  return [...res.capPoly, ...columnPoly(inp.column.geom, inp.column.x, inp.column.y)];
+  return [...res.capPoly, ...res.cols.flatMap((c) => c.poly)];
 }
 
 const pathOf = (res: PileResults, view: PlanView) => res.capPoly.map((q) => { const t = view.toSvg(q.x, q.y); return `${t.x.toFixed(1)},${t.y.toFixed(1)}`; }).join(' ');
@@ -67,8 +66,13 @@ export function pilePlanSvg(inp: PileInput, res: PileResults, o: { W?: number; H
     if (v !== undefined) s += text(q.x, q.y + (inp.pile.D * view.s) / 2 + 15, `${o.fmt.n('force', v, 0)}`, { size: 11, fill: v < 0 ? th.water : th.ink, anchor: 'middle', weight: 600, halo: th.bg });
   });
   void rmax;
-  const cp = columnPoly(inp.column.geom, inp.column.x, inp.column.y).map((p) => view.toSvg(p.x, p.y));
-  s += poly(cp, th.col, th.ink, 1.4, 'fill-opacity="0.85"');
+  for (const c of res.cols) {
+    s += poly(c.poly.map((p) => view.toSvg(p.x, p.y)), th.col, th.ink, 1.4, 'fill-opacity="0.85"');
+    if (res.cols.length > 1) {
+      const q = view.toSvg(c.x, c.y);
+      s += text(q.x, q.y + 4, c.name, { size: 11.5, fill: th.bg, anchor: 'middle', weight: 700 });
+    }
+  }
   if (o.showDims !== false) {
     s += dimLine(A.x, B.y, B.x, B.y, `${o.fmt.n('len', r.B, 2)} ${o.fmt.l('len')}`, th.dim, 26);
     s += dimLine(A.x, B.y, A.x, A.y, `${o.fmt.n('len', r.L, 2)} ${o.fmt.l('len')}`, th.dim, 28, 11, -1);
@@ -159,9 +163,11 @@ export function pileSectionSvg(inp: PileInput, res: PileResults, o: { W?: number
   }
   // cabezal y columna
   g += `<rect x="${X(r.x0).toFixed(1)}" y="${yCapTop.toFixed(1)}" width="${(r.B * s).toFixed(1)}" height="${(cap.h * s).toFixed(1)}" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-width="2"/>`;
-  const cb = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
-  const cx0 = Math.min(...cb.map((v) => v.x)), cx1 = Math.max(...cb.map((v) => v.x));
-  g += `<rect x="${X(cx0).toFixed(1)}" y="${yTopCol.toFixed(1)}" width="${((cx1 - cx0) * s).toFixed(1)}" height="${(colH * s).toFixed(1)}" fill="${th.col}" fill-opacity="0.85" stroke="${th.ink}"/>`;
+  for (const c of res.cols) {
+    const cx0 = Math.min(...c.poly.map((v) => v.x)), cx1 = Math.max(...c.poly.map((v) => v.x));
+    g += `<rect x="${X(cx0).toFixed(1)}" y="${yTopCol.toFixed(1)}" width="${((cx1 - cx0) * s).toFixed(1)}" height="${(colH * s).toFixed(1)}" fill="${th.col}" fill-opacity="0.85" stroke="${th.ink}"/>`;
+    if (res.cols.length > 1) g += text(X((cx0 + cx1) / 2), yTopCol - 4, c.name, { size: 11, fill: th.ink, anchor: 'middle', weight: 700 });
+  }
   // acero inferior
   const bd = findBar(cap.barX).db / 1000;
   const yb = yCapBot - cap.cover - bd / 2;
@@ -189,9 +195,7 @@ export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis:
   const sp = ax === 'x' ? res.spanX : res.spanY;
   const lo = sp[0], hi = sp[1];
   const cap = inp.cap;
-  const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
-  const cc = ax === 'x' ? colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length : colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
-  const colMin = Math.min(...colPoly.map((q) => (ax === 'x' ? q.x : q.y))), colMax = Math.max(...colPoly.map((q) => (ax === 'x' ? q.x : q.y)));
+  const co = (q: Pt) => (ax === 'x' ? q.x : q.y);
   const span = hi - lo;
   const s = Math.min((W - 150) / span, (H - 150) / (cap.h + 0.8));
   const ox = (W - span * s) / 2;
@@ -200,11 +204,14 @@ export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis:
   const Y = (hh: number) => yBot - hh * s;
   let g = '';
   g += `<rect x="${X(lo).toFixed(1)}" y="${Y(cap.h).toFixed(1)}" width="${(span * s).toFixed(1)}" height="${(cap.h * s).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.5" stroke="${th.concreteStroke}" stroke-width="2"/>`;
-  g += `<rect x="${X(colMin).toFixed(1)}" y="${(Y(cap.h) - 50).toFixed(1)}" width="${((colMax - colMin) * s).toFixed(1)}" height="50" fill="${th.col}" fill-opacity="0.85" stroke="${th.ink}"/>`;
+  for (const c of res.cols) {
+    const c0 = Math.min(...c.poly.map(co)), c1 = Math.max(...c.poly.map(co));
+    g += `<rect x="${X(c0).toFixed(1)}" y="${(Y(cap.h) - 50).toFixed(1)}" width="${((c1 - c0) * s).toFixed(1)}" height="50" fill="${th.col}" fill-opacity="0.85" stroke="${th.ink}"/>`;
+  }
   // pilotes (agrupados por coordenada proyectada)
   const groups = new Map<number, { v: number; idx: number[] }>();
   res.pts.forEach((q, i) => {
-    const v = ax === 'x' ? q.x : q.y;
+    const v = co(q);
     const k = Math.round(v * 20);
     const gr = groups.get(k) ?? { v, idx: [] };
     gr.idx.push(i);
@@ -212,76 +219,99 @@ export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis:
   });
   const pw = res.props.Dp * s;
   for (const gr of groups.values()) g += `<rect x="${(X(gr.v) - pw / 2).toFixed(1)}" y="${yBot.toFixed(1)}" width="${pw.toFixed(1)}" height="46" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-dasharray="3 3"/>`;
-  // nodos
   const zT = stm.hTie;
   const zN = stm.hNode;
   const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
-  const nodeTop = { x: X(cc), y: Y(zN) };
-  for (const gr of groups.values()) {
-    const sts = gr.idx.map((i) => stm.struts[i]);
-    const C = Math.max(...sts.map((q) => q.C));
-    const ratio = Math.max(...sts.map((q) => q.ratio));
-    const pn = { x: X(gr.v), y: Y(zT) };
-    const col = ratio > 1 ? th.bad : th.concreteStroke;
-    g += line(nodeTop.x, nodeTop.y, pn.x, pn.y, col, 2 + (6 * C) / maxC);
-    const mx = (nodeTop.x + pn.x) / 2, my = (nodeTop.y + pn.y) / 2;
-    g += text(mx + (pn.x >= nodeTop.x ? 8 : -8), my - 4, `C = ${o.fmt.n('force', C, 0)}${gr.idx.length > 1 ? ` (×${gr.idx.length})` : ''}`, { size: 11, fill: col, weight: 600, anchor: pn.x >= nodeTop.x ? 'start' : 'end', halo: th.bg });
-    g += `<circle cx="${pn.x.toFixed(1)}" cy="${pn.y.toFixed(1)}" r="5" fill="${th.rebar}"/>`;
-  }
-  // tirante
+  // puntales: uno por columna y grupo de pilotes proyectados
+  stm.cols.forEach((c, k) => {
+    const nodeTop = { x: X(co({ x: c.nx, y: c.ny })), y: Y(zN) };
+    for (const gr of groups.values()) {
+      const sts = stm.struts.filter((q) => q.k === k && gr.idx.includes(q.i));
+      if (!sts.length) continue;
+      const C = Math.max(...sts.map((q) => q.C));
+      const ratio = Math.max(...sts.map((q) => q.ratio));
+      const pn = { x: X(gr.v), y: Y(zT) };
+      const col = ratio > 1 ? th.bad : th.concreteStroke;
+      g += line(nodeTop.x, nodeTop.y, pn.x, pn.y, col, 2 + (6 * C) / maxC);
+      const mx = (nodeTop.x + pn.x) / 2, my = (nodeTop.y + pn.y) / 2;
+      g += text(mx + (pn.x >= nodeTop.x ? 8 : -8), my - 4, `C = ${o.fmt.n('force', C, 0)}${sts.length > 1 ? ` (×${sts.length})` : ''}`, { size: 11, fill: col, weight: 600, anchor: pn.x >= nodeTop.x ? 'start' : 'end', halo: th.bg });
+    }
+  });
+  for (const gr of groups.values()) g += `<circle cx="${X(gr.v).toFixed(1)}" cy="${Y(zT).toFixed(1)}" r="5" fill="${th.rebar}"/>`;
+  // tirante inferior
   const xsAll = [...groups.values()].map((q) => q.v);
   const t = ax === 'x' ? stm.tieX : stm.tieY;
   g += line(X(Math.min(...xsAll)), Y(zT), X(Math.max(...xsAll)), Y(zT), th.rebar, 3.2);
-  g += text(X((Math.min(...xsAll) + Math.max(...xsAll)) / 2), yBot + 84, `Tirante T = ${o.fmt.n('force', t.T, 0)} ${o.fmt.l('force')}  (As req = ${t.AsReq.toFixed(1)} cm²)`, { size: 12, fill: th.rebar, weight: 700, anchor: 'middle' });
-  g += `<circle cx="${nodeTop.x.toFixed(1)}" cy="${nodeTop.y.toFixed(1)}" r="6" fill="${th.ink}"/>`;
-  g += text(nodeTop.x + 10, nodeTop.y - 6, `Nodo superior (prof. ${o.fmt.n('len', stm.ay, 2)} m)`, { size: 11, fill: th.ink, halo: th.bg });
+  g += text(X((Math.min(...xsAll) + Math.max(...xsAll)) / 2), yBot + 84, `Tirantes en ${ax.toUpperCase()}: ΣT = ${o.fmt.n('force', t.T, 0)} ${o.fmt.l('force')}  (As req = ${t.AsReq.toFixed(1)} cm²)`, { size: 12, fill: th.rebar, weight: 700, anchor: 'middle' });
+  // cordones superiores proyectados
+  for (const tc of stm.topChords) {
+    const A = stm.cols[tc.a], B = stm.cols[tc.b];
+    if (Math.abs(co(A) - co(B)) < 1e-6) continue;
+    const col = tc.ratio > 1 ? th.bad : tc.F > 0 ? th.rebar : th.concreteStroke;
+    g += line(X(co(A)), Y(zN), X(co(B)), Y(zN), col, 3, tc.F > 0 ? undefined : '8 5');
+    g += text(X((co(A) + co(B)) / 2), Y(zN) - 8, `${tc.F > 0 ? 'T' : 'C'} sup. = ${o.fmt.n('force', Math.abs(tc.F), 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg });
+  }
+  stm.cols.forEach((c) => {
+    const x = X(co(c));
+    g += `<circle cx="${x.toFixed(1)}" cy="${Y(zN).toFixed(1)}" r="6" fill="${th.ink}"/>`;
+    g += arrow(x, Y(cap.h) - 70, x, Y(cap.h) - 52, th.accent, 2.4, 9);
+    g += text(x + 10, Y(cap.h) - 58, `${stm.cols.length > 1 ? c.name + ': ' : ''}Pu = ${o.fmt.n('force', c.P, 0)}`, { size: 11, fill: th.accent, weight: 700 });
+  });
+  const c0x = X(co(stm.cols[0]));
+  g += text(c0x + 10, Y(zN) - 6, `Nodo superior (prof. ${o.fmt.n('len', stm.ay, 2)} m)`, { size: 11, fill: th.ink, halo: th.bg });
   g += dimLine(X(hi) + 20, Y(zN), X(hi) + 20, Y(zT), `z = ${o.fmt.n('len', stm.z, 2)}`, th.dim, 0, 11);
   g += dimLine(X(lo), yBot + 56, X(hi), yBot + 56, `${o.fmt.n('len', span, 2)} ${o.fmt.l('len')}`, th.dim, 0);
-  g += arrow(nodeTop.x, Y(cap.h) - 70, nodeTop.x, Y(cap.h) - 52, th.accent, 2.4, 9);
-  g += text(nodeTop.x + 10, Y(cap.h) - 58, `Pu = ${o.fmt.n('force', Math.max(0, ...res.ultimate.map((q) => q.combo.P)), 0)}`, { size: 11, fill: th.accent, weight: 700 });
   g += text(12, 20, `Modelo de puntales y tirantes — eje ${ax.toUpperCase()} — ${stm.combo}${stm.deep ? '' : ' (cabezal no profundo: informativo)'}`, { size: 12.5, fill: th.muted });
   return svgWrap(W, H, g, th.bg);
 }
 
-/** Planta del modelo: puntales de la columna a cada pilote y tirantes por bandas. */
+/** Planta del modelo: puntales de cada columna a los pilotes, tirantes por bandas y cordones superiores. */
 export function pileStmPlanSvg(inp: PileInput, res: PileResults, o: { W?: number; H?: number; theme?: Theme; fmt: Fmt }): string {
   const stm = res.stm as StmResult;
   const W = o.W ?? 820, H = o.H ?? 560;
   const th = o.theme ?? LIGHT;
   const view = makePlanView(pilePlanPoints(inp, res), W, H, 70);
   let g = `<polygon points="${pathOf(res, view)}" fill="${th.concrete}" fill-opacity="0.3" stroke="${th.concreteStroke}" stroke-width="2" stroke-linejoin="round"/>`;
-  const colPoly = columnPoly(inp.column.geom, inp.column.x, inp.column.y);
-  const cx = colPoly.reduce((s, q) => s + q.x, 0) / colPoly.length, cy = colPoly.reduce((s, q) => s + q.y, 0) / colPoly.length;
-  const cs = view.toSvg(cx, cy);
   const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
-  // tirantes
-  for (const t of [stm.tieX, stm.tieY]) {
-    for (const b of t.bands) {
-      const idx = res.pts.map((q, i) => ({ v: t.axis === 'x' ? q.y : q.x, i })).filter((q) => Math.abs(q.v - b.pos) <= 0.5 * res.props.Dp + 1e-6).map((q) => q.i);
-      const ps = idx.map((i) => res.pts[i]);
-      if (ps.length < 2) continue;
-      const a1 = ps.reduce((m, q) => (t.axis === 'x' ? (q.x < m.x ? q : m) : q.y < m.y ? q : m));
-      const a2 = ps.reduce((m, q) => (t.axis === 'x' ? (q.x > m.x ? q : m) : q.y > m.y ? q : m));
-      const p1 = view.toSvg(a1.x, a1.y), p2 = view.toSvg(a2.x, a2.y);
-      g += line(p1.x, p1.y, p2.x, p2.y, th.rebar, 3.2);
-      g += text((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 8 - (t.axis === 'y' ? 0 : 0), `T ${t.axis} = ${o.fmt.n('force', b.T, 0)}`, { size: 11, fill: th.rebar, weight: 700, anchor: 'middle', halo: th.bg, rotate: t.axis === 'y' ? -90 : 0 });
-    }
+  // tirantes inferiores entre pilotes
+  for (const t of stm.ties) {
+    const p1 = view.toSvg(res.pts[t.a].x, res.pts[t.a].y), p2 = view.toSvg(res.pts[t.b].x, res.pts[t.b].y);
+    const tens = t.F > 0;
+    const col = t.ratio > 1 ? th.bad : tens ? th.rebar : th.concreteStroke;
+    g += line(p1.x, p1.y, p2.x, p2.y, col, 3.2, tens ? undefined : '8 5');
+    let ang = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+    if (ang > 90) ang -= 180;
+    if (ang < -90) ang += 180;
+    g += text((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 7, `${tens ? 'T' : 'C'} = ${o.fmt.n('force', Math.abs(t.F), 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg, rotate: ang });
   }
   // puntales
   stm.struts.forEach((st) => {
+    const c = stm.cols[st.k];
+    const cs = view.toSvg(c.nx, c.ny);
     const q = res.pts[st.i];
     const p = view.toSvg(q.x, q.y);
     const col = st.ratio > 1 ? th.bad : th.concreteStroke;
     g += line(cs.x, cs.y, p.x, p.y, col, 1.6 + (5 * st.C) / maxC, '7 4');
     g += text((cs.x + p.x) / 2, (cs.y + p.y) / 2 - 5, `${o.fmt.n('force', st.C, 0)}`, { size: 11, fill: col, weight: 600, anchor: 'middle', halo: th.bg });
   });
+  // cordones superiores
+  for (const tc of stm.topChords) {
+    const A = view.toSvg(stm.cols[tc.a].nx, stm.cols[tc.a].ny), B = view.toSvg(stm.cols[tc.b].nx, stm.cols[tc.b].ny);
+    const col = tc.ratio > 1 ? th.bad : tc.F > 0 ? th.rebar : th.concreteStroke;
+    g += line(A.x, A.y, B.x, B.y, col, 3.4, tc.F > 0 ? undefined : '10 5');
+    g += text((A.x + B.x) / 2, (A.y + B.y) / 2 + 16, `${tc.F > 0 ? 'T' : 'C'} sup. = ${o.fmt.n('force', Math.abs(tc.F), 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg });
+  }
   res.pts.forEach((q, i) => {
     const p = view.toSvg(q.x, q.y);
     g += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${((res.props.Dp / 2) * view.s).toFixed(1)}" fill="${th.concrete}" fill-opacity="0.8" stroke="${th.concreteStroke}" stroke-width="1.5"/>`;
     g += text(p.x, p.y + 4, String(i + 1), { size: 12, fill: th.ink, anchor: 'middle', weight: 700 });
   });
-  g += poly(colPoly.map((q) => view.toSvg(q.x, q.y)), th.col, th.ink, 1.4, 'fill-opacity="0.85"');
-  g += `<circle cx="${cs.x.toFixed(1)}" cy="${cs.y.toFixed(1)}" r="5" fill="${th.bg}" stroke="${th.ink}" stroke-width="2"/>`;
+  for (const c of res.cols) {
+    g += poly(c.poly.map((q) => view.toSvg(q.x, q.y)), th.col, th.ink, 1.4, 'fill-opacity="0.85"');
+    const cs = view.toSvg(c.x, c.y);
+    g += `<circle cx="${cs.x.toFixed(1)}" cy="${cs.y.toFixed(1)}" r="5" fill="${th.bg}" stroke="${th.ink}" stroke-width="2"/>`;
+    if (res.cols.length > 1) g += text(cs.x, cs.y - 10, c.name, { size: 11.5, fill: th.ink, anchor: 'middle', weight: 700, halo: th.bg });
+  }
   g += text(12, 20, `Planta del modelo — puntales (discontinuo, ${o.fmt.l('force')}) y tirantes (rojo) — ${stm.combo}`, { size: 12.5, fill: th.muted });
   return svgWrap(W, H, g, th.bg);
 }
@@ -401,7 +431,10 @@ export function pileDiagramSvg(inp: PileInput, res: PileResults, dg: Diagram, o:
     s += `<rect x="${(X(p - res.props.Dp / 2)).toFixed(1)}" y="${m.t + strip - 6}" width="${(res.props.Dp / Math.max(dg.hi - dg.lo, 1e-9) * plotW).toFixed(1)}" height="14" fill="${th.concrete}" stroke="${th.concreteStroke}" stroke-dasharray="3 2"/>`;
     s += text(X(p), m.t + strip + 22, `P${i + 1}`, { size: 10, fill: th.muted, anchor: 'middle' });
   });
-  s += `<rect x="${X(dg.face[0]).toFixed(1)}" y="${m.t - 24}" width="${((dg.face[1] - dg.face[0]) / Math.max(dg.hi - dg.lo, 1e-9) * plotW).toFixed(1)}" height="22" fill="${th.col}" fill-opacity=".85" stroke="${th.ink}"/>`;
+  for (const fc of dg.faces) {
+    s += `<rect x="${X(fc.c0).toFixed(1)}" y="${m.t - 24}" width="${((fc.c1 - fc.c0) / Math.max(dg.hi - dg.lo, 1e-9) * plotW).toFixed(1)}" height="22" fill="${th.col}" fill-opacity=".85" stroke="${th.ink}"/>`;
+    if (dg.faces.length > 1) s += text(X((fc.c0 + fc.c1) / 2), m.t - 28, fc.name, { size: 10, fill: th.ink, anchor: 'middle', weight: 700 });
+  }
   // cuadrícula y eje cero
   const step = niceStep(span, 5);
   for (let v = Math.ceil(bot / step) * step; v <= top + 1e-9; v += step) {
@@ -410,7 +443,7 @@ export function pileDiagramSvg(inp: PileInput, res: PileResults, dg: Diagram, o:
   }
   s += line(m.l, Ydraw(0), W - m.r, Ydraw(0), th.muted, 1.4);
   // caras de la columna
-  for (const f of dg.face) s += line(X(f), m.t + strip + 8, X(f), H - m.b, th.accent, 1, '5 4');
+  for (const fc of dg.faces) for (const f of [fc.c0, fc.c1]) s += line(X(f), m.t + strip + 8, X(f), H - m.b, th.accent, 1, '5 4');
   // envolvente (relleno)
   const ptsTop = dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw(envMax[k]).toFixed(1)}`);
   const ptsBot = dg.s.map((x, k) => `${X(x).toFixed(1)},${Ydraw(envMin[k]).toFixed(1)}`).reverse();

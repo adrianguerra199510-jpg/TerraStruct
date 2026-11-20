@@ -1,4 +1,5 @@
-import { PileInput } from '../core/pileTypes';
+import { PileInput, capColumns, comboColumnLoads } from '../core/pileTypes';
+import { pileStm3dSvg } from '../draw/pile3d';
 import { PileResults, ComboRes } from '../core/pile';
 import { PILE_KINDS, CAP_SHAPES } from '../core/pileTypes';
 import { concreteCurve, hpShape } from '../core/pileStruct';
@@ -22,12 +23,14 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   const kind = PILE_KINDS.find((k) => k.id === p.kind)!.label.toLowerCase();
   const steel = p.kind !== 'concrete';
   const rect = res.capRect;
+  const cols = capColumns(inp);
+  const multi = cols.length > 1;
 
   // ------------------------------------------------------------------ 1
   d.h1('Generalidades');
   d.h2('Objeto y alcance');
   d.p(
-    `Esta memoria presenta el análisis y diseño del grupo de ${res.n} ${kind}${res.n > 1 ? 's' : ''} y del cabezal «${inp.name}». Se determina la reacción de cada pilote con el método elástico del cabezal rígido, se verifican la capacidad geotécnica y estructural de los pilotes (compresión, tracción, flexión por carga lateral y cortante) y se diseña el cabezal por flexión, cortante y punzonamiento según ACI 318.`,
+    `Esta memoria presenta el análisis y diseño del grupo de ${res.n} ${kind}${res.n > 1 ? 's' : ''} y del cabezal «${inp.name}»${multi ? `, que recibe ${cols.length} columnas (${cols.map((c) => c.name).join(', ')})` : ''}. Se determina la reacción de cada pilote con el método elástico del cabezal rígido, se verifican la capacidad geotécnica y estructural de los pilotes (compresión, tracción, flexión por carga lateral y cortante) y se diseña el cabezal por flexión, cortante y punzonamiento según ACI 318.`,
     { align: 'justify' },
   );
   d.h2('Normas y referencias');
@@ -42,6 +45,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   d.bullets([
     'El cabezal es infinitamente rígido y los pilotes se comportan elásticamente: Ri = P/n + Mx·(yi−ȳ)/… (ecuaciones de flexión biaxial del grupo).',
     'Las cargas se aplican en la cara superior del cabezal; el cortante genera un momento adicional V·h respecto al plano de las cabezas de los pilotes.',
+    ...(multi ? ['Con varias columnas, las reacciones se calculan con la resultante de todas ellas; la flexión y el cortante del cabezal se revisan en las caras de cada columna y entre columnas (momento negativo), y el punzonamiento alrededor de cada columna (o del grupo de columnas cuyos perímetros críticos se solapan).'] : []),
     'La fuerza horizontal se reparte por igual entre los pilotes (cabezal rígido, mismo comportamiento lateral).',
     'La capacidad geotécnica a compresión es Qa = (Qs + Qb)/FS; en tracción solo interviene la fricción lateral reducida más el peso del pilote.',
     'El diseño del cabezal usa las reacciones producidas por las cargas mayoradas de la columna (sin peso propio). Se aplica la regla de ACI 318 de contribución fraccionada de los pilotes que cruzan la sección crítica.',
@@ -94,15 +98,29 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
       { align: ['c', 'r', 'r'], widths: [4, 8, 8], small: true, caption: 'Tabla. Vértices del contorno del cabezal' },
     );
   }
-  const cg = inp.column.geom;
-  const cb = bbox(columnPoly(cg, inp.column.x, inp.column.y));
-  d.p(`Columna: ${COLUMN_SHAPES.find((c) => c.id === cg.shape)?.label ?? cg.shape}, de ${f((cb.xmax - cb.xmin) * 100, 0)} × ${f((cb.ymax - cb.ymin) * 100, 0)} cm, ubicada en (${n('len', inp.column.x, 2)}; ${n('len', inp.column.y, 2)}) ${fmt.l('len')}.`);
-  d.img(pilePlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt, showDims: true }), 'Figura 1. Planta del cabezal, pilotes y columna.');
+  const colDesc = (c: (typeof cols)[number]) => {
+    const cb = bbox(columnPoly(c.geom, c.x, c.y));
+    return { shape: COLUMN_SHAPES.find((q) => q.id === c.geom.shape)?.label ?? c.geom.shape, dims: `${f((cb.xmax - cb.xmin) * 100, 0)} × ${f((cb.ymax - cb.ymin) * 100, 0)} cm` };
+  };
+  if (!multi) {
+    const cd = colDesc(cols[0]);
+    d.p(`Columna: ${cd.shape}, de ${cd.dims}, ubicada en (${n('len', inp.column.x, 2)}; ${n('len', inp.column.y, 2)}) ${fmt.l('len')}.`);
+  } else {
+    d.table(
+      ['Columna', 'Forma', 'Dimensiones', `x (${fmt.l('len')})`, `y (${fmt.l('len')})`],
+      cols.map((c) => { const cd = colDesc(c); return [c.name, cd.shape, cd.dims, n('len', c.x, 2), n('len', c.y, 2)]; }),
+      { align: ['l', 'l', 'l', 'r', 'r'], caption: 'Tabla. Columnas apoyadas en el cabezal (posición del centroide)' },
+    );
+  }
+  d.img(pilePlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt, showDims: true }), `Figura 1. Planta del cabezal, pilotes y ${multi ? 'columnas' : 'columna'}.`);
   d.h2('Cargas (envolvente de servicio y última)');
+  const loadRows = inp.combos.flatMap((c) => comboColumnLoads(inp, c).map((l, k) => [
+    ...(multi ? [k === 0 ? c.name : '', cols[k].name] : [c.name]), k === 0 ? (c.kind === 'service' ? 'ES' : 'EU') : '', n('force', l.P, 1), n('force', l.Vx, 1), n('force', l.Vy, 1), n('moment', l.Mx, 1), n('moment', l.My, 1), k === 0 && c.kind === 'service' ? f(c.qaFactor, 2) : k === 0 ? '—' : '',
+  ]));
   d.table(
-    ['Combinación', 'Tipo', `P (${fmt.l('force')})`, `Vx (${fmt.l('force')})`, `Vy (${fmt.l('force')})`, `Mx (${fmt.l('moment')})`, `My (${fmt.l('moment')})`, 'Aum. Qa'],
-    inp.combos.map((c) => [c.name, c.kind === 'service' ? 'ES' : 'EU', n('force', c.P, 1), n('force', c.Vx, 1), n('force', c.Vy, 1), n('moment', c.Mx, 1), n('moment', c.My, 1), c.kind === 'service' ? f(c.qaFactor, 2) : '—']),
-    { align: ['l', 'l', 'r', 'r', 'r', 'r', 'r', 'r'], caption: 'Tabla. Cargas de la columna en la cara superior del cabezal' },
+    [...(multi ? ['Combinación', 'Columna'] : ['Combinación']), 'Tipo', `P (${fmt.l('force')})`, `Vx (${fmt.l('force')})`, `Vy (${fmt.l('force')})`, `Mx (${fmt.l('moment')})`, `My (${fmt.l('moment')})`, 'Aum. Qa'],
+    loadRows,
+    { align: [...(multi ? ['l', 'l'] : ['l']), 'l', 'r', 'r', 'r', 'r', 'r', 'r'] as any, small: multi, caption: `Tabla. Cargas ${multi ? 'de cada columna' : 'de la columna'} en la cara superior del cabezal` },
   );
 
   // ------------------------------------------------------------------ 3
@@ -377,7 +395,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   d.h2('Punzonamiento');
   d.eq(['Columna: perímetro crítico a d/2;  Vu = Pu − Σ Ri·(1 − fi) (pilotes dentro del perímetro)', 'vu = Vu/(bo·d) ≤ φ·vc,  vc = mín[0.33λ√f′c ; 0.17(1 + 2/β)λ√f′c ; 0.083(αs·d/bo + 2)λ√f′c]', 'Pilote: perímetro a d/2 del pilote, recortado por los bordes del cabezal; Ru = reacción última del pilote.'], 'Ecuaciones');
   const pr: string[][] = [];
-  if (res.punch) pr.push(['Columna', f(res.punch.bo, 2), f(res.punch.d, 3), n('force', res.punch.Vu, 0), f(res.punch.vu, 2), f(res.punch.phivc, 2), f(res.punch.ratio, 2), res.punch.ok ? 'Cumple' : 'No cumple']);
+  for (const q of res.punches) pr.push([multi ? q.label.replace(/^la(s)? /, '').replace(/^./, (c) => c.toUpperCase()) : 'Columna', f(q.bo, 2), f(q.d, 3), n('force', q.Vu, 0), f(q.vu, 2), f(q.phivc, 2), f(q.ratio, 2), q.ok ? 'Cumple' : 'No cumple']);
   const wp = res.pilePunch.reduce<(typeof res.pilePunch)[number] | null>((a, b) => (!a || b.ratio > a.ratio ? b : a), null);
   if (wp) pr.push([`Pilote ${wp.i + 1} (crítico)`, f(wp.bo, 2), f(res.punch?.d ?? 0, 3), n('force', wp.Ru, 0), f(wp.vu, 2), f(wp.phivc, 2), f(wp.ratio, 2), wp.ok ? 'Cumple' : 'No cumple']);
   d.table(['Elemento', 'bo (m)', 'd (m)', `V (${fmt.l('force')})`, 'vu (MPa)', 'φvc (MPa)', 'Relación', 'Estado'], pr, { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r', 'c'], caption: 'Tabla. Punzonamiento' });
@@ -400,10 +418,15 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     );
     d.eq(
       [
-        'Modelo espacial: un puntal desde el nodo de la columna hasta el nodo de cada pilote; tirantes horizontales a nivel del acero inferior.',
-        'Brazo interno:  z = d − wt/2,   wt = profundidad del nodo superior (hidrostático): wt = lb · l / z   (lb = √(Acol·Ri/ΣR),  l = distancia horizontal columna–pilote)',
-        'Ángulo y fuerza del puntal:  θi = atan(z / li),   Ci = Ri / sen θi',
-        'Tirante en la sección del eje de la columna:  Tx = Σ (Ri · |xi − xc| / z)  (un lado),  Ty análogo;   As = T / (φ·fy),  φ = 0.75',
+        multi
+          ? 'Modelo espacial: un nudo superior por columna y un nudo inferior por pilote; la reacción de cada pilote se reparte entre las columnas (Rik ≥ 0, Σk Rik = Ri, Σi Rik = Pk) con la mínima trayectoria de carga Σ Rik²·(lik² + z²) y el equilibrio de momentos de cada columna: Σi Rik·(xi − xk) = Myk + Vxk·h.'
+          : 'Modelo espacial: un puntal desde el nodo de la columna hasta el nodo de cada pilote; tirantes horizontales a nivel del acero inferior.',
+        ...(multi ? ['Si una columna no puede equilibrarse con Rik ≥ 0 (columna en el borde o fuera del grupo), la fuerza horizontal que queda en su nudo se lleva con cordones horizontales superiores entre columnas vecinas (tirante = acero superior; puntal = concreto a la profundidad del nudo).'] : []),
+        'Brazo interno:  z = d − wt/2,   wt = profundidad del nodo superior (hidrostático): wt = lb · l / z   (lb = √(Acol·Rik/Pk),  l = distancia horizontal columna–pilote)',
+        'Ángulo y fuerza del puntal:  θik = atan(z / lik),   Cik = Rik / sen θik',
+        'Nudo de la columna en el punto de aplicación de su resultante:  xk + (Myk + Vxk·h)/Pk ,  yk + (Mxk + Vyk·h)/Pk   (limitado al contorno de la columna).',
+        'Empuje en el nudo de cada pilote:  Hi = Σk Rik·(pi − nk)/z.  Tirantes inferiores entre pilotes vecinos (lados del contorno y pares de Gabriel): cada nudo de pilote en equilibrio, Σ Fe·ue + Hi = 0, con la mínima energía Σ Le·Fe².',
+        'Capacidad del tirante con la parrilla ortogonal:  φTn = φ·fy·(asX·cos²θ + asY·sen²θ)·w,   w = mín(D + d ; distancia al pilote vecino);   φ = 0.75',
         'Resistencia del puntal:  φ·Fns = φ·fce·Acs,   fce = 0.85·βc·βs·f′c,   βc = 1.0,   βs = ' + f(stm.betaS, 2) + (res.stm && inp.cap.crackMesh ? ' (con armadura de control de fisuración ΣAs·senγ/(b·s) ≥ 0.003)' : ' (puntal en botella sin armadura de control)'),
         'Anchura del puntal en cada extremo:  ws = lb·senθ + wt·cosθ   (nodo CCC en la columna; nodo CCT/CTT en el pilote con wt = 2·recubrimiento al centroide del acero)',
         `Zonas nodales:  fcu = 0.85·βn·f′c;  βn = 1.0 (columna, CCC) y ${f(stm.betaNPile, 1)} (pilote, ${stm.betaNPile === 0.6 ? 'CTT: tirantes en dos direcciones' : 'CCT: tirante en una dirección'});  φ = 0.75`,
@@ -422,15 +445,20 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
       2,
     );
     d.table(
-      ['Pilote', `R (${fmt.l('force')})`, 'l (m)', 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación'],
-      stm.struts.map((q) => [String(q.i + 1), n('force', q.R, 0), f(q.l, 2), f((q.theta * 180) / Math.PI, 1), n('force', q.C, 0), f(q.AcsCol, 3), f(q.AcsPile, 3), n('force', q.phiFns, 0), f(q.ratio, 2)]),
+      [multi ? 'Columna → pilote' : 'Pilote', `R (${fmt.l('force')})`, 'l (m)', 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación'],
+      stm.struts.map((q) => [multi ? `${stm.cols[q.k].name} → P${q.i + 1}` : String(q.i + 1), n('force', q.R, 0), f(q.l, 2), f((q.theta * 180) / Math.PI, 1), n('force', q.C, 0), f(q.AcsCol, 3), f(q.AcsPile, 3), n('force', q.phiFns, 0), f(q.ratio, 2)]),
       { align: ['c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Puntales' },
     );
-    const tr: string[][] = [];
-    for (const t of [stm.tieX, stm.tieY]) {
-      t.bands.forEach((b) => tr.push([`Tirante ${t.axis.toUpperCase()}`, f(b.pos, 2), n('force', b.T, 0), f(b.width, 2), f(b.asProv, 1), n('force', b.phiTn, 0), f(b.ratio, 2)]));
+    const tr: string[][] = stm.ties.map((t) => [`P${t.a + 1} – P${t.b + 1}`, `${f(((((Math.atan2(t.uy, t.ux) * 180) / Math.PI) % 180) + 180) % 180, 0)}°`, t.F >= 0 ? 'Tracción' : 'Compresión', n('force', Math.abs(t.F), 0), f(t.width, 2), t.F >= 0 ? f(t.asProv, 1) : '—', n('force', t.cap, 0), f(t.ratio, 2)]);
+    d.table(['Elemento', 'Dirección', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho de banda (m)', 'As efectivo (cm²)', `Capacidad (${fmt.l('force')})`, 'Relación'], tr, { align: ['l', 'r', 'l', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Tirantes inferiores entre pilotes (As efectivo = parrilla inferior en la dirección del tirante, asX·cos²θ + asY·sen²θ, dentro del ancho de la banda)' });
+    if (stm.topChords.length) {
+      d.table(
+        ['Cordón superior', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho (m)', `Capacidad (${fmt.l('force')})`, 'Relación'],
+        stm.topChords.map((t) => [`${stm.cols[t.a].name} – ${stm.cols[t.b].name}`, t.F > 0 ? 'Tirante (acero superior)' : 'Puntal', n('force', Math.abs(t.F), 0), f(t.width, 2), n('force', t.cap, 0), f(t.ratio, 2)]),
+        { align: ['l', 'l', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Cordones horizontales superiores entre columnas' },
+      );
     }
-    d.table(['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho de banda (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación'], tr, { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Tirantes por banda de pilotes (As = barras inferiores dentro del ancho de la banda)' });
+    d.img(pileStm3dSvg(inp, res, { W: 800, H: 580, theme: th, fmt }), 'Figura. Vista 3D del modelo de puntales (gris) y tirantes (rojo).', 0.95);
     d.img(pileStmElevationSvg(inp, res, { axis: 'x', W: 800, H: 470, theme: th, fmt }), 'Figura. Modelo de puntales y tirantes, proyección sobre el eje X.', 0.95);
     d.img(pileStmElevationSvg(inp, res, { axis: 'y', W: 800, H: 470, theme: th, fmt }), 'Figura. Modelo de puntales y tirantes, proyección sobre el eje Y.', 0.95);
     d.img(pileStmPlanSvg(inp, res, { W: 800, H: 560, theme: th, fmt }), 'Figura. Planta del modelo de puntales y tirantes.');

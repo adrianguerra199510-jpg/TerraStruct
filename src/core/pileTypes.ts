@@ -201,6 +201,8 @@ export interface PileCap {
 
 export interface PileCombo extends LoadCase {
   id: string;
+  /** P, Vx, Vy, Mx, My son las cargas de la columna principal; las de las columnas adicionales van aquí, por id de columna */
+  extra?: Record<string, LoadCase>;
   /** combinación con sismo (se verifica la condición licuada) */
   eq?: boolean;
   name: string;
@@ -208,14 +210,56 @@ export interface PileCombo extends LoadCase {
   qaFactor: number;
 }
 
+/** Columna apoyada en el cabezal (posición del centroide, m). */
+export interface PileColumn {
+  id: string;
+  name: string;
+  geom: ColumnGeom;
+  x: number;
+  y: number;
+}
+
 export interface PileInput {
   name: string;
   pile: PileDef;
   layout: PileLayout;
   cap: PileCap;
-  column: { geom: ColumnGeom; x: number; y: number };
+  /** columna principal (sus cargas son P, Vx, Vy, Mx, My de cada combinación) */
+  column: { geom: ColumnGeom; x: number; y: number; name?: string };
+  /** columnas adicionales sobre el mismo cabezal (2.ª, 3.ª, …) */
+  moreColumns: PileColumn[];
   geo: PileGeo;
   combos: PileCombo[];
+}
+
+export const MAIN_COLUMN_ID = 'c1';
+const ZERO_LOAD: LoadCase = { P: 0, Vx: 0, Vy: 0, Mx: 0, My: 0 };
+
+/** Todas las columnas del cabezal: la principal primero. */
+export function capColumns(inp: PileInput): PileColumn[] {
+  const c = inp.column;
+  return [{ id: MAIN_COLUMN_ID, name: c.name || 'C1', geom: c.geom, x: c.x, y: c.y }, ...(inp.moreColumns ?? [])];
+}
+
+/** Cargas de cada columna (en el orden de capColumns) para una combinación. */
+export function comboColumnLoads(inp: PileInput, cb: PileCombo): LoadCase[] {
+  const head: LoadCase = { P: cb.P, Vx: cb.Vx, Vy: cb.Vy, Mx: cb.Mx, My: cb.My };
+  return [head, ...(inp.moreColumns ?? []).map((c) => ({ ...ZERO_LOAD, ...(cb.extra?.[c.id] ?? {}) }))];
+}
+
+/** Resultante de las cargas de todas las columnas: P, V y momentos respecto al origen en el plano de las cabezas de los pilotes (h = espesor del cabezal). */
+export function comboResultant(inp: PileInput, cb: PileCombo, h: number): { P: number; Vx: number; Vy: number; Qx: number; Qy: number } {
+  const cols = capColumns(inp);
+  const L = comboColumnLoads(inp, cb);
+  let P = 0, Vx = 0, Vy = 0, Qx = 0, Qy = 0;
+  L.forEach((l, k) => {
+    P += l.P;
+    Vx += l.Vx;
+    Vy += l.Vy;
+    Qx += l.P * cols[k].x + l.My + l.Vx * h;
+    Qy += l.P * cols[k].y + l.Mx + l.Vy * h;
+  });
+  return { P, Vx, Vy, Qx, Qy };
 }
 
 export function defaultPile(kind: PileKind = 'concrete'): PileDef {
@@ -284,7 +328,8 @@ export function defaultPileInput(kind: PileKind = 'concrete'): PileInput {
       topSteel: false, barTopX: '#5', barTopY: '#5', manual: { on: false, sBotX: 0.15, sBotY: 0.15, sTopX: 0.2, sTopY: 0.2 },
       fc: 28, fy: 420, lambda: 1, code: 'ACI318_14', gammaC: 24, crackMesh: true,
     },
-    column: { geom: { ...defaultColumnGeom('rect'), b: 0.5, h: 0.5 }, x: 0, y: 0 },
+    column: { geom: { ...defaultColumnGeom('rect'), b: 0.5, h: 0.5 }, x: 0, y: 0, name: 'C1' },
+    moreColumns: [],
     geo: { mode: 'static', QaC: 700, QaT: 150, FS: 2.5, FSt: 3, etaT: 0.75, Df: 1.5, qbMax: 5000, layers: defaultLayers(), groupEff: false, socketQbMob: 0.5, neutralFrac: 0.8, sAllow: 0.025, liqOn: false, gwt: 2, amax: 0.25, Mw: 7, fsLiq: 1.1, liqResid: 0 },
     combos: defaultCombos(),
   };
