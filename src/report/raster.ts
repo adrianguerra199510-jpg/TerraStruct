@@ -7,7 +7,17 @@ export interface Png {
   height: number;
 }
 
+export type Rasterizer = (svg: string, scale: number) => Promise<Png>;
+
+let custom: Rasterizer | null = null;
+
+/** Sustituye la conversión SVG → PNG (p. ej. fuera del navegador, en el servidor MCP). */
+export function setRasterizer(fn: Rasterizer | null) {
+  custom = fn;
+}
+
 export async function svgToPng(svg: string, scale = 2): Promise<Png> {
+  if (custom) return custom(svg, scale);
   const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
   const w = m ? parseFloat(m[1]) : 800;
   const h = m ? parseFloat(m[2]) : 500;

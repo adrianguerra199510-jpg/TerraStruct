@@ -1,0 +1,86 @@
+TERRASTRUCT + CLAUDE (servidor MCP)
+===================================
+
+TerraStruct incluye un servidor MCP. Con él, Claude puede usar el programa
+directamente: analizar y diseñar zapatas, muros y pilotes, dibujarlos,
+dimensionarlos automáticamente, generar memorias de cálculo en PDF o Word y
+crear o editar proyectos .terrastruct.json que luego se abren en la aplicación
+con el botón «Abrir».
+
+No hace falta instalar nada más: el servidor viene dentro de TerraStruct.exe.
+
+
+1) CLAUDE DESKTOP (Windows)
+---------------------------
+a. Descomprima TerraStruct en una carpeta fija, por ejemplo:
+      C:\Programas\TerraStruct
+b. En Claude Desktop abra Configuración > Desarrollador > Editar configuración.
+   Se abre el archivo claude_desktop_config.json
+   (en %APPDATA%\Claude\claude_desktop_config.json).
+c. Agregue lo siguiente (cambie la ruta si descomprimió en otra carpeta;
+   en JSON las barras invertidas se escriben dobles):
+
+{
+  "mcpServers": {
+    "terrastruct": {
+      "command": "C:\\Programas\\TerraStruct\\TerraStruct.exe",
+      "args": ["C:\\Programas\\TerraStruct\\resources\\mcp\\terrastruct-mcp.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  }
+}
+
+   Si el archivo ya tiene otros servidores en "mcpServers", agregue solo el
+   bloque "terrastruct" dentro de ellos.
+d. Cierre Claude Desktop por completo (también desde la bandeja del sistema)
+   y vuelva a abrirlo. TerraStruct aparecerá en la lista de herramientas.
+
+Alternativa si tiene Node.js 18 o superior instalado:
+      "command": "node",
+      "args": ["C:\\Programas\\TerraStruct\\resources\\mcp\\terrastruct-mcp.mjs"]
+
+
+2) CLAUDE CODE
+--------------
+En una terminal:
+
+   claude mcp add --env ELECTRON_RUN_AS_NODE=1 terrastruct -- "C:\Programas\TerraStruct\TerraStruct.exe" "C:\Programas\TerraStruct\resources\mcp\terrastruct-mcp.mjs"
+
+o, con Node.js instalado:
+
+   claude mcp add terrastruct -- node "C:\Programas\TerraStruct\resources\mcp\terrastruct-mcp.mjs"
+
+Dentro del repositorio de TerraStruct, el archivo .mcp.json ya lo configura.
+
+
+3) QUÉ PEDIRLE A CLAUDE (ejemplos)
+----------------------------------
+- «Diseña una zapata aislada para una columna de 50×50 cm con D = 900 kN y
+   L = 400 kN, qa = 150 kPa. Muéstrame la planta y el armado.»
+- «Analiza un muro en voladizo de 4.5 m con relleno φ = 32°, sobrecarga de
+   10 kPa y sismo kh = 0.15. ¿Cumple? Si no, ajústalo hasta que cumpla.»
+- «Crea el proyecto C:\Obras\Edificio.terrastruct.json con las zapatas Z-1 a
+   Z-4 de esta tabla y genera la memoria completa en Word.»
+- «Abre C:\Obras\Edificio.terrastruct.json y dime qué elementos no cumplen.»
+
+
+HERRAMIENTAS DISPONIBLES
+------------------------
+list_examples          Ejemplos incluidos (zapatas, muros, pilotes)
+get_input              Entrada completa de un ejemplo, con guía de campos
+analyze                Análisis y diseño: verificaciones, advertencias, armado
+auto_design            Dimensionamiento automático (zapata de una columna, pilotes)
+draw                   Planta, cortes, armado, diagramas, puntales y tirantes 3D
+report                 Memoria de cálculo de un elemento (PDF o Word)
+project_open           Resumen de un proyecto .terrastruct.json
+project_get_element    Entrada y resultados de un elemento del proyecto
+project_save_element   Agrega o modifica un elemento del proyecto
+project_remove_element Elimina un elemento del proyecto
+project_set_info       Datos de la carátula y unidades
+project_report         Memoria del proyecto completo (PDF o Word)
+
+Unidades de entrada: m, kN, kN·m, kPa, MPa, kN/m³ (los resultados también
+pueden mostrarse en tonf y kgf/cm²).
+
+Los resultados son una ayuda de cálculo y deben ser revisados y avalados por
+un ingeniero responsable.

@@ -33,6 +33,16 @@ Los datos se guardan automáticamente en el navegador y se pueden exportar/abrir
 
 No incluye estabilidad global (taludes), asentamientos, zapatas sobre base elástica ni diseño sísmico de la estructura. Es una ayuda de cálculo: los resultados deben ser revisados y avalados por un ingeniero responsable.
 
+## Servidor MCP (usar TerraStruct desde Claude)
+
+`release/terrastruct-mcp.mjs` es un servidor [MCP](https://modelcontextprotocol.io) en un solo archivo (solo necesita Node 18+, o el propio `TerraStruct.exe`). Permite que Claude analice, dimensione y dibuje zapatas, muros y pilotes, genere memorias PDF/Word y lea o edite proyectos `.terrastruct.json`.
+
+- **Claude Code** dentro de este repositorio: ya está configurado en `.mcp.json`.
+- **Claude Code** en otra carpeta: `claude mcp add terrastruct -- node /ruta/a/release/terrastruct-mcp.mjs`.
+- **Claude Desktop en Windows sin Node**: el ZIP de la aplicación trae el servidor en `resources/mcp/` y las instrucciones en `CONECTAR-CON-CLAUDE.txt`.
+
+Herramientas: `list_examples`, `get_input`, `analyze`, `auto_design`, `draw`, `report`, `project_open`, `project_get_element`, `project_save_element`, `project_remove_element`, `project_set_info`, `project_report`. El código está en `mcp/` y se compila con `npm run build:mcp`.
+
 ## Aplicación de escritorio (Electron)
 
 `npm run electron` abre la app en una ventana propia. `npm run dist:win` genera `release-electron/TerraStruct-1.0.0-win.zip` (descomprimir y ejecutar `TerraStruct.exe`; puede compilarse desde Windows o Linux).

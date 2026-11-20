@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/make-icons.mjs",
     "electron": "npm run build && electron .",
-    "dist:win": "npm run build && electron-builder --win zip --x64"
+    "dist:win": "npm run build && npm run build:mcp && electron-builder --win zip --x64",
+    "build:mcp": "vite build --config vite.mcp.config.ts",
+    "mcp": "node release/terrastruct-mcp.mjs"
   },
   "dependencies": {
     "docx": "^9.15.0",
@@ -24,6 +26,8 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@resvg/resvg-wasm": "2.6.2",
     "@types/pdfmake": "^0.3.3",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
@@ -36,7 +40,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vite-plugin-singlefile": "^2.3.4",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "zod": "4.1.12"
   },
   "main": "electron/main.cjs",
   "author": "TerraStruct",
@@ -63,6 +68,18 @@
       "target": [
         "dir"
       ]
-    }
+    },
+    "extraResources": [
+      {
+        "from": "release/terrastruct-mcp.mjs",
+        "to": "mcp/terrastruct-mcp.mjs"
+      }
+    ],
+    "extraFiles": [
+      {
+        "from": "mcp/CONECTAR-CON-CLAUDE.txt",
+        "to": "CONECTAR-CON-CLAUDE.txt"
+      }
+    ]
   }
 }
