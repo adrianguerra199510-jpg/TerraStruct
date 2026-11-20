@@ -26,7 +26,8 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   const showPress = o.showPressure !== false;
   const caseRes = o.seismic && res.seismicCase ? res.seismicCase : res.staticCase;
 
-  const xL = -Math.max(0.9, 0.25 * g.B);
+  // con apoyos laterales se deja espacio al frente para los símbolos y las cotas de los apoyos
+  const xL = -Math.max(res.design.brace ? 2.0 : 0.9, 0.25 * g.B);
   const backExt = Math.max(1.6, 0.55 * inp.H);
   const xR = g.B + backExt;
   const yTopW = g.surfaceY(xR);
@@ -108,6 +109,24 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     s += text(X(cx), Y(cy) + 13, '(fuera del plano)', { size: 9.5, fill: th.accent, anchor: 'middle' });
   }
 
+  // Apoyos laterales tipo rodillo de la pantalla (triángulo sobre la cara frontal, como en la convención de apoyos)
+  const br = res.design.brace;
+  if (br) {
+    const hs = Math.min(Math.max(0.09 * inp.H, 0.22), 0.4) * sc; // tamaño del símbolo en px
+    br.y.forEach((yl, i) => {
+      const ya = Y(g.hb + Math.min(yl, inp.H));
+      const xa = X(g.stemFrontX(Math.min(yl, inp.H))) - 3;
+      const w = hs * 0.75, h = hs;
+      s += `<path d="M${xa.toFixed(1)} ${ya.toFixed(1)} L${(xa - w).toFixed(1)} ${(ya - h / 2).toFixed(1)} L${(xa - w).toFixed(1)} ${(ya + h / 2).toFixed(1)} Z" fill="${th.accent}" stroke="${th.ink}" stroke-width="1.4"/>`;
+      // rodillos y línea de apoyo
+      const xr = xa - w - 5;
+      for (const k of [-0.3, 0.3]) s += `<circle cx="${xr.toFixed(1)}" cy="${(ya + k * h).toFixed(1)}" r="3.6" fill="${th.bg}" stroke="${th.ink}" stroke-width="1.2"/>`;
+      s += line(xr - 5, ya - h / 2 - 2, xr - 5, ya + h / 2 + 2, th.ink, 1.4);
+      s += text(xr - 9, ya + 4, `A${i + 1}`, { size: 10.5, fill: th.ink, weight: 700, anchor: 'end', halo: th.bg });
+    });
+    if (br.floor) s += text(14, 38, 'Losa de piso contra el muro: toma la reacción horizontal de la base', { size: 10.5, fill: th.muted });
+  }
+
   // Vigas corona
   g.parts.filter((p) => p.id === 'beam').forEach((p, i) => {
     s += poly(p.poly.map(P), th.concrete, th.concreteStroke, 2);
@@ -131,7 +150,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   // Empuje (resultantes)
   if (o.showLoads !== false) {
     const plane = res.earth.mode === 'virtual' ? g.B : g.xBb;
-    const f = caseRes.h.filter((h) => /Empuje activo|sobrecarga|hidrost|sísmico/i.test(h.name));
+    const f = caseRes.h.filter((h) => /Empuje activo|Empuje en reposo|sobrecarga|hidrost|sísmico/i.test(h.name));
     const x0 = Math.max(plane, g.xBb) + 0.9;
     let i = 0;
     for (const h of f) {
@@ -280,7 +299,26 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     if (g.hb > 0 && !o.showRebar) s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
     // Altura de la pantalla
     const xh = g.xFt - 0.0;
-    if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
+    const brd = res.design.brace;
+    if (brd && !o.showRebar) {
+      // Cadena de cotas: zapata | base de la pantalla → A1 → A2 … → corona; y cota total de alto
+      const hsym = Math.min(Math.max(0.09 * inp.H, 0.22), 0.4) * sc;
+      const xFront = Math.min(g.xFb, g.xFt);
+      const xc = X(xFront) - hsym * 0.75 - 46;
+      const xt = xc - 30;
+      const marks = [0, ...(g.hb > 0 ? [g.hb] : []), ...brd.y.map((yl) => g.hb + yl)];
+      if (inp.H - brd.y[brd.y.length - 1] > 1e-3) marks.push(g.yTop);
+      for (let k = 0; k + 1 < marks.length; k++) {
+        const a = marks[k], b = marks[k + 1];
+        s += dimLine(xc, Y(a), xc, Y(b), fx(b - a), th.dim, 0, 10.5);
+      }
+      // líneas de referencia de cada nivel hasta la pantalla
+      for (const m of marks) {
+        const xs = m <= g.hb + 1e-9 ? X(0) : X(g.stemFrontX(m - g.hb)) - hsym * 0.75 - 18;
+        if (xs > xc + 3) s += line(xt - 4, Y(m), xs, Y(m), th.dim, 0.6, '2 2');
+      }
+      s += dimLine(xt, Y(0), xt, Y(g.yTop), `H total = ${fx(g.yTop)}`, th.dim, 0, 11.5);
+    } else if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
     if (g.hb > 0) s += dimLine(X(g.B) + 14, Y(0), X(g.B) + 14, Y(g.hb), fx(g.hb), th.dim, 0, 10.5);
     if (inp.type !== 'gabion') s += dimLine(X(g.xFt), Y(g.yTop) - 12, X(g.xBt), Y(g.yTop) - 12, fx(inp.tTop), th.dim, 0, 10.5);
     else s += dimLine(X(0) - 26, Y(0), X(0) - 26, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
@@ -289,7 +327,7 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     if (inp.fill.beta > 0) s += text(X(g.B + backExt * 0.55), Y(g.surfaceY(g.B + backExt * 0.55)) + 20, `β = ${inp.fill.beta}°`, { size: 11, fill: th.soilStroke, weight: 600 });
   }
 
-  s += text(14, 22, `${inp.name} — ${WALL_LABEL[inp.type]}${o.seismic && res.seismicCase ? ' (con sismo)' : ''}`, { size: 13, fill: th.ink, weight: 600 });
+  s += text(14, 22, `${inp.name} — ${WALL_LABEL[inp.type]}${br ? ` con ${br.y.length} apoyo${br.y.length > 1 ? 's' : ''} lateral${br.y.length > 1 ? 'es' : ''} tipo rodillo` : ''}${o.seismic && res.seismicCase ? ' (con sismo)' : ''}`, { size: 13, fill: th.ink, weight: 600 });
   s += text(W - 14, H - 12, 'Valores por metro de muro', { size: 10, fill: th.muted, anchor: 'end' });
   return svgWrap(W, H, s, th.bg);
 }
@@ -455,16 +493,27 @@ export function wallDiagramFigures(res: WallResults, o: { theme?: Theme; fmt: Fm
   if (!d) return figs;
   const H = res.inp.H;
   const mq = 'moment', fq = 'force';
-  const vert = (title: string, id: string, series: DgSeries[], vLabel: string, q: 'moment' | 'force' | 'lmoment' | 'lforce', note?: string) => {
+  const levels = d.stem?.levels ?? [];
+  const markers = levels.map((yl, i) => ({ s: yl, label: `apoyo A${i + 1}` }));
+  const vert = (title: string, id: string, series: DgSeries[], vLabel: string, q: 'moment' | 'force' | 'lmoment' | 'lforce', note?: string, mk: { s: number; label: string }[] = []) => {
     figs.push({
       id, title,
       svg: diagramSvg({
-        W, H: 380, theme: th, orient: 'v', title, note, sLabel: 'Altura sobre la zapata (m)', vLabel, series, sRange: [0, H],
+        W, H: 380, theme: th, orient: 'v', title, note, sLabel: 'Altura sobre la zapata (m)', vLabel, series, sRange: [0, H], markers: mk,
         fmtS: (v) => fmt.n('len', v, 1), fmtV: (v) => fmt.n(q, v, 0),
         peaks: series.filter((s) => s.fill !== false).slice(0, 2).flatMap((s) => {
-          let k = 0;
-          s.v.forEach((v, i) => { if (Math.abs(v) > Math.abs(s.v[k])) k = i; });
-          return Math.abs(s.v[k]) > 1e-6 ? [{ s: s.s[k], v: s.v[k], color: s.color, label: fmt.n(q, s.v[k], 1) }] : [];
+          // máximo positivo y negativo (con losas el diagrama cambia de signo)
+          const pk = (sgn: 1 | -1) => {
+            let k = 0;
+            s.v.forEach((v, i) => { if (sgn * v > sgn * s.v[k]) k = i; });
+            return sgn * s.v[k] > 1e-6 ? [{ s: s.s[k], v: s.v[k], color: s.color, label: fmt.n(q, s.v[k], 1) }] : [];
+          };
+          if (!mk.length) {
+            let k = 0;
+            s.v.forEach((v, i) => { if (Math.abs(v) > Math.abs(s.v[k])) k = i; });
+            return Math.abs(s.v[k]) > 1e-6 ? [{ s: s.s[k], v: s.v[k], color: s.color, label: fmt.n(q, s.v[k], 1) }] : [];
+          }
+          return [...pk(1), ...pk(-1)];
         }),
       }),
     });
@@ -475,11 +524,11 @@ export function wallDiagramFigures(res: WallResults, o: { theme?: Theme; fmt: Fm
       { s: st.y, v: st.Mst, color: th.concreteStroke, width: 2.4, fill: true },
       ...(st.seismic ? [{ s: st.y, v: st.Mse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),
       ...(st.Mfront.some((q) => q < -1e-6) ? [{ s: st.y, v: st.Mfront, color: th.bad, width: 2.2, fill: true } as DgSeries] : []),
-    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', st.Mfront.some((q) => q < -1e-6) ? 'derecha: tracción en la cara del relleno · izquierda (rojo): momento invertido por el agua de la piscina' : st.seismic ? 'azul: estático · naranja: con sismo · tracción en la cara del relleno' : 'tracción en la cara del relleno');
+    ], `Mu (${fmt.l('lmoment')})`, 'lmoment', st.levels.length ? `pantalla con apoyos laterales · derecha: tracción en la cara del relleno · izquierda: tracción en la cara interior${st.seismic ? ' · naranja: con sismo' : ''}` : st.Mfront.some((q) => q < -1e-6) ? 'derecha: tracción en la cara del relleno · izquierda (rojo): momento invertido por el agua de la piscina' : st.seismic ? 'azul: estático · naranja: con sismo · tracción en la cara del relleno' : 'tracción en la cara del relleno', markers);
     vert('Pantalla — cortante mayorado por metro de muro', 'stem-V', [
       { s: st.y, v: st.Vst, color: th.concreteStroke, width: 2.4, fill: true },
       ...(st.seismic ? [{ s: st.y, v: st.Vse, color: th.accent, width: 2.2, dash: '6 4' } as DgSeries] : []),
-    ], `Vu (${fmt.l('lforce')})`, 'lforce');
+    ], `Vu (${fmt.l('lforce')})`, 'lforce', st.levels.length ? 'saltos en los apoyos = reacción de cada apoyo' : undefined, markers);
   }
   if (d.gravity) {
     const gr = d.gravity;

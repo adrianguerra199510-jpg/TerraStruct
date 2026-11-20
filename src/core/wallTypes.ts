@@ -107,6 +107,23 @@ export function defaultCrownBeam(y: number, t: number): CrownBeam {
   return { y, b: Math.max(t, 0.2), h: 0.2, nBack: 2, barBack: '#4', nFront: 2, barFront: '#4', stirBar: '#3', stirS: 0.2 };
 }
 
+/** Arriostre lateral de la pantalla por losas de entrepiso (muro de sótano) */
+export interface WallBrace {
+  on: boolean;
+  /** alturas de las losas sobre la cara superior de la zapata, m (cada una es un apoyo lateral de la pantalla) */
+  levels: number[];
+  /** condición de la pantalla en la zapata */
+  base: 'fixed' | 'pinned';
+  /** empuje en reposo K0 (muro que no se desplaza) en lugar del activo */
+  k0: boolean;
+  /** la losa de piso (contrapiso) apoyada contra el muro toma la reacción horizontal de la base */
+  floor: boolean;
+}
+
+export function defaultBrace(): WallBrace {
+  return { on: false, levels: [], base: 'fixed', k0: false, floor: false };
+}
+
 export interface WallInput {
   name: string;
   type: WallType;
@@ -147,6 +164,8 @@ export interface WallInput {
   includeToeSoil: boolean;
   /** piscina: agua en el lado interior (frente) del muro; se evalúan las condiciones vacía y llena */
   pool: { on: boolean; hwi: number; /** recinto cerrado (paredes en ambos lados): el empuje del agua es interno y lo equilibra la otra pared a través del fondo; por defecto true */ closed?: boolean };
+  /** arriostre lateral de la pantalla por losas (muros de sótano de uno o varios niveles) */
+  brace: WallBrace;
   /** (interno) profundidad del agua de la piscina en la condición evaluada, m; 0 = vacía */
   poolDepth: number;
   /** (interno) acero mínimo de la cara frontal exigido por la condición más severa de la piscina, cm²/m */
@@ -236,6 +255,7 @@ export function defaultWall(type: WallType = 'cantilever'): WallInput {
     seismic: { on: false, kh: 0.15, kv: 0 },
     includeToeSoil: true,
     pool: { on: false, hwi: 2.0, closed: true },
+    brace: defaultBrace(),
     poolDepth: 0,
     poolFrontMin: 0,
     poolNoFill: false,
@@ -341,7 +361,21 @@ export const isGabion = (t: WallType) => t === 'gabion';
 /** Piscina como recinto cerrado: el empuje horizontal del agua no es una fuerza externa */
 export const poolClosed = (w: { pool: { closed?: boolean } }) => w.pool.closed !== false;
 
+/** tipologías cuya pantalla puede arriostrarse con losas (pantalla de un solo paño, sin contrafuertes) */
+export const canBrace = (t: WallType) => t === 'cantilever' || t === 'masonryReinforced';
+
+/** Niveles de losa válidos (ordenados, únicos, dentro de la pantalla) */
+export function braceLevels(w: { H: number; brace?: WallBrace }): number[] {
+  const lv = (w.brace?.levels ?? []).filter((y) => isFinite(y) && y > 0.05 && y <= w.H + 1e-9).map((y) => Math.min(y, w.H)).sort((a, b) => a - b);
+  return lv.filter((y, i) => i === 0 || y - lv[i - 1] > 0.05);
+}
+
+/** El muro está arriostrado por al menos una losa */
+export const isBraced = (w: { type: WallType; H: number; brace?: WallBrace }) => !!w.brace?.on && canBrace(w.type) && braceLevels(w).length > 0;
+
 export function normalizeWall(w: WallInput): WallInput {
+  // el arriostre por losas y la piscina son excluyentes: con arriostre se ignora la piscina
+  if (isBraced(w) && w.pool.on) w = { ...w, pool: { ...w.pool, on: false }, poolDepth: 0 };
   if (isMasonryStem(w.type)) {
     const t = blockThickness(w.block);
     // con bloque de 6″ solo cabe una barra al centro de la celda
