@@ -36,6 +36,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     steel ? 'AISC 360: Specification for Structural Steel Buildings, método LRFD (cap. E, F, H).' : 'ACI 318: resistencia de elementos a compresión con flexión (diagrama de interacción por compatibilidad de deformaciones).',
     'API RP 2GEO / Bowles / Das: capacidad de carga axial de pilotes (método α para arcillas, método β / K·tanδ para arenas).',
     'Matlock y Reese (1961): pilotes cargados lateralmente con módulo de reacción creciente linealmente nh.',
+    ...(res.lateral.model === 'socket' ? ['Vesic (1961): módulo de reacción horizontal de la roca; Reese (1997): resistencia lateral de la roca débil; AASHTO LRFD 10.5.5.2.4 (φ = 1.0 en resistencia lateral).'] : []),
   ]);
   d.h2('Hipótesis de cálculo');
   d.bullets([
@@ -45,7 +46,9 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     'La capacidad geotécnica a compresión es Qa = (Qs + Qb)/FS; en tracción solo interviene la fricción lateral reducida más el peso del pilote.',
     'El diseño del cabezal usa las reacciones producidas por las cargas mayoradas de la columna (sin peso propio). Se aplica la regla de ACI 318 de contribución fraccionada de los pilotes que cruzan la sección crítica.',
     'El cabezal puede tener cualquier contorno poligonal; las secciones de flexión y cortante usan el ancho real (cuerda) del cabezal en cada sección crítica y el punzonamiento recorta el perímetro con el contorno.',
-    'La flexión del pilote se estima con el modelo lineal de Matlock y Reese, con reducción de la reacción del suelo por efecto de grupo (p-múltiples).',
+    res.lateral.model === 'socket'
+      ? 'Con socket en roca, la flexión del pilote se calcula con una viga elástica sobre resortes de Winkler (elementos finitos): suelo con Es = p·nh·z y roca con el módulo de Vesic; la carga horizontal se reparte según la rigidez lateral de cada pilote.'
+      : 'La flexión del pilote se estima con el modelo lineal de Matlock y Reese, con reducción de la reacción del suelo por efecto de grupo (p-múltiples).',
   ]);
   d.h2('Convención de signos y unidades');
   d.p(`Unidades: ${fmt.sys === 'SI' ? 'kN, m, kPa, MPa' : 'tonf, m, tonf/m², kgf/cm²'}. P positiva hacia abajo; Mx (My) aumenta la reacción de los pilotes con y (x) positiva. R positiva = compresión en el pilote; negativa = tracción.`);
@@ -197,15 +200,51 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
 
   // ------------------------------------------------------------------ 5
   d.h1('Análisis lateral y diseño estructural del pilote');
-  d.h2('Comportamiento lateral (Matlock–Reese)');
-  d.eq(
-    [
-      `T = (EI / nh)^(1/5) = (${f(res.props.EI, 0)} / ${f(p.nh, 0)})^0.2 = ${f(res.lateral.T, 2)} m`,
-      `y = ${p.head === 'fixed' ? '0.93' : '2.435'}·H·T³ / EI${p.Lu > 0 ? ' + deformación del tramo libre' : ''}`,
-      `M = ${p.head === 'fixed' ? '0.93·H·T (en la cabeza, empotrada)' : '0.77·H·T (máximo en el fuste)'}${p.Lu > 0 ? ' — con tramo libre: M = H·(Lu + 1.85·T)/2' : ''}`,
-    ],
-    'Ecuaciones',
-  );
+  const sk = res.lateral.socket;
+  if (res.lateral.model === 'socket' && sk) {
+    d.h2('Comportamiento lateral con socket en roca (viga sobre resortes)');
+    const rockL = inp.geo.layers.find((l) => l.kind === 'rock');
+    d.eq(
+      [
+        'EI·y⁗ + k(z)·y = 0,  resuelta por elementos finitos de viga (Euler–Bernoulli) con resortes concentrados en los nudos',
+        `Suelo: k = p·nh·z  (nh = ${f(p.nh, 0)} kN/m³);  roca: k = 0.65·(Em·D⁴/EI)^(1/12)·Em/(1 − ν²) = ${n('press', sk.kRock, 0)} ${fmt.l('press')} (ν = 0.25${rockL ? `, Em = ${n('press', rockL.Es, 0)} ${fmt.l('press')}` : ''})`,
+        `Cabeza ${p.head === 'fixed' ? 'empotrada en el cabezal (giro nulo)' : 'libre'}${p.Lu > 0 ? `, tramo libre Lu = ${f(p.Lu, 2)} m` : ''}; punta libre`,
+        'Resistencia lateral de la roca (Reese, 1997): pur = αr·qu·D·(1 + 1.4·xr/D) para xr ≤ 3D;  pur = 5.2·αr·qu·D para xr > 3D;  αr = 1 − (2/3)·RQD/100',
+        'Empotramiento equivalente Ld: ménsula con la misma deflexión en la cabeza, y = H·(Lu + Ld)³ / (c·EI), c = 12 (cabeza empotrada) ó 3 (libre)',
+      ],
+      'Ecuaciones',
+    );
+    const wr = res.ultimate.filter((q) => q.H > 0 && q.latRock?.socket).reduce<ComboRes | null>((a, b) => (!a || b.latRock!.socket!.pRatio > a.latRock!.socket!.pRatio ? b : a), null);
+    const wm = res.ultimate.filter((q) => q.H > 0).reduce<ComboRes | null>((a, b) => (!a || b.Mmax > a.Mmax ? b : a), null);
+    d.kv(
+      [
+        ['Techo de la roca', `${u('len', sk.zRock, 2)} bajo el terreno`],
+        ['Empotramiento equivalente Ld', u('len', res.lateral.Ld, 2)],
+        ...(wm?.lat.socket ? [['Momento máximo (última)', `${u('moment', wm.lat.M, 1)} a ${u('len', wm.lat.socket.zM, 2)} (${wm.combo.name}); en el techo de la roca ${u('moment', wm.lat.socket.Mrock, 1)}`] as [string, string]] : []),
+        ...(wm ? [['Cortante máximo en el fuste', u('force', wm.Vpile, 1)] as [string, string]] : []),
+        ...(wr?.latRock?.socket ? [['Presión lateral sobre la roca', `p = ${f(wr.latRock.socket.p, 0)} kN/m ≤ pur = ${f(wr.latRock.socket.pur, 0)} kN/m a ${u('len', wr.latRock.socket.zP, 2)} → ${f(wr.latRock.socket.pRatio, 2)} (${wr.combo.name})`] as [string, string]] : []),
+      ],
+      1,
+    );
+    const ls = wm?.lat.socket;
+    if (ls && ls.H > 0) {
+      const zs = ls.prof.z;
+      const sM = [{ name: 'Mu', xs: ls.prof.M.map((v) => +n('moment', v * ls.H, 2)), ys: zs, color: th.bad }];
+      const sY = [{ name: 'y', xs: ls.prof.y.map((v) => v * ls.H * 1000), ys: zs, color: th.concreteStroke }];
+      d.img(lineChart({ w: 640, h: 380, theme: th, series: sM, xLabel: `M (${fmt.l('moment')})`, yLabel: 'z bajo el terreno (m)', title: `Momento en el pilote — ${wm!.combo.name}`, invertY: true }), `Figura. Momento flector a lo largo del pilote con socket (techo de la roca a ${f(ls.zRock, 2)} m).`, 0.75);
+      d.img(lineChart({ w: 640, h: 380, theme: th, series: sY, xLabel: 'y (mm)', yLabel: 'z bajo el terreno (m)', title: `Deflexión del pilote — ${wm!.combo.name}`, invertY: true }), 'Figura. Deflexión lateral a lo largo del pilote con socket (cargas últimas).', 0.75);
+    }
+  } else {
+    d.h2('Comportamiento lateral (Matlock–Reese)');
+    d.eq(
+      [
+        `T = (EI / nh)^(1/5) = (${f(res.props.EI, 0)} / ${f(p.nh, 0)})^0.2 = ${f(res.lateral.T, 2)} m`,
+        `y = ${p.head === 'fixed' ? '0.93' : '2.435'}·H·T³ / EI${p.Lu > 0 ? ' + deformación del tramo libre' : ''}`,
+        `M = ${p.head === 'fixed' ? '0.93·H·T (en la cabeza, empotrada)' : '0.77·H·T (máximo en el fuste)'}${p.Lu > 0 ? ' — con tramo libre: M = H·(Lu + 1.85·T)/2' : ''}`,
+      ],
+      'Ecuaciones',
+    );
+  }
   d.p(`Deflexión máxima de servicio: ${f(res.lateral.y * 1000, 2)} mm (${res.lateral.combo}); admisible ${f(p.yAllow * 1000, 1)} mm.`);
   if (p.kind === 'concrete') {
     d.h2('Pilote de concreto reforzado');
@@ -400,7 +439,7 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
   // ------------------------------------------------------------------ efectos del suelo
   d.h1('Efectos del suelo y del grupo');
   d.h2('Efecto de grupo en la carga lateral (p-múltiples)');
-  d.p('La fuerza horizontal se reparte entre los pilotes con el mismo desplazamiento (cabezal rígido). La resistencia lateral del suelo de cada pilote se reduce con el multiplicador p de Brown et al. (1988): fila delantera 0.8, segunda 0.4 y siguientes 0.3 para s = 3D; 1.0, 0.85 y 0.7 para s = 5D; sin reducción para s ≥ 8D. Rigidez lateral ∝ (p·nh)^0.6.', { align: 'justify' });
+  d.p(`La fuerza horizontal se reparte entre los pilotes con el mismo desplazamiento (cabezal rígido). La resistencia lateral del suelo de cada pilote se reduce con el multiplicador p de Brown et al. (1988): fila delantera 0.8, segunda 0.4 y siguientes 0.3 para s = 3D; 1.0, 0.85 y 0.7 para s = 5D; sin reducción para s ≥ 8D. ${res.lateral.model === 'socket' ? 'Con socket en roca, el multiplicador p se aplica a todos los resortes y la rigidez lateral de cada pilote se obtiene del modelo de viga sobre resortes.' : 'Rigidez lateral ∝ (p·nh)^0.6.'}`, { align: 'justify' });
   const lat = res.ultimate.filter((q) => q.H > 0).reduce<ComboRes | null>((a, b) => (!a || b.Mmax > a.Mmax ? b : a), null);
   if (lat) {
     d.table(

@@ -392,6 +392,9 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
                 return lat ? (
                   <>
                     <div className="hint" style={{ marginBottom: 6 }}>{lat.combo.name}: H = {fmt.u('force', lat.H, 1)} · Mu máx = {fmt.u('moment', lat.Mmax, 1)}</div>
+                    {res.lateral.model === 'socket' && res.lateral.socket && (
+                      <div className="hint" style={{ marginBottom: 6 }}>Modelo con socket en roca (viga sobre resortes): techo de la roca a {fmt.u('len', res.lateral.socket.zRock, 2)} · empotramiento equivalente Ld = {fmt.u('len', res.lateral.Ld, 2)} · M en el techo de la roca = {fmt.u('moment', lat.lat.socket?.Mrock ?? 0, 1)}</div>
+                    )}
                     <Tbl head={['Pilote', 'p', `H (${fmt.l('force')})`]} align={['c', 'r', 'r']} rows={lat.pm.map((m: number, i: number) => [String(i + 1), m.toFixed(2), fmt.n('force', lat.Hi[i], 1)])} />
                   </>
                 ) : <span className="hint">Sin cargas horizontales.</span>;

@@ -7,6 +7,7 @@ import { PileInput, PileCombo, PileDef, SoilLayer, pilePositions, standardLayout
 import { capGeometry, lineSpan } from './pileCap';
 import { stmDesign, StmResult } from './pileSTM';
 import { liquefaction, settlement, groupLateral, effectiveStressProfile, layerIndexAt, LiqResult, SettleResult, GroupLateral } from './pileExtra';
+import { socketLateralUnit, SocketLatUnit } from './pileSocketLateral';
 import { PileProps, pileProps, concretePhiMn, concreteShear, concreteSteelRatio, steelCapacity, steelInteraction, lateralPile, SteelCap, Lateral } from './pileStruct';
 
 export interface PCheck {
@@ -270,6 +271,9 @@ export interface ComboRes {
   ratioC: number;
   ratioT: number;
   lat: Lateral;
+  /** pilote con la mayor presión lateral sobre la roca (socket) y cortante máximo en el fuste */
+  latRock?: Lateral;
+  Vpile: number;
   /** efecto de grupo lateral: multiplicadores p, fuerza por pilote y momento máximo */
   pm: number[];
   Hi: number[];
@@ -381,7 +385,7 @@ export interface PileResults {
   worstC?: { res: ComboRes; Pu: number; Mu: number; ratio: number; phiMn: number; eq?: string };
   worstT?: { res: ComboRes; Pu: number; Mu: number; ratio: number; phiMn: number; eq?: string };
   shear?: { Vu: number; phiVn: number; ratio: number; text: string };
-  lateral: { y: number; combo: string; T: number };
+  lateral: { y: number; combo: string; T: number; Ld: number; model: 'matlock' | 'socket'; socket?: Lateral['socket'] };
   minSpacing: number;
   flexX?: CapFlex;
   flexY?: CapFlex;
@@ -437,6 +441,28 @@ export function analyzePile(inp: PileInput): PileResults {
   const colPoly = columnPoly(col.geom, col.x, col.y);
   const cbb = bbox(colPoly);
 
+  // ---------- modelo lateral: con socket en roca, viga sobre resortes (suelo nh·z + roca); si no, Matlock–Reese
+  const useSocket = !!geo.rock && inp.geo.layers.length > 0;
+  const Tsoil = lateralPile(p, props.EI, 1).T;
+  const unitCache = new Map<string, SocketLatUnit>();
+  const unitOf = (pm: number, mask?: boolean[]): SocketLatUnit => {
+    const key = `${pm.toFixed(6)}|${mask ? mask.map((b) => (b ? 1 : 0)).join('') : ''}`;
+    let u = unitCache.get(key);
+    if (!u) {
+      u = socketLateralUnit(p, props.EI, props.Dp, inp.geo.layers, pm, mask ? (i) => !!mask[i] : undefined);
+      unitCache.set(key, u);
+    }
+    return u;
+  };
+  const scaleLat = (un: SocketLatUnit, H: number): Lateral => {
+    // longitud de empotramiento equivalente: ménsula con la misma deflexión en la cabeza
+    const Le = Math.cbrt((p.head === 'fixed' ? 12 : 3) * props.EI * un.y);
+    return {
+      T: Tsoil, y: un.y * H, M: un.M * H, V: un.V * H, Ld: Math.max(Le - p.Lu, 0),
+      socket: { zM: un.zM, zRock: un.zRock, Mrock: un.Mrock * H, p: un.pUnit * H, pur: un.pur, zP: un.zP, pRatio: un.pRatio * H, kRock: un.kRock, H, prof: un.prof },
+    };
+  };
+
   // ---------- reacciones por combinación
   const combine = (cb: PileCombo): ComboRes => {
     const Mxb = cb.Mx + cb.Vy * cap.h;
@@ -446,13 +472,26 @@ export function analyzePile(inp: PileInput): PileResults {
     const H = Math.hypot(cb.Vx, cb.Vy);
     // reparto lateral con efecto de grupo: mismo desplazamiento en todos los pilotes, rigidez ∝ (p·nh)^0.6
     const gl = groupLateral(pts, props.Dp, cb.Vx, cb.Vy);
-    const wts = gl.pm.map((m) => Math.pow(m, 0.6));
-    const sw = wts.reduce((a, b) => a + b, 0) || 1;
-    const Hi = wts.map((w) => (H * w) / sw);
-    const lats = Hi.map((h, i) => lateralPile({ ...p, nh: p.nh * gl.pm[i] }, props.EI, h));
+    let Hi: number[];
+    let lats: Lateral[];
+    if (useSocket) {
+      // con socket: rigidez lateral de cada pilote del modelo de resortes
+      const un = gl.pm.map((m) => unitOf(m));
+      const ks = un.map((u) => 1 / Math.max(u.y, 1e-15));
+      const sk = ks.reduce((a, b) => a + b, 0) || 1;
+      Hi = ks.map((k) => (H * k) / sk);
+      lats = Hi.map((h, i) => scaleLat(un[i], h));
+    } else {
+      const wts = gl.pm.map((m) => Math.pow(m, 0.6));
+      const sw = wts.reduce((a, b) => a + b, 0) || 1;
+      Hi = wts.map((w) => (H * w) / sw);
+      lats = Hi.map((h, i) => lateralPile({ ...p, nh: p.nh * gl.pm[i] }, props.EI, h));
+    }
     let kmax = 0;
     lats.forEach((l, i) => { if (l.M > (lats[kmax]?.M ?? 0)) kmax = i; });
-    const latC = lats[kmax] ?? lateralPile(p, props.EI, 0);
+    const latC = lats[kmax] ?? (useSocket ? scaleLat(unitOf(1), 0) : lateralPile(p, props.EI, 0));
+    const latRock = useSocket ? lats.reduce<Lateral | undefined>((a, b) => (!a || (b.socket?.pRatio ?? 0) > (a.socket?.pRatio ?? 0) ? b : a), undefined) : undefined;
+    const Vpile = n ? Math.max(...lats.map((l, i) => l.V ?? Hi[i]), 0) : 0;
     const Hpile = n ? Math.max(...Hi, 0) : 0;
     const R = sol.R;
     const Rmax = n ? Math.max(...R) : 0;
@@ -461,7 +500,7 @@ export function analyzePile(inp: PileInput): PileResults {
     return {
       combo: cb, Pcol: cb.P, Ptot: Pt0, R, Rmax, Rmin, H, Hpile, unresolved: sol.unresolved,
       ratioC: Rmax / Math.max(QaCeff * qf, 1e-9), ratioT: Math.max(-Rmin, 0) / Math.max(geo.QaT * qf, 1e-9),
-      lat: latC, pm: gl.pm, Hi, Mmax: latC.M,
+      lat: latC, latRock, Vpile, pm: gl.pm, Hi, Mmax: latC.M,
     };
   };
   const service = inp.combos.filter((c) => c.kind === 'service').map(combine);
@@ -501,7 +540,15 @@ export function analyzePile(inp: PileInput): PileResults {
     checks.push({ name: 'Pilotes · tracción (servicio)', ratio: wt.ratioT, ok: wt.ratioT <= 1 + 1e-9, detail: `${wt.combo.name}: T = ${(-wt.Rmin).toFixed(0)} kN ≤ Qta = ${(geo.QaT * wt.combo.qaFactor).toFixed(0)} kN` });
   }
   const worstY = service.reduce<ComboRes | null>((a, b) => (!a || b.lat.y > a.lat.y ? b : a), null);
-  if (worstY && worstY.Hpile > 0) checks.push({ name: 'Pilotes · deflexión lateral', ratio: worstY.lat.y / p.yAllow, ok: worstY.lat.y <= p.yAllow + 1e-9, detail: `${worstY.combo.name}: y = ${(worstY.lat.y * 1000).toFixed(1)} mm ≤ ${(p.yAllow * 1000).toFixed(1)} mm (T = ${worstY.lat.T.toFixed(2)} m)` });
+  if (worstY && worstY.Hpile > 0) checks.push({ name: 'Pilotes · deflexión lateral', ratio: worstY.lat.y / p.yAllow, ok: worstY.lat.y <= p.yAllow + 1e-9, detail: `${worstY.combo.name}: y = ${(worstY.lat.y * 1000).toFixed(1)} mm ≤ ${(p.yAllow * 1000).toFixed(1)} mm (${useSocket ? `viga sobre resortes, techo de la roca a ${(worstY.lat.socket?.zRock ?? 0).toFixed(2)} m` : `T = ${worstY.lat.T.toFixed(2)} m`})` });
+  // ---------- socket: presión lateral sobre la roca (Reese, roca débil; φ = 1.0 para la resistencia lateral, AASHTO 10.5.5.2.4)
+  if (useSocket) {
+    const wr = ultimate.filter((u) => u.latRock?.socket && u.H > 0).reduce<ComboRes | null>((a, b) => (!a || b.latRock!.socket!.pRatio > a.latRock!.socket!.pRatio ? b : a), null);
+    if (wr) {
+      const sk = wr.latRock!.socket!;
+      checks.push({ name: 'Socket · presión lateral sobre la roca', ratio: sk.pRatio, ok: sk.pRatio <= 1 + 1e-9, detail: `${wr.combo.name}: p = ${sk.p.toFixed(0)} kN/m ≤ pur = ${sk.pur.toFixed(0)} kN/m a ${sk.zP.toFixed(2)} m (Reese, roca débil)` });
+    }
+  }
 
   // ---------- reacciones del peso propio del cabezal (para la parte estructural del pilote)
   const rw = solveReactions(pts, Wcap, Wcap * fcap.x, Wcap * fcap.y).R;
@@ -520,14 +567,15 @@ export function analyzePile(inp: PileInput): PileResults {
   let worstC: PileResults['worstC'];
   let worstT: PileResults['worstT'];
   let shear: PileResults['shear'];
-  const Tlen = ultimate[0]?.lat.T ?? lateralPile(p, props.EI, 1).T;
+  const Tlen = ultimate[0]?.lat.T ?? Tsoil;
+  const Ldlen = ultimate[0]?.lat.Ld ?? (useSocket ? scaleLat(unitOf(1), 0).Ld : 1.8 * Tlen);
   if (p.kind === 'concrete') {
     const r = concreteSteelRatio(p);
     const base = concretePhiMn(p, 0);
     conc = { phiPnMax: base.phiPnMax, phiPt: base.phiPt, ratio: r, phiMn: base.phiMn };
     checks.push({ name: 'Pilote · cuantía longitudinal', ratio: r.rho < 0.005 ? 0.005 / r.rho : r.rho / 0.08, ok: r.ok, detail: `ρ = ${(r.rho * 100).toFixed(2)} % (0.5 % a 8 %)`, advisory: false });
   } else {
-    steel = steelCapacity(p, props, Tlen);
+    steel = steelCapacity(p, props, Tlen, Ldlen);
     if (!steel.compact) warnings.push(`La sección del pilote de acero es esbelta localmente (${(props.slender ?? 0).toFixed(1)} > ${steel.limit.toFixed(1)}): las resistencias calculadas no incluyen reducción por pandeo local.`);
   }
   const evalPile = (Pu: number, Mu: number, Vu: number): { ratio: number; phiMn: number; eq?: string } => {
@@ -555,8 +603,9 @@ export function analyzePile(inp: PileInput): PileResults {
   if (p.kind === 'concrete') {
     let wv: { Vu: number; phiVn: number; ratio: number; text: string } | undefined;
     for (const u of ultimate) {
-      const sh = concreteShear(p, u.Hpile, u.Pu?.max ?? 0);
-      if (!wv || sh.ratio > wv.ratio) wv = { Vu: u.Hpile, phiVn: sh.phiVn, ratio: sh.ratio, text: sh.text };
+      const Vu = Math.max(u.Hpile, u.Vpile);
+      const sh = concreteShear(p, Vu, u.Pu?.max ?? 0);
+      if (!wv || sh.ratio > wv.ratio) wv = { Vu, phiVn: sh.phiVn, ratio: sh.ratio, text: sh.text };
     }
     shear = wv;
     if (wv) checks.push({ name: 'Pilote · cortante', ratio: wv.ratio, ok: wv.ratio <= 1 + 1e-9, detail: `Vu = ${wv.Vu.toFixed(1)} kN ≤ φVn = ${wv.phiVn.toFixed(0)} kN (${wv.text})` });
@@ -866,12 +915,14 @@ export function analyzePile(inp: PileInput): PileResults {
       let wl: { r: number; name: string; Pu: number; M: number } | null = null;
       for (const u of eqU) {
         const pl = { ...p, Lu: p.Lu + liq.Lliq, nh: p.nh };
-        const lt = lateralPile(pl, props.EI, u.Hpile);
+        // con socket: se anulan los resortes de los estratos licuados en el modelo de viga sobre resortes
+        const lt = useSocket ? scaleLat(unitOf(1, liq.liquefied), u.Hpile) : lateralPile(pl, props.EI, u.Hpile);
+        const LdL = useSocket ? Math.max(lt.Ld + p.Lu - pl.Lu, 0) : lt.Ld;
         const c = evalPile(u.Pu!.max, lt.M, 0);
         // pandeo en el tramo licuado
         let buck = 0;
         if (p.kind === 'concrete') buck = u.Pu!.max / Math.max(0.25 * ((Math.PI ** 2 * props.EI) / (p.K * (p.Lu + liq.Lliq)) ** 2), 1e-9);
-        else buck = u.Pu!.max / Math.max(steelCapacity(pl, props, lt.T).phiPn, 1e-9);
+        else buck = u.Pu!.max / Math.max(steelCapacity(pl, props, lt.T, LdL).phiPn, 1e-9);
         const r = Math.max(c.ratio, buck);
         if (!wl || r > wl.r) wl = { r, name: u.combo.name, Pu: u.Pu!.max, M: lt.M };
       }
@@ -897,7 +948,7 @@ export function analyzePile(inp: PileInput): PileResults {
   const ok = checks.every((c) => c.ok || c.advisory);
   return {
     ok, checks, warnings, pts, n, capRect: rect, capPoly, capArea: geom.area, capCentroid: { x: geom.cx, y: geom.cy }, spanX: lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx), spanY: lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy), Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
-    lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen },
+    lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen, Ld: worstY?.lat.Ld ?? Ldlen, model: useSocket ? 'socket' : 'matlock', socket: useSocket ? (worstY?.lat.socket ?? scaleLat(unitOf(1), 0).socket) : undefined },
     minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, tension, liq, settle, deep, dX, dY,
     concreteVolume: geom.area * cap.h, pileLength: n * p.L,
   };

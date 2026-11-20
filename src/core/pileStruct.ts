@@ -220,10 +220,10 @@ export interface SteelCap {
   limit: number;
 }
 
-export function steelCapacity(p: PileDef, props: PileProps, T: number): SteelCap {
+export function steelCapacity(p: PileDef, props: PileProps, T: number, Ld = 1.8 * T): SteelCap {
   const Fy = p.Fy;
-  // longitud de pandeo: tramo libre + profundidad al empotramiento aparente (1.8 T)
-  const Lk = p.K * (p.Lu + (p.Lu > 0 ? 1.8 * T : 0));
+  // longitud de pandeo: tramo libre + profundidad al empotramiento aparente (1.8 T o la del modelo con socket)
+  const Lk = p.K * (p.Lu + (p.Lu > 0 ? Ld : 0));
   const KLr = props.r > 0 ? Lk / props.r : 0;
   const Fe = KLr > 1e-9 ? (Math.PI ** 2 * ES) / KLr ** 2 : Infinity;
   const Fcr = KLr <= 4.71 * Math.sqrt(ES / Fy) ? Math.pow(0.658, Fy / Fe) * Fy : 0.877 * Fe;
@@ -249,6 +249,25 @@ export interface Lateral {
   M: number;
   /** longitud de fijación aparente, m */
   Ld: number;
+  /** cortante máximo en el fuste (= H en Matlock–Reese) */
+  V?: number;
+  /** modelo con socket en roca (viga sobre resortes) */
+  socket?: {
+    /** profundidad del momento máximo bajo el terreno, m */
+    zM: number;
+    /** techo de la roca y momento allí */
+    zRock: number;
+    Mrock: number;
+    /** presión lateral sobre la roca p (kN/m), resistencia última pur (kN/m), profundidad y relación */
+    p: number;
+    pur: number;
+    zP: number;
+    pRatio: number;
+    kRock: number;
+    /** fuerza en la cabeza y perfil por unidad de H (z bajo el terreno, y, M) */
+    H: number;
+    prof: { z: number[]; y: number[]; M: number[] };
+  };
 }
 
 /** Pilote cargado lateralmente en suelo con nh (Matlock–Reese): T = (EI/nh)^(1/5). H en kN. */
@@ -264,5 +283,5 @@ export function lateralPile(p: PileDef, EI: number, H: number): Lateral {
     y += fixed ? (H * p.Lu ** 3) / (12 * EI) : (H * p.Lu ** 3) / (3 * EI);
     M = fixed ? (H * (p.Lu + 1.85 * T)) / 2 : H * (p.Lu + 0.772 * T);
   }
-  return { T, y, M, Ld: 1.8 * T };
+  return { T, y, M, Ld: 1.8 * T, V: H };
 }

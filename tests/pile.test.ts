@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { defaultPileInput } from '../src/core/pileTypes';
 import { analyzePile, solveReactions, autoSizePile } from '../src/core/pile';
 import { concretePhiMn, concreteCurve, pileProps, steelCapacity, lateralPile } from '../src/core/pileStruct';
+import { socketLateralUnit } from '../src/core/pileSocketLateral';
 
 describe('reacciones de pilotes', () => {
   it('equilibrio y método elástico', () => {
@@ -290,6 +291,46 @@ describe('socket en roca', () => {
     const c = analyzePile(j);
     expect(c.geo.rock!.Ksp).toBeCloseTo((3 + 2) / (10 * Math.sqrt(1 + (300 * 0.001) / 3)), 9);
     expect(c.checks.find((k) => /CFEM/.test(k.name))!.ok).toBe(false);
+  });
+  it('la viga sobre resortes reproduce Matlock–Reese en suelo (sin roca)', () => {
+    const i = defaultPileInput();
+    const pr = pileProps(i.pile);
+    const T = Math.pow(pr.EI / i.pile.nh, 0.2);
+    const soil = [{ ...defaultLayers()[0], thk: 100 }];
+    const fx = socketLateralUnit({ ...i.pile, head: 'fixed', L: 15 * T }, pr.EI, pr.Dp, soil, 1);
+    expect((fx.y * pr.EI) / T ** 3).toBeCloseTo(0.93, 2);
+    expect(fx.M / T).toBeCloseTo(0.93, 2);
+    const fr = socketLateralUnit({ ...i.pile, head: 'free', L: 15 * T }, pr.EI, pr.Dp, soil, 1);
+    expect((fr.y * pr.EI) / T ** 3).toBeCloseTo(2.435, 1);
+    expect(fr.M / T).toBeCloseTo(0.772, 2);
+  });
+  it('con socket el análisis lateral usa la roca', () => {
+    const r = analyzePile(rockInp());
+    expect(r.lateral.model).toBe('socket');
+    expect(r.checks.some((c) => /presión lateral sobre la roca/.test(c.name))).toBe(true);
+    expect(analyzePile(defaultPileInput()).lateral.model).toBe('matlock');
+    // roca somera: rigidiza el pilote, acorta el empotramiento y el fuste en roca toma cortante inverso
+    const i = rockInp();
+    i.geo.layers[0].thk = 1;
+    const s = analyzePile(i);
+    const pr = pileProps(i.pile);
+    const H = 100;
+    const ml = lateralPile(i.pile, pr.EI, H);
+    const w = s.ultimate.find((u) => u.H > 0)!;
+    expect(w.lat.y / w.Hi[0]).toBeLessThan(ml.y / H);
+    expect(s.lateral.Ld).toBeLessThan(ml.Ld);
+    expect(w.Vpile).toBeGreaterThanOrEqual(w.Hpile * 0.99);
+    const doc = JSON.stringify(reportForPile(i, makeFmt('SI'), newProject().info).blocks);
+    expect(doc).toContain('viga sobre resortes');
+    // roca muy débil y carga alta: la presión lateral excede pur
+    const j = rockInp();
+    j.geo.layers[0].thk = 1;
+    j.geo.layers[1].qu = 1;
+    j.geo.layers[1].rqd = 10;
+    j.combos = j.combos.map((c) => ({ ...c, Vx: c.Vx * 40 }));
+    const cj = analyzePile(j).checks.find((c) => /presión lateral sobre la roca/.test(c.name))!;
+    expect(cj.ratio).toBeGreaterThan(1);
+    expect(cj.ok).toBe(false);
   });
   it('roca blanda (qu < 5 MPa) genera advertencia de IGM', () => {
     const i = rockInp();
