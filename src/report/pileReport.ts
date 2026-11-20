@@ -382,7 +382,9 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
         ...(multi ? ['Si una columna no puede equilibrarse con Rik ≥ 0 (columna en el borde o fuera del grupo), la fuerza horizontal que queda en su nudo se lleva con cordones horizontales superiores entre columnas vecinas (tirante = acero superior; puntal = concreto a la profundidad del nudo).'] : []),
         'Brazo interno:  z = d − wt/2,   wt = profundidad del nodo superior (hidrostático): wt = lb · l / z   (lb = √(Acol·Rik/Pk),  l = distancia horizontal columna–pilote)',
         'Ángulo y fuerza del puntal:  θik = atan(z / lik),   Cik = Rik / sen θik',
-        'Empuje en el nudo de cada pilote:  Hx,i = Σk Rik·(xi − xk)/z,  Hy,i análogo.  Tirante de cada banda de pilotes (fila en X o en Y): equilibrio de los nudos de la banda, T = máx sobre los tramos de (−ΣH izquierda ; ΣH derecha);   As = T/(φ·fy),  φ = 0.75',
+        'Nudo de la columna en el punto de aplicación de su resultante:  xk + (Myk + Vxk·h)/Pk ,  yk + (Mxk + Vyk·h)/Pk   (limitado al contorno de la columna).',
+        'Empuje en el nudo de cada pilote:  Hi = Σk Rik·(pi − nk)/z.  Tirantes inferiores entre pilotes vecinos (lados del contorno y pares de Gabriel): cada nudo de pilote en equilibrio, Σ Fe·ue + Hi = 0, con la mínima energía Σ Le·Fe².',
+        'Capacidad del tirante con la parrilla ortogonal:  φTn = φ·fy·(asX·cos²θ + asY·sen²θ)·w,   w = mín(D + d ; distancia al pilote vecino);   φ = 0.75',
         'Resistencia del puntal:  φ·Fns = φ·fce·Acs,   fce = 0.85·βc·βs·f′c,   βc = 1.0,   βs = ' + f(stm.betaS, 2) + (res.stm && inp.cap.crackMesh ? ' (con armadura de control de fisuración ΣAs·senγ/(b·s) ≥ 0.003)' : ' (puntal en botella sin armadura de control)'),
         'Anchura del puntal en cada extremo:  ws = lb·senθ + wt·cosθ   (nodo CCC en la columna; nodo CCT/CTT en el pilote con wt = 2·recubrimiento al centroide del acero)',
         `Zonas nodales:  fcu = 0.85·βn·f′c;  βn = 1.0 (columna, CCC) y ${f(stm.betaNPile, 1)} (pilote, ${stm.betaNPile === 0.6 ? 'CTT: tirantes en dos direcciones' : 'CCT: tirante en una dirección'});  φ = 0.75`,
@@ -405,11 +407,8 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
       stm.struts.map((q) => [multi ? `${stm.cols[q.k].name} → P${q.i + 1}` : String(q.i + 1), n('force', q.R, 0), f(q.l, 2), f((q.theta * 180) / Math.PI, 1), n('force', q.C, 0), f(q.AcsCol, 3), f(q.AcsPile, 3), n('force', q.phiFns, 0), f(q.ratio, 2)]),
       { align: ['c', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Puntales' },
     );
-    const tr: string[][] = [];
-    for (const t of [stm.tieX, stm.tieY]) {
-      t.bands.forEach((b) => tr.push([`Tirante ${t.axis.toUpperCase()} (P${b.idx.map((i) => i + 1).join(', P')})`, f(b.pos, 2), n('force', b.T, 0), f(b.width, 2), f(b.asProv, 1), n('force', b.phiTn, 0), f(b.ratio, 2)]));
-    }
-    d.table(['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho de banda (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación'], tr, { align: ['l', 'r', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Tirantes por banda de pilotes (As = barras inferiores dentro del ancho de la banda)' });
+    const tr: string[][] = stm.ties.map((t) => [`P${t.a + 1} – P${t.b + 1}`, `${f(((((Math.atan2(t.uy, t.ux) * 180) / Math.PI) % 180) + 180) % 180, 0)}°`, t.F >= 0 ? 'Tracción' : 'Compresión', n('force', Math.abs(t.F), 0), f(t.width, 2), t.F >= 0 ? f(t.asProv, 1) : '—', n('force', t.cap, 0), f(t.ratio, 2)]);
+    d.table(['Elemento', 'Dirección', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho de banda (m)', 'As efectivo (cm²)', `Capacidad (${fmt.l('force')})`, 'Relación'], tr, { align: ['l', 'r', 'l', 'r', 'r', 'r', 'r', 'r'], small: true, caption: 'Tabla. Tirantes inferiores entre pilotes (As efectivo = parrilla inferior en la dirección del tirante, asX·cos²θ + asY·sen²θ, dentro del ancho de la banda)' });
     if (stm.topChords.length) {
       d.table(
         ['Cordón superior', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho (m)', `Capacidad (${fmt.l('force')})`, 'Relación'],

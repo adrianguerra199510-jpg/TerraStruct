@@ -353,12 +353,13 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
                 />
               </Card>
             )}
-            <Card title="Tirantes (bandas de pilotes)" icon={<Grid3x3 size={18} />}>
+            <Card title="Tirantes inferiores (entre pilotes)" icon={<Grid3x3 size={18} />}>
               <Tbl
-                head={['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación']}
-                align={['l', 'r', 'r', 'r', 'r', 'r', 'r']}
-                rows={[res.stm.tieX, res.stm.tieY].flatMap((t) => t.bands.map((b) => [`${t.axis.toUpperCase()} (P${b.idx.map((i) => i + 1).join(', P')})`, b.pos.toFixed(2), fmt.n('force', b.T, 0), b.width.toFixed(2), b.asProv.toFixed(1), fmt.n('force', b.phiTn, 0), b.ratio.toFixed(2)]))}
+                head={['Elemento', 'Dirección', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho (m)', 'As efectivo (cm²)', `Capacidad (${fmt.l('force')})`, 'Relación']}
+                align={['l', 'r', 'l', 'r', 'r', 'r', 'r', 'r']}
+                rows={res.stm.ties.map((t) => [`P${t.a + 1} – P${t.b + 1}`, `${((((Math.atan2(t.uy, t.ux) * 180) / Math.PI) % 180 + 180) % 180).toFixed(0)}°`, t.F >= 0 ? 'Tracción' : 'Compresión', fmt.n('force', Math.abs(t.F), 0), t.width.toFixed(2), t.F >= 0 ? t.asProv.toFixed(1) : '—', fmt.n('force', t.cap, 0), t.ratio.toFixed(2)])}
               />
+              <div className="hint" style={{ marginTop: 6 }}>Cada tirante une dos nudos de pilote y su fuerza sale del equilibrio de los nudos. As efectivo = parrilla inferior en la dirección del tirante (asX·cos²θ + asY·sen²θ) dentro del ancho de la banda.</div>
             </Card>
           </>
         )}

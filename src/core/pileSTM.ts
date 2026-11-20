@@ -67,23 +67,28 @@ export interface StmStrut {
   nodeColStress: number;
   nodePileStress: number;
 }
-export interface StmBand {
-  pos: number;
-  T: number;
+/** Tirante (o puntal) inferior entre dos nudos de pilote, a nivel del acero inferior (F > 0 tracción). */
+export interface StmBottomTie {
+  a: number;
+  b: number;
+  F: number;
+  /** dirección y longitud del elemento */
+  ux: number;
+  uy: number;
+  L: number;
+  /** ancho de la banda de acero y acero efectivo en la dirección del tirante (parrilla ortogonal), cm² */
   width: number;
   asProv: number;
-  phiTn: number;
+  cap: number;
   ratio: number;
-  /** extensión del tirante a lo largo de su eje y pilotes de la banda */
-  x0: number;
-  x1: number;
-  idx: number[];
+  axis: 'x' | 'y';
 }
 export interface StmTie {
   axis: 'x' | 'y';
-  /** suma de las fuerzas de las bandas, kN */
+  /** suma de las tracciones de los tirantes inferiores orientados en este eje, kN */
   T: number;
-  bands: StmBand[];
+  /** índices en StmResult.ties */
+  members: number[];
   AsReq: number;
   ratio: number;
 }
@@ -107,16 +112,19 @@ export interface StmResult {
   hTie: number;
   hNode: number;
   struts: StmStrut[];
+  /** tirantes inferiores entre pilotes vecinos */
+  ties: StmBottomTie[];
   tieX: StmTie;
   tieY: StmTie;
-  /** nudos superiores (columnas) con su carga en la combinación gobernante */
-  cols: { name: string; x: number; y: number; P: number }[];
+  /** nudos superiores (columnas) con su carga en la combinación gobernante; (nx, ny) = punto de aplicación de la
+   *  resultante de la columna (centroide desplazado M/P), donde se ubica el nudo */
+  cols: { name: string; x: number; y: number; P: number; nx: number; ny: number }[];
   /** empuje horizontal de los puntales en cada nudo de pilote (hacia afuera), kN */
   thrust: { hx: number; hy: number }[];
   topChords: StmTopChord[];
   /** true si cada nudo de columna quedó en equilibrio solo con sus puntales (sin cordones superiores) */
   balanced: boolean;
-  /** fuerza horizontal que no se pudo equilibrar (columnas alineadas con fuerza transversal), kN */
+  /** fuerza horizontal que no se pudo equilibrar en los nudos superiores o inferiores, kN */
   unbalanced: number;
   fce: number;
   betaS: number;
@@ -137,18 +145,107 @@ export interface StmResult {
 
 const PHI = 0.75;
 
-function bands(pts: Pt[], idxs: number[], axis: 'x' | 'y', Dp: number): { pos: number; idx: number[] }[] {
-  const key = (p: Pt) => (axis === 'x' ? p.y : p.x);
-  const order = idxs.map((i) => ({ v: key(pts[i]), i })).sort((a, b) => a.v - b.v);
-  const out: { pos: number; idx: number[] }[] = [];
-  for (const o of order) {
-    const last = out[out.length - 1];
-    if (last && Math.abs(o.v - last.pos) <= 0.5 * Dp) {
-      last.idx.push(o.i);
-      last.pos = (last.pos * (last.idx.length - 1) + o.v) / last.idx.length;
-    } else out.push({ pos: o.v, idx: [o.i] });
+/**
+ * Red de tirantes inferiores: pares de pilotes vecinos (grafo de Gabriel: ningún otro pilote dentro ni sobre el
+ * círculo de diámetro ij) más los lados del contorno convexo que no pasan por otro pilote.
+ */
+export function pileTieGraph(pts: Pt[]): [number, number][] {
+  const n = pts.length;
+  const out: [number, number][] = [];
+  const has = new Set<string>();
+  const add = (i: number, j: number) => { const k = i < j ? `${i}-${j}` : `${j}-${i}`; if (!has.has(k)) { has.add(k); out.push(i < j ? [i, j] : [j, i]); } };
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const mx = (pts[i].x + pts[j].x) / 2, my = (pts[i].y + pts[j].y) / 2;
+    const r = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) / 2;
+    if (r < 1e-9) continue;
+    if (!pts.some((q, k) => k !== i && k !== j && Math.hypot(q.x - mx, q.y - my) <= r * (1 + 1e-6))) add(i, j);
+  }
+  // contorno convexo (envolvente de los pilotes)
+  if (n >= 3) {
+    const idx = pts.map((_, i) => i).sort((p, q) => pts[p].x - pts[q].x || pts[p].y - pts[q].y);
+    const cross = (o: number, a: number, b: number) => (pts[a].x - pts[o].x) * (pts[b].y - pts[o].y) - (pts[a].y - pts[o].y) * (pts[b].x - pts[o].x);
+    const lower: number[] = [], upper: number[] = [];
+    for (const i of idx) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], i) <= 1e-12) lower.pop(); lower.push(i); }
+    for (const i of [...idx].reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], i) <= 1e-12) upper.pop(); upper.push(i); }
+    const hull = [...lower.slice(0, -1), ...upper.slice(0, -1)];
+    for (let h = 0; h < hull.length; h++) {
+      const i = hull[h], j = hull[(h + 1) % hull.length];
+      const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y, L2 = dx * dx + dy * dy;
+      const through = pts.some((q, k) => {
+        if (k === i || k === j) return false;
+        const t = ((q.x - pts[i].x) * dx + (q.y - pts[i].y) * dy) / L2;
+        return t > 1e-6 && t < 1 - 1e-6 && Math.abs((q.x - pts[i].x) * dy - (q.y - pts[i].y) * dx) / Math.sqrt(L2) < 1e-6;
+      });
+      if (!through) add(i, j);
+    }
+  }
+  // rigidez: se agregan las barras más cortas (sin cruzar otras ni pasar por un pilote) hasta tener 2n − 3 barras
+  // independientes; sin ellas un anillo es un mecanismo y no equilibra empujes no radiales
+  const collinear = n < 3 || pts.every((q) => Math.abs((pts[1].x - pts[0].x) * (q.y - pts[0].y) - (pts[1].y - pts[0].y) * (q.x - pts[0].x)) < 1e-9);
+  const target = collinear ? Math.max(n - 1, 0) : 2 * n - 3;
+  const rowsOf = (i: number, j: number) => {
+    const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y, L = Math.hypot(dx, dy) || 1;
+    const r = new Array(2 * n).fill(0);
+    r[2 * i] = -dx / L; r[2 * i + 1] = -dy / L; r[2 * j] = dx / L; r[2 * j + 1] = dy / L;
+    return r;
+  };
+  // base ortogonalizada (Gram–Schmidt) de las filas de la matriz de compatibilidad
+  const basis: number[][] = [];
+  const tryAdd = (r: number[]) => {
+    const v = [...r];
+    for (const b of basis) { const d = v.reduce((acc, x, k) => acc + x * b[k], 0); for (let k = 0; k < v.length; k++) v[k] -= d * b[k]; }
+    const nv = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0));
+    if (nv < 1e-7) return false;
+    basis.push(v.map((x) => x / nv));
+    return true;
+  };
+  for (const [i, j] of out) tryAdd(rowsOf(i, j));
+  if (basis.length < target) {
+    const segX = (p1: Pt, p2: Pt, p3: Pt, p4: Pt) => {
+      const d = (a: Pt, b: Pt, c: Pt) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+      return d(p1, p2, p3) * d(p1, p2, p4) < -1e-12 && d(p3, p4, p1) * d(p3, p4, p2) < -1e-12;
+    };
+    const cand: [number, number, number][] = [];
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (!has.has(`${i}-${j}`)) cand.push([i, j, Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y)]);
+    cand.sort((p, q) => p[2] - q[2]);
+    for (const [i, j] of cand) {
+      if (basis.length >= target) break;
+      const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y, L2 = dx * dx + dy * dy;
+      const through = pts.some((q, k) => k !== i && k !== j && (() => { const t = ((q.x - pts[i].x) * dx + (q.y - pts[i].y) * dy) / L2; return t > 1e-6 && t < 1 - 1e-6 && Math.abs((q.x - pts[i].x) * dy - (q.y - pts[i].y) * dx) / Math.sqrt(L2) < 1e-6; })());
+      if (through || out.some(([a, b]) => a !== i && a !== j && b !== i && b !== j && segX(pts[i], pts[j], pts[a], pts[b]))) continue;
+      if (tryAdd(rowsOf(i, j))) add(i, j);
+    }
   }
   return out;
+}
+
+/** Fuerzas en barras horizontales entre nudos (F > 0 tracción) que equilibran las fuerzas F0 aplicadas a cada nudo; mínimo Σ L·F². */
+function planarTrussForces(nodes: Pt[], members: [number, number][], F0: { x: number; y: number }[]): { F: number[]; resid: number } {
+  const ne = members.length;
+  if (!ne) return { F: [], resid: Math.max(0, ...F0.map((f) => Math.hypot(f.x, f.y))) };
+  const u = members.map(([a, b]) => {
+    const dx = nodes[b].x - nodes[a].x, dy = nodes[b].y - nodes[a].y;
+    const L = Math.hypot(dx, dy) || 1;
+    return { ux: dx / L, uy: dy / L, L };
+  });
+  const rows: number[][] = [];
+  const rhs: number[] = [];
+  nodes.forEach((_, k) => {
+    rows.push(members.map(([a, b], e) => (a === k ? u[e].ux : b === k ? -u[e].ux : 0)));
+    rhs.push(-F0[k].x);
+    rows.push(members.map(([a, b], e) => (a === k ? u[e].uy : b === k ? -u[e].uy : 0)));
+    rhs.push(-F0[k].y);
+  });
+  const N = Array.from({ length: ne }, (_, p) => Array.from({ length: ne }, (_, q) => rows.reduce((acc, r) => acc + r[p] * r[q], 0) + (p === q ? 1e-9 * u[p].L : 0)));
+  const g = Array.from({ length: ne }, (_, p) => rows.reduce((acc, r, j) => acc + r[p] * rhs[j], 0));
+  const F = solveSym(N, g);
+  let resid = 0;
+  for (let k = 0; k < nodes.length; k++) {
+    const rx = rows[2 * k].reduce((acc, c, e) => acc + c * F[e], 0) - rhs[2 * k];
+    const ry = rows[2 * k + 1].reduce((acc, c, e) => acc + c * F[e], 0) - rhs[2 * k + 1];
+    resid = Math.max(resid, Math.hypot(rx, ry));
+  }
+  return { F, resid };
 }
 
 /** Resuelve M·x = b (M simétrica semidefinida) por eliminación con pivoteo; las ecuaciones dependientes se omiten. */
@@ -279,20 +376,8 @@ function topChordForces(cols: { x: number; y: number }[], H: { x: number; y: num
     if (!blocked) mem.push({ a, b, ux: dx / L, uy: dy / L });
   }
   if (!mem.length) return [];
-  // B·f = −H  (2 ecuaciones por nudo); mínimos cuadrados con regularización mínima
-  const rows: number[][] = [];
-  const rhs: number[] = [];
-  for (let k = 0; k < m; k++) {
-    rows.push(mem.map((e) => (e.a === k ? e.ux : e.b === k ? -e.ux : 0)));
-    rhs.push(-H[k].x);
-    rows.push(mem.map((e) => (e.a === k ? e.uy : e.b === k ? -e.uy : 0)));
-    rhs.push(-H[k].y);
-  }
-  const ne = mem.length;
-  const N = Array.from({ length: ne }, (_, p) => Array.from({ length: ne }, (_, q) => rows.reduce((acc, r) => acc + r[p] * r[q], 0) + (p === q ? 1e-9 : 0)));
-  const g = Array.from({ length: ne }, (_, p) => rows.reduce((acc, r, j) => acc + r[p] * rhs[j], 0));
-  const f = solveSym(N, g);
-  return mem.map((e, j) => ({ a: e.a, b: e.b, F: f[j] })).filter((q) => Math.abs(q.F) > 1e-6);
+  const { F } = planarTrussForces(cols, mem.map((e) => [e.a, e.b] as [number, number]), H);
+  return mem.map((e, j) => ({ a: e.a, b: e.b, F: F[j] })).filter((q) => Math.abs(q.F) > 1e-6);
 }
 
 export function stmDesign(a: StmArgs): StmResult {
@@ -332,7 +417,15 @@ export function stmDesign(a: StmArgs): StmResult {
     let alpha = allocateStm(a.pts, Rp, a.cols, Pn, uplift ? null : Mb, z0);
     if (!alpha) alpha = allocateStm(a.pts, Rp, a.cols, Pn, null, z0) ?? a.pts.map((_, i) => Pn.map((p) => (Rp[i] * p) / sumR));
     const A = alpha;
-    const lens = a.pts.map((q) => a.cols.map((c) => Math.hypot(q.x - c.x, q.y - c.y)));
+    // nudo superior de cada columna en el punto de aplicación de su resultante (e = M/P, dentro de la columna)
+    const nodes = a.cols.map((c, k) => {
+      const P = cb.cols[k].P;
+      if (uplift || P <= 1e-9) return { x: c.x, y: c.y };
+      const ex = Math.max(-c.wx / 2, Math.min(c.wx / 2, Mb[k].y / P));
+      const ey = Math.max(-c.wy / 2, Math.min(c.wy / 2, Mb[k].x / P));
+      return { x: c.x + ex, y: c.y + ey };
+    });
+    const lens = a.pts.map((q) => nodes.map((c) => Math.hypot(q.x - c.x, q.y - c.y)));
     // la profundidad del nodo superior (hidrostático) y el brazo z dependen entre sí: iteración
     let wt = aFlex;
     for (let it = 0; it < 12; it++) {
@@ -368,25 +461,25 @@ export function stmDesign(a: StmArgs): StmResult {
     // empuje horizontal de los puntales sobre cada nudo de pilote (positivo hacia afuera de la columna)
     const thrust = a.pts.map((q, i) => {
       let hx = 0, hy = 0;
-      a.cols.forEach((c, k) => { hx += (A[i][k] * (q.x - c.x)) / z; hy += (A[i][k] * (q.y - c.y)) / z; });
+      nodes.forEach((c, k) => { hx += (A[i][k] * (q.x - c.x)) / z; hy += (A[i][k] * (q.y - c.y)) / z; });
       return { hx, hy };
     });
 
     // cordones superiores: fuerza horizontal en los nudos de columna no equilibrada por el momento de la columna
     let topChords: StmTopChord[] = [];
     let unbalanced = 0;
-    const H = a.cols.map((c, k) => {
-      let hx = Mb[k].y / z, hy = Mb[k].x / z;
+    const H = nodes.map((c, k) => {
+      let hx = 0, hy = 0;
       a.pts.forEach((q, i) => { hx += (A[i][k] * (c.x - q.x)) / z; hy += (A[i][k] * (c.y - q.y)) / z; });
       return { x: hx, y: hy };
     });
     const balancedAlloc = uplift || m === 1 || Math.max(...H.map((q) => Math.hypot(q.x, q.y))) <= 1e-3 * Math.max(...Pn, 1);
     if (!balancedAlloc && m > 1) {
-      const f = topChordForces(a.cols, H);
+      const f = topChordForces(nodes, H);
       // fuerza residual (sin equilibrar) en los nudos
       const resid = H.map((h) => ({ ...h }));
       for (const e of f) {
-        const ca = a.cols[e.a], cbb = a.cols[e.b];
+        const ca = nodes[e.a], cbb = nodes[e.b];
         const L = Math.hypot(cbb.x - ca.x, cbb.y - ca.y);
         const ux = (cbb.x - ca.x) / L, uy = (cbb.y - ca.y) / L;
         resid[e.a].x += e.F * ux; resid[e.a].y += e.F * uy;
@@ -395,8 +488,8 @@ export function stmDesign(a: StmArgs): StmResult {
       unbalanced = Math.max(0, ...resid.map((r) => Math.hypot(r.x, r.y)));
       topChords = f.map((e) => {
         const ca = a.cols[e.a], cbb = a.cols[e.b];
-        const L = Math.hypot(cbb.x - ca.x, cbb.y - ca.y);
-        const ux = (cbb.x - ca.x) / L, uy = (cbb.y - ca.y) / L;
+        const L = Math.hypot(nodes[e.b].x - nodes[e.a].x, nodes[e.b].y - nodes[e.a].y);
+        const ux = (nodes[e.b].x - nodes[e.a].x) / L, uy = (nodes[e.b].y - nodes[e.a].y) / L;
         // ancho efectivo: la columna más ancha en dirección perpendicular al cordón más un peralte
         const wPerp = Math.max(...[ca, cbb].map((c) => Math.abs(uy) * c.wx + Math.abs(ux) * c.wy));
         const width = Math.min(wPerp + dMin, Math.max(a.rect.B, a.rect.L));
@@ -409,42 +502,36 @@ export function stmDesign(a: StmArgs): StmResult {
       });
     }
 
-    const idxAll = a.pts.map((_, i) => i).filter((i) => Rp[i] > 0 || true);
-    const mkTie = (axis: 'x' | 'y'): StmTie => {
-      const bs = bands(a.pts, idxAll, axis, a.Dp);
-      const asM = axis === 'x' ? a.asX : a.asY;
-      const dd = axis === 'x' ? a.dX : a.dY;
-      const co = (q: Pt) => (axis === 'x' ? q.x : q.y);
-      const out: StmBand[] = bs.map((b, kk) => {
-        const ids = [...b.idx].sort((p, q) => co(a.pts[p]) - co(a.pts[q]));
-        const hs = ids.map((i) => (axis === 'x' ? thrust[i].hx : thrust[i].hy));
-        let Tb = 0;
-        if (ids.length === 1) Tb = Math.abs(hs[0]);
-        else {
-          for (let j = 0; j < ids.length - 1; j++) {
-            const SL = hs.slice(0, j + 1).reduce((s, v) => s + v, 0);
-            const SR = hs.slice(j + 1).reduce((s, v) => s + v, 0);
-            Tb = Math.max(Tb, -SL, SR);
-          }
-        }
-        const gapPrev = kk > 0 ? b.pos - bs[kk - 1].pos : Infinity;
-        const gapNext = kk < bs.length - 1 ? bs[kk + 1].pos - b.pos : Infinity;
-        const w = Math.min(a.Dp + dd, Math.min(gapPrev, gapNext));
-        const asProv = asM * w; // cm² (asM en cm²/m, w en m)
-        const phiTn = PHI * (asProv / 1e4) * a.fy * 1000;
-        let c0 = co(a.pts[ids[0]]), c1 = co(a.pts[ids[ids.length - 1]]);
-        // banda de un solo pilote: el tirante (barras de la parrilla) se ancla hacia el interior del grupo
-        if (ids.length === 1 && Tb > 1e-6) {
-          const all = a.pts.map(co);
-          const other = hs[0] > 0 ? Math.min(...all) : Math.max(...all);
-          c0 = Math.min(c0, other);
-          c1 = Math.max(c1, other);
-        }
-        return { pos: b.pos, T: Tb, width: w, asProv, phiTn, ratio: Tb / Math.max(phiTn, 1e-9), x0: c0, x1: c1, idx: ids };
+    // tirantes inferiores: barras entre pilotes vecinos que equilibran el empuje de los puntales en cada nudo de pilote
+    const graph = pileTieGraph(a.pts);
+    const bt = planarTrussForces(a.pts, graph, thrust.map((t) => ({ x: t.hx, y: t.hy })));
+    unbalanced = Math.max(unbalanced, bt.resid);
+    const ties: StmBottomTie[] = graph.map(([i, j], e) => {
+      const dx = a.pts[j].x - a.pts[i].x, dy = a.pts[j].y - a.pts[i].y;
+      const L = Math.hypot(dx, dy);
+      const ux = dx / L, uy = dy / L;
+      // ancho de la banda: pilote + peralte, sin pasar de la distancia a los pilotes vecinos fuera del elemento
+      const dDir = a.dX * ux * ux + a.dY * uy * uy;
+      let sPerp = Infinity;
+      a.pts.forEach((q, k) => {
+        if (k === i || k === j) return;
+        const t = ((q.x - a.pts[i].x) * ux + (q.y - a.pts[i].y) * uy) / L;
+        if (t < -0.25 || t > 1.25) return;
+        const dp = Math.abs((q.x - a.pts[i].x) * uy - (q.y - a.pts[i].y) * ux);
+        if (dp > 0.25 * a.Dp) sPerp = Math.min(sPerp, dp);
       });
-      const T = out.reduce((s, o) => s + o.T, 0);
-      const AsReq = (T / (PHI * a.fy * 1000)) * 1e4;
-      return { axis, T, bands: out, AsReq, ratio: Math.max(...out.map((o) => o.ratio), 0) };
+      const width = Math.min(a.Dp + dDir, sPerp);
+      // parrilla ortogonal: acero efectivo en la dirección del tirante = asX·cos²θ + asY·sen²θ
+      const asProv = (a.asX * ux * ux + a.asY * uy * uy) * width;
+      const F = bt.F[e];
+      const cap = F >= 0 ? PHI * (asProv / 1e4) * a.fy * 1000 : PHI * fce * width * wtPile * 1000;
+      const t: StmBottomTie = { a: i, b: j, F, ux, uy, L, width, asProv, cap, ratio: Math.abs(F) / Math.max(cap, 1e-9), axis: Math.abs(ux) >= Math.abs(uy) ? 'x' : 'y' };
+      return t;
+    }).filter((t) => Math.abs(t.F) > 1e-6 * Math.max(sumR, 1));
+    const mkTie = (axis: 'x' | 'y'): StmTie => {
+      const members = ties.map((t, e) => (t.axis === axis ? e : -1)).filter((e) => e >= 0);
+      const T = members.reduce((acc, e) => acc + Math.max(ties[e].F, 0), 0);
+      return { axis, T, members, AsReq: (T / (PHI * a.fy * 1000)) * 1e4, ratio: Math.max(0, ...members.map((e) => ties[e].ratio)) };
     };
     const tieX = mkTie('x');
     const tieY = mkTie('y');
@@ -454,8 +541,8 @@ export function stmDesign(a: StmArgs): StmResult {
     const ratioTie = Math.max(tieX.ratio, tieY.ratio);
     const ratioTop = Math.max(0, ...topChords.map((t) => t.ratio));
     const res: StmResult = {
-      combo: cb.name, zx: z, zy: z, z, ax: aFlex, ay: wt, hTie, hNode, struts, tieX, tieY,
-      cols: a.cols.map((c, k) => ({ name: c.name, x: c.x, y: c.y, P: cb.cols[k].P })), thrust, topChords, balanced: balancedAlloc || m === 1, unbalanced,
+      combo: cb.name, zx: z, zy: z, z, ax: aFlex, ay: wt, hTie, hNode, struts, ties, tieX, tieY,
+      cols: a.cols.map((c, k) => ({ name: c.name, x: c.x, y: c.y, P: cb.cols[k].P, nx: nodes[k].x, ny: nodes[k].y })), thrust, topChords, balanced: balancedAlloc || m === 1, unbalanced,
       fce, betaS, betaNPile, nodeColLimit, nodePileLimit,
       ratioStrut, ratioNodeCol, ratioNodePile, ratioTie, ratioTop, ratio: Math.max(ratioStrut, ratioNodeCol, ratioNodePile, ratioTie, ratioTop), uplift, aOverD: 0, deep: false,
     };
@@ -464,8 +551,8 @@ export function stmDesign(a: StmArgs): StmResult {
   if (!best) {
     const z0 = dMin - aFlex / 2;
     return {
-      combo: '—', zx: z0, zy: z0, z: z0, ax: aFlex, ay: aFlex, hTie, hNode: hTie + z0, struts: [], tieX: { axis: 'x', T: 0, bands: [], AsReq: 0, ratio: 0 }, tieY: { axis: 'y', T: 0, bands: [], AsReq: 0, ratio: 0 },
-      cols: a.cols.map((c) => ({ name: c.name, x: c.x, y: c.y, P: 0 })), thrust: a.pts.map(() => ({ hx: 0, hy: 0 })), topChords: [], balanced: true, unbalanced: 0,
+      combo: '—', zx: z0, zy: z0, z: z0, ax: aFlex, ay: aFlex, hTie, hNode: hTie + z0, struts: [], ties: [], tieX: { axis: 'x', T: 0, members: [], AsReq: 0, ratio: 0 }, tieY: { axis: 'y', T: 0, members: [], AsReq: 0, ratio: 0 },
+      cols: a.cols.map((c) => ({ name: c.name, x: c.x, y: c.y, P: 0, nx: c.x, ny: c.y })), thrust: a.pts.map(() => ({ hx: 0, hy: 0 })), topChords: [], balanced: true, unbalanced: 0,
       fce, betaS, betaNPile, nodeColLimit, nodePileLimit, ratioStrut: 0, ratioNodeCol: 0, ratioNodePile: 0, ratioTie: 0, ratioTop: 0, ratio: 0, uplift: false, aOverD: 0, deep: false,
     };
   }

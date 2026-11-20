@@ -224,7 +224,7 @@ export function pileStmElevationSvg(inp: PileInput, res: PileResults, o: { axis:
   const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
   // puntales: uno por columna y grupo de pilotes proyectados
   stm.cols.forEach((c, k) => {
-    const nodeTop = { x: X(co(c)), y: Y(zN) };
+    const nodeTop = { x: X(co({ x: c.nx, y: c.ny })), y: Y(zN) };
     for (const gr of groups.values()) {
       const sts = stm.struts.filter((q) => q.k === k && gr.idx.includes(q.i));
       if (!sts.length) continue;
@@ -273,21 +273,21 @@ export function pileStmPlanSvg(inp: PileInput, res: PileResults, o: { W?: number
   const view = makePlanView(pilePlanPoints(inp, res), W, H, 70);
   let g = `<polygon points="${pathOf(res, view)}" fill="${th.concrete}" fill-opacity="0.3" stroke="${th.concreteStroke}" stroke-width="2" stroke-linejoin="round"/>`;
   const maxC = Math.max(...stm.struts.map((q) => q.C), 1);
-  // tirantes
-  for (const t of [stm.tieX, stm.tieY]) {
-    for (const b of t.bands) {
-      if (b.x1 - b.x0 < 1e-6 || b.T < 1e-3) continue;
-      const p1 = t.axis === 'x' ? view.toSvg(b.x0, b.pos) : view.toSvg(b.pos, b.x0);
-      const p2 = t.axis === 'x' ? view.toSvg(b.x1, b.pos) : view.toSvg(b.pos, b.x1);
-      const col = b.ratio > 1 ? th.bad : th.rebar;
-      g += line(p1.x, p1.y, p2.x, p2.y, col, 3.2);
-      g += text((p1.x + p2.x) / 2 + (t.axis === 'y' ? -8 : 0), (p1.y + p2.y) / 2 - 8, `T ${t.axis} = ${o.fmt.n('force', b.T, 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg, rotate: t.axis === 'y' ? -90 : 0 });
-    }
+  // tirantes inferiores entre pilotes
+  for (const t of stm.ties) {
+    const p1 = view.toSvg(res.pts[t.a].x, res.pts[t.a].y), p2 = view.toSvg(res.pts[t.b].x, res.pts[t.b].y);
+    const tens = t.F > 0;
+    const col = t.ratio > 1 ? th.bad : tens ? th.rebar : th.concreteStroke;
+    g += line(p1.x, p1.y, p2.x, p2.y, col, 3.2, tens ? undefined : '8 5');
+    let ang = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+    if (ang > 90) ang -= 180;
+    if (ang < -90) ang += 180;
+    g += text((p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 7, `${tens ? 'T' : 'C'} = ${o.fmt.n('force', Math.abs(t.F), 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg, rotate: ang });
   }
   // puntales
   stm.struts.forEach((st) => {
     const c = stm.cols[st.k];
-    const cs = view.toSvg(c.x, c.y);
+    const cs = view.toSvg(c.nx, c.ny);
     const q = res.pts[st.i];
     const p = view.toSvg(q.x, q.y);
     const col = st.ratio > 1 ? th.bad : th.concreteStroke;
@@ -296,7 +296,7 @@ export function pileStmPlanSvg(inp: PileInput, res: PileResults, o: { W?: number
   });
   // cordones superiores
   for (const tc of stm.topChords) {
-    const A = view.toSvg(stm.cols[tc.a].x, stm.cols[tc.a].y), B = view.toSvg(stm.cols[tc.b].x, stm.cols[tc.b].y);
+    const A = view.toSvg(stm.cols[tc.a].nx, stm.cols[tc.a].ny), B = view.toSvg(stm.cols[tc.b].nx, stm.cols[tc.b].ny);
     const col = tc.ratio > 1 ? th.bad : tc.F > 0 ? th.rebar : th.concreteStroke;
     g += line(A.x, A.y, B.x, B.y, col, 3.4, tc.F > 0 ? undefined : '10 5');
     g += text((A.x + B.x) / 2, (A.y + B.y) / 2 + 16, `${tc.F > 0 ? 'T' : 'C'} sup. = ${o.fmt.n('force', Math.abs(tc.F), 0)}`, { size: 11, fill: col, weight: 700, anchor: 'middle', halo: th.bg });

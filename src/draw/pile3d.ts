@@ -110,25 +110,23 @@ export function pileStm3dSvg(inp: PileInput, res: PileResults, o: { W?: number; 
   const labelMin = stm.struts.length > 12 ? 0.35 * maxC : 0;
   // puntales
   for (const st of stm.struts) {
-    const c = stm.cols[st.k], q = res.pts[st.i];
+    const c0 = stm.cols[st.k], q = res.pts[st.i];
+    const c = { x: c0.nx, y: c0.ny };
     const col = st.ratio > 1 ? over : strutCol;
     seg({ x: c.x, y: c.y, z: zN }, { x: q.x, y: q.y, z: zT }, col, 1.8 + (6 * st.C) / maxC, 'stroke-opacity="0.9"');
     if (labels && st.C >= labelMin) label({ x: c.x + 0.55 * (q.x - c.x), y: c.y + 0.55 * (q.y - c.y), z: zN + 0.55 * (zT - zN) }, o.fmt.n('force', st.C, 0), col, 10.5);
   }
-  // tirantes inferiores por banda
-  for (const t of [stm.tieX, stm.tieY]) {
-    for (const bd of t.bands) {
-      if (bd.T < 1e-3 || bd.x1 - bd.x0 < 1e-6) continue;
-      const p1 = t.axis === 'x' ? { x: bd.x0, y: bd.pos, z: zT } : { x: bd.pos, y: bd.x0, z: zT };
-      const p2 = t.axis === 'x' ? { x: bd.x1, y: bd.pos, z: zT } : { x: bd.pos, y: bd.x1, z: zT };
-      const col = bd.ratio > 1 ? over : th.rebar;
-      seg(p1, p2, col, 3.4, '', -0.01);
-      if (labels) label({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2, z: zT }, `T${t.axis} ${o.fmt.n('force', bd.T, 0)}`, col, 11, 700);
-    }
+  // tirantes inferiores entre pilotes (en compresión: puntal inferior, discontinuo)
+  for (const t of stm.ties) {
+    const p1 = { x: res.pts[t.a].x, y: res.pts[t.a].y, z: zT }, p2 = { x: res.pts[t.b].x, y: res.pts[t.b].y, z: zT };
+    const tens = t.F > 0;
+    const col = t.ratio > 1 ? over : tens ? th.rebar : strutCol;
+    seg(p1, p2, col, 3.4, tens ? '' : 'stroke-dasharray="8 5"', -0.01);
+    if (labels) label({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2, z: zT }, `${tens ? 'T' : 'C'} ${o.fmt.n('force', Math.abs(t.F), 0)}`, col, 11, 700);
   }
   // cordones superiores entre columnas
   for (const tc of stm.topChords) {
-    const A = stm.cols[tc.a], B = stm.cols[tc.b];
+    const A = { x: stm.cols[tc.a].nx, y: stm.cols[tc.a].ny }, B = { x: stm.cols[tc.b].nx, y: stm.cols[tc.b].ny };
     const tens = tc.F > 0;
     const col = tc.ratio > 1 ? over : tens ? th.rebar : strutCol;
     seg({ x: A.x, y: A.y, z: zN }, { x: B.x, y: B.y, z: zN }, col, 3.2, tens ? '' : 'stroke-dasharray="8 5"', -0.01);
@@ -140,7 +138,7 @@ export function pileStm3dSvg(inp: PileInput, res: PileResults, o: { W?: number; 
     if (labels) label({ x: q.x, y: q.y, z: -0.35 * pileStub }, `P${i + 1}`, th.muted, 10.5, 700);
   });
   stm.cols.forEach((c) => {
-    dot({ x: c.x, y: c.y, z: zN }, 5.5, th.ink, th.bg);
+    dot({ x: c.nx, y: c.ny, z: zN }, 5.5, th.ink, th.bg);
     if (labels) label({ x: c.x, y: c.y, z: h + colH + 0.08 }, `${c.name} · Pu ${o.fmt.n('force', c.P, 0)}`, th.ink, 11, 700);
   });
 
@@ -160,7 +158,7 @@ export function pileStm3dSvg(inp: PileInput, res: PileResults, o: { W?: number; 
     g += `<text x="12" y="20" font-size="12.5" fill="${th.muted}">${esc(`Modelo 3D de puntales y tirantes — ${stm.combo}${stm.deep ? '' : ' (cabezal no profundo: informativo)'}`)}</text>`;
     const lg = (x: number, col: string, dash: string, t: string) => `<line x1="${x}" y1="${H - 18}" x2="${x + 26}" y2="${H - 18}" stroke="${col}" stroke-width="3.4" ${dash}/><text x="${x + 32}" y="${H - 14}" font-size="11" fill="${th.ink}">${t}</text>`;
     g += lg(12, strutCol, '', 'Puntal (compresión)') + lg(170, th.rebar, '', 'Tirante (tracción)') + lg(318, over, '', 'Sobreesforzado (relación > 1)');
-    if (stm.topChords.length) g += lg(540, strutCol, 'stroke-dasharray="8 5"', 'Cordón superior en compresión');
+    if (stm.topChords.length || stm.ties.some((t) => t.F < 0)) g += lg(540, strutCol, 'stroke-dasharray="8 5"', 'Puntal horizontal (cordón)');
   }
   return svgWrap(W, H, g, th.bg);
 }

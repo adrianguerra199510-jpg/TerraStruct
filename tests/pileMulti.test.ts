@@ -121,28 +121,61 @@ describe('puntales y tirantes con varias columnas', () => {
     expect(r.stm!.topChords[0].cap).toBeGreaterThan(0);
   });
 
-  it('3 pilotes en triángulo: el tirante de la fila inferior equilibra el empuje de sus nudos', () => {
+  it('3 pilotes en triángulo: tirantes en los tres lados, T = R·s/(3z) (modelo clásico)', () => {
     const inp = defaultPileInput();
     inp.layout = standardLayout(3, 1.5);
     inp.combos = inp.combos.map((c) => ({ ...c, Vx: 0, Vy: 0, Mx: 0, My: 0 }));
     const r = analyzePile(inp);
     const s = r.stm!;
-    const bottom = s.tieX.bands.find((b) => b.idx.length === 2)!;
-    const R = s.struts.find((q) => q.i === bottom.idx[0])!.R;
-    expect(bottom.T).toBeCloseTo((R * 0.75) / s.z, 6);
-    // el pilote del vértice no tiene empuje en X
-    const apex = s.tieX.bands.find((b) => b.idx.length === 1)!;
-    expect(apex.T).toBeCloseTo(0, 6);
+    expect(s.ties.length).toBe(3);
+    const R = s.struts[0].R;
+    for (const t of s.ties) {
+      expect(t.F).toBeCloseTo((R * 1.5) / (3 * s.z), 4);
+      // cada tirante une dos pilotes
+      expect(t.a).not.toBe(t.b);
+    }
+    expect(s.unbalanced).toBeLessThan(1e-3);
   });
 
-  it('el 2×2 simétrico conserva el tirante clásico T = R·a/z por banda', () => {
+  it('el 2×2 simétrico conserva el tirante clásico T = R·a/z en cada lado', () => {
     const inp = defaultPileInput();
     inp.combos = inp.combos.map((c) => ({ ...c, Vx: 0, Vy: 0, Mx: 0, My: 0 }));
     const r = analyzePile(inp);
     const s = r.stm!;
     const R = s.struts[0].R;
-    for (const b of s.tieX.bands) expect(b.T).toBeCloseTo((R * 0.75) / s.z, 6);
-    expect(s.tieX.T).toBeCloseTo((2 * R * 0.75) / s.z, 6);
+    expect(s.ties.length).toBe(4);
+    for (const t of s.ties) expect(t.F).toBeCloseTo((R * 0.75) / s.z, 4);
+    expect(s.tieX.T).toBeCloseTo((2 * R * 0.75) / s.z, 4);
+  });
+
+  it('anillo de 6 pilotes con una columna: tirantes perimetrales en equilibrio, también con momento', () => {
+    for (const My of [0, 300]) {
+      const inp = defaultPileInput();
+      inp.layout = { ...inp.layout, mode: 'ring', nRing: 6, R: 1.5, center: false };
+      inp.cap.shape = 'circle';
+      inp.cap.h = 1.2;
+      inp.combos = inp.combos.map((c) => ({ ...c, Vx: 0, Vy: 0, Mx: 0, My: c.kind === 'ultimate' ? My : 0 }));
+      const r = analyzePile(inp);
+      const s = r.stm!;
+      // perímetro de 6 lados; con momento aparecen diagonales interiores (red rígida) con fuerzas pequeñas
+      if (My === 0) expect(s.ties.length).toBe(6);
+      else expect(s.ties.filter((t) => Math.abs(t.F) > 0.05 * Math.max(...s.ties.map((q) => q.F))).length).toBe(6);
+      expect(s.unbalanced).toBeLessThan(1e-3 * Math.max(...s.struts.map((q) => q.R)));
+      // equilibrio horizontal de cada nudo de pilote
+      r.pts.forEach((_, i) => {
+        let fx = s.thrust[i].hx, fy = s.thrust[i].hy;
+        for (const t of s.ties) {
+          if (t.a === i) { fx += t.F * t.ux; fy += t.F * t.uy; }
+          if (t.b === i) { fx -= t.F * t.ux; fy -= t.F * t.uy; }
+        }
+        expect(Math.hypot(fx, fy)).toBeLessThan(1e-3);
+      });
+      if (My === 0) {
+        // simétrico: todos los lados con la misma tracción T = R·R_anillo/z (hexágono)
+        const R = s.struts[0].R;
+        for (const t of s.ties) expect(t.F).toBeCloseTo((R * 1.5) / s.z, 3);
+      }
+    }
   });
 });
 
