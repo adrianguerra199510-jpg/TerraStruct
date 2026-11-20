@@ -95,7 +95,12 @@ export function normalizeFooting(raw: any): FootingInput {
 
 export function normalizePile(raw: any): PileInput {
   const k: PileKind = raw?.pile?.kind ?? 'concrete';
-  return deepMerge(defaultPileInput(k), raw);
+  const base = defaultPileInput(k);
+  const out = deepMerge(base, raw);
+  out.moreColumns = Array.isArray(raw?.moreColumns)
+    ? raw.moreColumns.map((c: any, i: number) => deepMerge({ id: 'c' + (i + 2), name: 'C' + (i + 2), geom: base.column.geom, x: 0, y: 0 }, c))
+    : [];
+  return out;
 }
 
 /** Ajusta espesor y barra del cabezal para que el ejemplo cumpla. */
@@ -173,6 +178,32 @@ export function examplePiles(): { title: string; desc: string; make: () => PileI
         i.cap.preset = { ...i.cap.preset, B: 4, L: 4, t1: 1.6, t2: 1.6 };
         i.column = { ...i.column, x: -0.9, y: -0.9 };
         i.combos = i.combos.map((c) => ({ ...c, P: c.P * 0.45, My: c.My * 0.3, Vx: c.Vx * 0.3 }));
+        return i;
+      },
+    },
+    {
+      title: 'Cabezal corrido de 3 columnas',
+      desc: '10 pilotes en dos filas bajo tres columnas alineadas, con sismo en X.',
+      make: () => {
+        const i = defaultPileInput('concrete');
+        i.name = 'Cabezal CP-3C';
+        i.layout = { ...i.layout, mode: 'grid', nx: 5, ny: 2, sx: 1.5, sy: 1.5 };
+        i.cap.edge = 0.9;
+        i.cap.h = 1.1;
+        i.cap.topSteel = true;
+        i.column = { ...i.column, name: 'C1', x: -3, y: 0 };
+        i.moreColumns = [
+          { id: 'c2', name: 'C2', geom: { ...i.column.geom }, x: 0, y: 0 },
+          { id: 'c3', name: 'C3', geom: { ...i.column.geom }, x: 3, y: 0 },
+        ];
+        const L = (P: number, Vx = 0, My = 0) => ({ P, Vx, Vy: 0, Mx: 0, My });
+        i.combos = [
+          { id: 'S1', name: 'D + L', kind: 'service', ...L(900), qaFactor: 1, extra: { c2: L(1400), c3: L(900) } },
+          { id: 'S2', name: 'D + 0.7E', kind: 'service', ...L(650, 40, 80), qaFactor: 1.33, eq: true, extra: { c2: L(1000, 60, 120), c3: L(650, 40, 80) } },
+          { id: 'U1', name: '1.2D + 1.6L', kind: 'ultimate', ...L(1250), qaFactor: 1, extra: { c2: L(1950), c3: L(1250) } },
+          { id: 'U2', name: '1.2D + L + E', kind: 'ultimate', ...L(1050, 60, 120), qaFactor: 1, eq: true, extra: { c2: L(1600, 90, 180), c3: L(1050, 60, 120) } },
+          { id: 'U3', name: '0.9D + E', kind: 'ultimate', ...L(450, 60, 120), qaFactor: 1, eq: true, extra: { c2: L(700, 90, 180), c3: L(450, 60, 120) } },
+        ];
         return i;
       },
     },

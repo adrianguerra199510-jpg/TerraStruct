@@ -3,7 +3,7 @@ import { Pt, Poly, bbox, convexHull, offsetConvex, perimeter, pointInPolygon, po
 import { columnPoly } from './shapes';
 import { chooseSpacing, findBar, developmentLength, hookDevelopment, barList, Detailing } from './materials';
 import { flexureAs, flexureCapacity, oneWayVc, punchingVc, rhoMinSlab, PHI_FLEX, PHI_SHEAR } from './concrete';
-import { PileInput, PileCombo, PileDef, SoilLayer, pilePositions, standardLayout } from './pileTypes';
+import { PileInput, PileCombo, PileDef, SoilLayer, pilePositions, standardLayout, capColumns, comboColumnLoads, comboResultant } from './pileTypes';
 import { capGeometry, lineSpan } from './pileCap';
 import { stmDesign, StmResult } from './pileSTM';
 import { liquefaction, settlement, groupLateral, effectiveStressProfile, layerIndexAt, LiqResult, SettleResult, GroupLateral } from './pileExtra';
@@ -289,6 +289,8 @@ export interface CapPunch {
   vc: { vcA: number; vcB: number; vcC: number };
   beta: number;
   alphaS: number;
+  /** columna(s) del perímetro crítico */
+  label: string;
 }
 export interface PilePunch {
   i: number;
@@ -351,6 +353,10 @@ export interface PileResults {
   shearX?: CapShear;
   shearY?: CapShear;
   punch?: CapPunch;
+  /** punzonamiento por columna (o grupo de columnas con perímetros solapados) */
+  punches: CapPunch[];
+  /** columnas sobre el cabezal (contorno y centroide) */
+  cols: { name: string; x: number; y: number; poly: Poly }[];
   pilePunch: PilePunch[];
   stm?: StmResult;
   tension: TensionResult;
@@ -379,6 +385,28 @@ function distToEdges(pt: Pt, poly: Pt[]): number {
 const sdistPoly = (pt: Pt, poly: Pt[]) => (pointInPolygon(pt, poly) ? -distToEdges(pt, poly) : distToEdges(pt, poly));
 const sdist = (pt: Pt, poly: Pt[]) => (pointInPolygon(pt, poly) ? -distToEdges(pt, poly) : distToEdges(pt, poly));
 
+/** Distancia mínima entre dos polígonos (0 si se tocan o se solapan). */
+function polyGap(a: Pt[], b: Pt[]): number {
+  if (a.some((v) => pointInPolygon(v, b)) || b.some((v) => pointInPolygon(v, a))) return 0;
+  return Math.min(...a.map((v) => distToEdges(v, b)), ...b.map((v) => distToEdges(v, a)));
+}
+
+/** Punto del contorno a la fracción t ∈ [0, 1) del perímetro. */
+function pointOnPerimeter(poly: Pt[], t: number): Pt {
+  const L = perimeter(poly);
+  let target = t * L;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    if (target <= l || i === poly.length - 1) {
+      const f = l > 0 ? Math.min(target / l, 1) : 0;
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+    }
+    target -= l;
+  }
+  return poly[0];
+}
+
 export function analyzePile(inp: PileInput): PileResults {
   const p = inp.pile;
   const cap = inp.cap;
@@ -396,19 +424,22 @@ export function analyzePile(inp: PileInput): PileResults {
   const Eg = groupEfficiency(inp, props.Dp);
   const QaCeff = geo.QaC * (inp.geo.groupEff && Eg.applicable ? Eg.Eg : 1);
   const fcap = { x: geom.cx, y: geom.cy };
-  const col = inp.column;
-  const colPoly = columnPoly(col.geom, col.x, col.y);
-  const cbb = bbox(colPoly);
+  const cols = capColumns(inp).map((c) => {
+    const poly = columnPoly(c.geom, c.x, c.y);
+    return { ...c, poly, bb: bbox(poly), pp: polyProps(poly) };
+  });
+  const multi = cols.length > 1;
+  const colPoly = cols[0].poly;
+  const cbb = cols[0].bb;
 
   // ---------- reacciones por combinación
   const combine = (cb: PileCombo): ComboRes => {
-    const Mxb = cb.Mx + cb.Vy * cap.h;
-    const Myb = cb.My + cb.Vx * cap.h;
-    const Pt0 = cb.P + Wcap;
-    const sol = solveReactions(pts, Pt0, cb.P * col.x + Myb + Wcap * fcap.x, cb.P * col.y + Mxb + Wcap * fcap.y);
-    const H = Math.hypot(cb.Vx, cb.Vy);
+    const rs = comboResultant(inp, cb, cap.h);
+    const Pt0 = rs.P + Wcap;
+    const sol = solveReactions(pts, Pt0, rs.Qx + Wcap * fcap.x, rs.Qy + Wcap * fcap.y);
+    const H = Math.hypot(rs.Vx, rs.Vy);
     // reparto lateral con efecto de grupo: mismo desplazamiento en todos los pilotes, rigidez ∝ (p·nh)^0.6
-    const gl = groupLateral(pts, props.Dp, cb.Vx, cb.Vy);
+    const gl = groupLateral(pts, props.Dp, rs.Vx, rs.Vy);
     const wts = gl.pm.map((m) => Math.pow(m, 0.6));
     const sw = wts.reduce((a, b) => a + b, 0) || 1;
     const Hi = wts.map((w) => (H * w) / sw);
@@ -422,7 +453,7 @@ export function analyzePile(inp: PileInput): PileResults {
     const Rmin = n ? Math.min(...R) : 0;
     const qf = cb.kind === 'service' ? cb.qaFactor : 1;
     return {
-      combo: cb, Pcol: cb.P, Ptot: Pt0, R, Rmax, Rmin, H, Hpile, unresolved: sol.unresolved,
+      combo: cb, Pcol: rs.P, Ptot: Pt0, R, Rmax, Rmin, H, Hpile, unresolved: sol.unresolved,
       ratioC: Rmax / Math.max(QaCeff * qf, 1e-9), ratioT: Math.max(-Rmin, 0) / Math.max(geo.QaT * qf, 1e-9),
       lat: latC, pm: gl.pm, Hi, Mmax: latC.M,
     };
@@ -464,7 +495,18 @@ export function analyzePile(inp: PileInput): PileResults {
 
   // ---------- reacciones del peso propio del cabezal (para la parte estructural del pilote)
   const rw = solveReactions(pts, Wcap, Wcap * fcap.x, Wcap * fcap.y).R;
-  const rc = (cb: PileCombo) => solveReactions(pts, cb.P, cb.P * col.x + cb.My + cb.Vx * cap.h, cb.P * col.y + cb.Mx + cb.Vy * cap.h).R;
+  const rc = (cb: PileCombo) => {
+    const rs = comboResultant(inp, cb, cap.h);
+    return solveReactions(pts, rs.P, rs.Qx, rs.Qy).R;
+  };
+  // columnas dentro del cabezal y sin solaparse
+  if (multi) {
+    const outC = cols.filter((c) => c.poly.some((v) => !pointInPolygon(v, capPoly) && distToEdges(v, capPoly) > 1e-6));
+    checks.push({ name: 'Cabezal · columnas dentro del contorno', ratio: outC.length ? 1.5 : 0.5, ok: !outC.length, detail: outC.length ? `${outC.map((c) => c.name).join(', ')} sobresale(n) del cabezal` : `${cols.length} columnas apoyadas dentro del contorno` });
+    for (let a = 0; a < cols.length; a++) for (let b = a + 1; b < cols.length; b++) {
+      if (polyGap(cols[a].poly, cols[b].poly) <= 1e-6) warnings.push(`Las columnas ${cols[a].name} y ${cols[b].name} se tocan o se solapan: revise sus posiciones.`);
+    }
+  }
   for (const u of ultimate) {
     const Rc = rc(u.combo);
     const mx = Rc.map((v, i) => v + 1.2 * (rw[i] ?? 0));
@@ -531,42 +573,75 @@ export function analyzePile(inp: PileInput): PileResults {
 
   const cpp0 = polyProps(colPoly);
   type Side = 'pos' | 'neg';
+  const ultLoads = ultimate.map((u) => ({ name: u.combo.name, R: rc(u.combo), L: comboColumnLoads(inp, u.combo) }));
   const dir = (axis: 'x' | 'y') => {
     const bar = axis === 'x' ? bX : bY;
     const d = axis === 'x' ? dX : dY;
     const chordAt = (v: number) => Math.max(chordLength(capPoly, axis === 'x' ? 'x' : 'y', v), 0.25);
-    const c0 = axis === 'x' ? cbb.xmin : cbb.ymin;
-    const c1 = axis === 'x' ? cbb.xmax : cbb.ymax;
-    const colC = axis === 'x' ? cpp0.cx : cpp0.cx;
-    void colC;
-    const span = axis === 'x' ? lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx) : lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy);
-    const lo = span[0];
-    const hi = span[1];
     const coord = (q: Pt) => (axis === 'x' ? q.x : q.y);
+    const ext = cols.map((c) => ({ c0: axis === 'x' ? c.bb.xmin : c.bb.ymin, c1: axis === 'x' ? c.bb.xmax : c.bb.ymax, cc: axis === 'x' ? c.x : c.y, perp: axis === 'x' ? c.y : c.x }));
+    const c0 = ext[0].c0;
+    const c1 = ext[0].c1;
+    // desarrollo: desde la cara de la columna extrema de cada lado hasta el borde, sobre la recta que pasa por ella
+    const kHi = ext.reduce((b, e, k) => (e.c1 > ext[b].c1 ? k : b), 0);
+    const kLo = ext.reduce((b, e, k) => (e.c0 < ext[b].c0 ? k : b), 0);
+    const spanHi = axis === 'x' ? lineSpan(capPoly, 'x', ext[kHi].perp, ext[kHi].cc) : lineSpan(capPoly, 'y', ext[kHi].perp, ext[kHi].cc);
+    const spanLo = axis === 'x' ? lineSpan(capPoly, 'x', ext[kLo].perp, ext[kLo].cc) : lineSpan(capPoly, 'y', ext[kLo].perp, ext[kLo].cc);
+    const lo = spanLo[0];
+    const hi = spanHi[1];
+    const insideCol = (v: number) => ext.some((e) => v > e.c0 + 1e-9 && v < e.c1 - 1e-9);
+    /** momento (positivo = tracción inferior) y cortante del cuerpo libre más allá de la abscisa v, del lado indicado */
+    const cut = (R: number[], L: ReturnType<typeof comboColumnLoads>, v: number, sign: number, smear: (arm: number) => number) => {
+      let M = 0, V = 0;
+      for (let i = 0; i < n; i++) {
+        const arm = sign * (coord(pts[i]) - v);
+        const f = smear(arm);
+        M += R[i] * f * arm;
+        V += R[i] * f;
+      }
+      ext.forEach((e, k) => {
+        const arm = sign * (e.cc - v);
+        if (arm <= 1e-9) return;
+        const Mb = axis === 'x' ? L[k].My + L[k].Vx * cap.h : L[k].Mx + L[k].Vy * cap.h;
+        M -= L[k].P * arm + sign * Mb;
+        V -= L[k].P;
+      });
+      return { M, V };
+    };
+    const smearM = (arm: number) => clamp01(arm / props.Dp + 0.5);
+    // secciones: caras de cada columna; con varias columnas, además, un barrido entre los extremos del cabezal
+    const sections: { v: number; sign: number }[] = ext.flatMap((e) => [{ v: e.c1, sign: 1 }, { v: e.c0, sign: -1 }]);
+    if (multi) {
+      const r0 = axis === 'x' ? rect.x0 : rect.y0, r1 = axis === 'x' ? rect.x1 : rect.y1;
+      for (let k = 1; k < 80; k++) {
+        const v = r0 + ((r1 - r0) * k) / 80;
+        if (!insideCol(v)) sections.push({ v, sign: 1 }, { v, sign: -1 });
+      }
+    }
     let Mpos = 0, Mneg = 0, xsPos = c1;
     let Vu = 0, comboV = ultimate[0]?.combo.name ?? '', xsV = 0;
     let bV = chordAt((c0 + c1) / 2);
     let aMin = Infinity;
-    for (const u of ultimate) {
-      const R = rc(u.combo);
-      for (const side of ['pos', 'neg'] as Side[]) {
-        const face = side === 'pos' ? c1 : c0;
-        const sign = side === 'pos' ? 1 : -1;
-        let M = 0;
-        let V = 0;
-        const xv = face + sign * d;
-        for (let i = 0; i < n; i++) {
-          const arm = sign * (coord(pts[i]) - face);
-          const f = clamp01(arm / props.Dp + 0.5);
-          M += R[i] * f * arm;
-          const fv = clamp01((sign * (coord(pts[i]) - xv)) / props.Dp + 0.5);
-          V += R[i] * fv;
-          if (arm > 0) aMin = Math.min(aMin, arm);
-        }
-        if (M > Mpos) { Mpos = M; xsPos = face; }
+    for (const u of ultLoads) {
+      for (const sc of sections) {
+        const { M } = cut(u.R, u.L, sc.v, sc.sign, smearM);
+        if (M > Mpos) { Mpos = M; xsPos = sc.v; }
         if (-M > Mneg) Mneg = -M;
-        if (Math.abs(V) > Math.abs(Vu)) { Vu = V; comboV = u.combo.name; xsV = xv; bV = chordAt(xv); }
       }
+      ext.forEach((e) => {
+        for (const side of ['pos', 'neg'] as Side[]) {
+          const face = side === 'pos' ? e.c1 : e.c0;
+          const sign = side === 'pos' ? 1 : -1;
+          const xv = face + sign * d;
+          for (let i = 0; i < n; i++) {
+            const arm = sign * (coord(pts[i]) - face);
+            if (arm > 0) aMin = Math.min(aMin, arm);
+          }
+          if (multi && insideCol(xv)) continue;
+          const { V } = cut(u.R, u.L, xv, sign, (arm) => clamp01(arm / props.Dp + 0.5));
+          if (Math.abs(V) > Math.abs(Vu)) { Vu = V; comboV = u.name; xsV = xv; bV = chordAt(xv); }
+        }
+      });
     }
     // flexión: ancho del cabezal en la sección crítica (cara de la columna con mayor momento)
     const b = chordAt(xsPos);
@@ -587,8 +662,8 @@ export function analyzePile(inp: PileInput): PileResults {
     // desarrollo
     const ld = developmentLength(bar.db, fy, fc, { lambda: cap.lambda });
     const ldh = hookDevelopment(bar.db, fy, fc, cap.lambda);
-    const la = hi - c1 - cap.cover;
-    const la2 = c0 - lo - cap.cover;
+    const la = hi - ext[kHi].c1 - cap.cover;
+    const la2 = ext[kLo].c0 - lo - cap.cover;
     const laMin = Math.min(la, la2) < 0 ? Math.min(la, la2) : Math.min(la, la2);
     const devStraight = ld <= laMin + 1e-9;
     const devHook = ldh <= laMin + 1e-9;
@@ -634,9 +709,12 @@ export function analyzePile(inp: PileInput): PileResults {
   const cpp = polyProps(colPoly);
   const apile = p.kind === 'concrete' ? (p.shape === 'circle' ? (Math.PI * p.D ** 2) / 4 : p.D ** 2) : p.kind === 'pipe' ? (Math.PI * p.D ** 2) / 4 : props.Dp ** 2;
   const stm = stmDesign({
-    pts, combos: ultimate.map((u) => ({ name: u.combo.name, R: rc(u.combo), P: u.combo.P })), col: { x: cpp.cx, y: cpp.cy, A: cpp.A }, Dp: props.Dp, Apile: apile, rect: { ...rect, B: Math.max(chordLength(capPoly, 'y', cpp.cy), 0.25), L: Math.max(chordLength(capPoly, 'x', cpp.cx), 0.25) }, h: cap.h,
-    dX, dY, asX: dx.flex.det.asProv, asY: dy.flex.det.asProv, fc: cap.fc, fy: cap.fy, lambda: cap.lambda, crackMesh: cap.crackMesh,
-    colW: { x: cbb.xmax - cbb.xmin, y: cbb.ymax - cbb.ymin }, cover: cap.cover, dbX: bX.db / 1000, dbY: bY.db / 1000,
+    pts,
+    combos: ultLoads.map((u) => ({ name: u.name, R: u.R, cols: u.L.map((l) => ({ P: l.P, Mbx: l.Mx + l.Vy * cap.h, Mby: l.My + l.Vx * cap.h })) })),
+    cols: cols.map((c) => ({ name: c.name, x: c.x, y: c.y, A: c.pp.A, wx: c.bb.xmax - c.bb.xmin, wy: c.bb.ymax - c.bb.ymin })),
+    Dp: props.Dp, Apile: apile, rect: { ...rect, B: Math.max(chordLength(capPoly, 'y', cpp.cy), 0.25), L: Math.max(chordLength(capPoly, 'x', cpp.cx), 0.25) }, h: cap.h,
+    dX, dY, asX: dx.flex.det.asProv, asY: dy.flex.det.asProv, asTopX: dx.flex.top?.det.asProv ?? 0, asTopY: dy.flex.top?.det.asProv ?? 0,
+    fc: cap.fc, fy: cap.fy, lambda: cap.lambda, crackMesh: cap.crackMesh, cover: cap.cover, dbX: bX.db / 1000, dbY: bY.db / 1000,
   });
   stm.aOverD = Math.min(dx.sh.aOverD, dy.sh.aOverD);
   stm.deep = deep;
@@ -646,30 +724,58 @@ export function analyzePile(inp: PileInput): PileResults {
     checks.push({ name: 'Cabezal · puntales (STM)', ratio: stm.ratioStrut, ok: stm.ratioStrut <= 1 + 1e-9, advisory: adv, detail: `${stm.combo}: C máx = ${Math.max(...stm.struts.map((q) => q.C), 0).toFixed(0)} kN; fce = ${stm.fce.toFixed(1)} MPa (βs = ${stm.betaS.toFixed(2)})${tag}` });
     checks.push({ name: 'Cabezal · tirantes (STM)', ratio: stm.ratioTie, ok: stm.ratioTie <= 1 + 1e-9, advisory: adv, detail: `T x = ${stm.tieX.T.toFixed(0)} kN, T y = ${stm.tieY.T.toFixed(0)} kN; As req = ${stm.tieX.AsReq.toFixed(1)} / ${stm.tieY.AsReq.toFixed(1)} cm²${tag}` });
     checks.push({ name: 'Cabezal · zonas nodales (STM)', ratio: Math.max(stm.ratioNodeCol, stm.ratioNodePile), ok: Math.max(stm.ratioNodeCol, stm.ratioNodePile) <= 1 + 1e-9, advisory: adv, detail: `columna ${(stm.ratioNodeCol).toFixed(2)}, pilote ${(stm.ratioNodePile).toFixed(2)} (βn pilote = ${stm.betaNPile})${tag}` });
+    if (stm.topChords.length) {
+      const wtc = stm.topChords.reduce((a, b) => (b.ratio > a.ratio ? b : a));
+      checks.push({ name: 'Cabezal · cordones superiores entre columnas (STM)', ratio: stm.ratioTop, ok: stm.ratioTop <= 1 + 1e-9, advisory: adv, detail: `${stm.cols[wtc.a].name}–${stm.cols[wtc.b].name}: ${wtc.F > 0 ? 'tracción' : 'compresión'} ${Math.abs(wtc.F).toFixed(0)} kN ≤ ${wtc.cap.toFixed(0)} kN${wtc.F > 0 && !cap.topSteel ? ' (active el acero superior)' : ''}${tag}` });
+    }
+    if (multi && !stm.balanced && !stm.uplift) warnings.push('En el modelo de puntales y tirantes, alguna columna no se equilibra solo con los pilotes que la rodean (columna fuera del grupo o momento grande): se agregan cordones horizontales superiores entre columnas; los que trabajan a tracción requieren acero superior.');
+    if (stm.unbalanced > 0.02 * Math.max(...stm.cols.map((c) => Math.abs(c.P)), 1)) warnings.push(`Queda una fuerza horizontal de ${stm.unbalanced.toFixed(0)} kN sin equilibrar en los nudos superiores (columnas alineadas con empuje transversal): revise el modelo de puntales y tirantes.`);
     if (stm.uplift) warnings.push('Hay pilotes en tracción: el modelo de puntales y tirantes del programa solo considera reacciones de compresión; revise el cabezal con un modelo propio.');
   }
   if (deep) warnings.push(`Cabezal profundo (a/d = ${stm.aOverD.toFixed(2)} < 2): el diseño se rige por el método de puntales y tirantes (ACI 318-19 cap. 23); el cortante como viga se muestra solo como referencia.`);
 
-  // punzonamiento de la columna
+  // punzonamiento de las columnas (las que tienen perímetros críticos solapados se revisan en conjunto)
   const dAvg = (dX + dY) / 2;
-  const hull = convexHull(colPoly);
-  const crit = offsetConvex(hull, dAvg / 2);
-  const bo = perimeter(crit);
-  const cw = cbb.xmax - cbb.xmin, ch = cbb.ymax - cbb.ymin;
-  const beta = col.geom.shape === 'circle' ? 1 : Math.max(cw, ch) / Math.max(Math.min(cw, ch), 1e-9);
-  let pu: CapPunch | undefined;
-  for (const u of ultimate) {
-    const R = rc(u.combo);
-    let V = u.combo.P;
-    for (let i = 0; i < n; i++) V -= R[i] * (1 - clamp01(sdist(pts[i], crit) / props.Dp + 0.5));
-    const vu = Math.max(V, 0) / (bo * dAvg) / 1000;
-    const alphaS = 40;
-    const vcs = punchingVc(beta, alphaS, bo, dAvg, cap.fc, cap.code, cap.lambda);
-    const phivc = PHI_SHEAR * vcs.vc;
-    const cand: CapPunch = { Vu: Math.max(V, 0), bo, d: dAvg, vu, phivc, ratio: vu / phivc, ok: vu <= phivc + 1e-9, combo: u.combo.name, vc: vcs, beta, alphaS };
-    if (!pu || cand.ratio > pu.ratio) pu = cand;
+  const grp = cols.map((_, k) => k);
+  const root = (k: number): number => (grp[k] === k ? k : (grp[k] = root(grp[k])));
+  for (let a = 0; a < cols.length; a++) for (let b = a + 1; b < cols.length; b++) if (polyGap(cols[a].poly, cols[b].poly) < dAvg) grp[root(a)] = root(b);
+  const groupsP = [...new Set(cols.map((_, k) => root(k)))].map((r) => cols.map((_, k) => k).filter((k) => root(k) === r));
+  const punches: CapPunch[] = [];
+  for (const gk of groupsP) {
+    const hull = convexHull(gk.flatMap((k) => cols[k].poly));
+    const crit = offsetConvex(hull, dAvg / 2);
+    const boFull = perimeter(crit);
+    // parte del perímetro dentro del cabezal (columnas de borde o de esquina)
+    const NSp = 144;
+    let inside = 0;
+    for (let k = 0; k < NSp; k++) {
+      const t = (k + 0.5) / NSp;
+      const q = pointOnPerimeter(crit, t);
+      if (pointInPolygon(q, capPoly)) inside++;
+    }
+    const bo = (boFull * inside) / NSp;
+    const cb2 = bbox(crit);
+    const mid = { x: (cb2.xmin + cb2.xmax) / 2, y: (cb2.ymin + cb2.ymax) / 2 };
+    const sideCut = [{ x: cb2.xmax, y: mid.y }, { x: cb2.xmin, y: mid.y }, { x: mid.x, y: cb2.ymax }, { x: mid.x, y: cb2.ymin }].filter((q) => !pointInPolygon(q, capPoly)).length;
+    const alphaS = inside === NSp ? 40 : Math.max(40 - 10 * Math.max(sideCut, 1), 20);
+    const hb = bbox(hull);
+    const cw = hb.xmax - hb.xmin, ch = hb.ymax - hb.ymin;
+    const beta = gk.length === 1 && cols[gk[0]].geom.shape === 'circle' ? 1 : Math.max(cw, ch) / Math.max(Math.min(cw, ch), 1e-9);
+    const label = gk.length === 1 ? `la columna ${cols[gk[0]].name}` : `las columnas ${gk.map((k) => cols[k].name).join(' + ')} (perímetro conjunto)`;
+    let pu: CapPunch | undefined;
+    for (const u of ultLoads) {
+      let V = gk.reduce((acc, k) => acc + u.L[k].P, 0);
+      for (let i = 0; i < n; i++) V -= u.R[i] * (1 - clamp01(sdist(pts[i], crit) / props.Dp + 0.5));
+      const vu = Math.max(V, 0) / (Math.max(bo, 1e-9) * dAvg) / 1000;
+      const vcs = punchingVc(beta, alphaS, Math.max(bo, 1e-9), dAvg, cap.fc, cap.code, cap.lambda);
+      const phivc = PHI_SHEAR * vcs.vc;
+      const cand: CapPunch = { Vu: Math.max(V, 0), bo, d: dAvg, vu, phivc, ratio: vu / phivc, ok: vu <= phivc + 1e-9, combo: u.name, vc: vcs, beta, alphaS, label };
+      if (!pu || cand.ratio > pu.ratio) pu = cand;
+    }
+    if (pu) punches.push(pu);
   }
-  if (pu) checks.push({ name: 'Cabezal · punzonamiento de la columna', ratio: pu.ratio, ok: pu.ok, detail: `${pu.combo}: vu = ${pu.vu.toFixed(2)} MPa ≤ φvc = ${pu.phivc.toFixed(2)} MPa` });
+  const pu = punches.reduce<CapPunch | undefined>((a, b) => (!a || b.ratio > a.ratio ? b : a), undefined);
+  for (const q of punches) checks.push({ name: multi ? `Cabezal · punzonamiento de ${q.label}` : 'Cabezal · punzonamiento de la columna', ratio: q.ratio, ok: q.ok, detail: `${q.combo}: vu = ${q.vu.toFixed(2)} MPa ≤ φvc = ${q.phivc.toFixed(2)} MPa${q.alphaS < 40 ? ` (αs = ${q.alphaS}, perímetro recortado por el borde)` : ''}` });
 
   // punzonamiento por pilote
   const pilePunch: PilePunch[] = [];
@@ -855,9 +961,10 @@ export function analyzePile(inp: PileInput): PileResults {
 
   const ok = checks.every((c) => c.ok || c.advisory);
   return {
-    ok, checks, warnings, pts, n, capRect: rect, capPoly, capArea: geom.area, capCentroid: { x: geom.cx, y: geom.cy }, spanX: lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx), spanY: lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy), Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
+    ok, checks, warnings, pts, n, capRect: rect, capPoly, capArea: geom.area, capCentroid: { x: geom.cx, y: geom.cy },
+    spanX: multi ? [rect.x0, rect.x1] : lineSpan(capPoly, 'x', cpp0.cy, cpp0.cx), spanY: multi ? [rect.y0, rect.y1] : lineSpan(capPoly, 'y', cpp0.cx, cpp0.cy), Wcap, props, geo, Eg, QaCeff, service, ultimate, steel, conc, worstC, worstT, shear,
     lateral: { y: worstY?.lat.y ?? 0, combo: worstY?.combo.name ?? '—', T: worstY?.lat.T ?? Tlen },
-    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, pilePunch, stm, tension, liq, settle, deep, dX, dY,
+    minSpacing: isFinite(minSp) ? minSp : 0, flexX: dx.flex, flexY: dy.flex, shearX: dx.sh, shearY: dy.sh, punch: pu, punches, cols: cols.map((c) => ({ name: c.name, x: c.x, y: c.y, poly: c.poly })), pilePunch, stm, tension, liq, settle, deep, dX, dY,
     concreteVolume: geom.area * cap.h, pileLength: n * p.L,
   };
 }

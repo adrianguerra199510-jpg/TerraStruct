@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Plus, Trash2, Settings2, Layers, Columns3, Mountain, Shapes, Eye, ListChecks, Grid3x3, FileText, CheckCircle2, XCircle, Wand2, Pickaxe, Network, Waves, Activity } from 'lucide-react';
-import { PileInput, PileKind, CAP_SHAPES, CapShape, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo } from '../core/pileTypes';
+import { PileInput, PileKind, CAP_SHAPES, CapShape, PILE_KINDS, HP_SHAPES, defaultPile, defaultCombos, defaultLayers, standardLayout, SoilLayer, PileCombo, PileColumn, capColumns, comboColumnLoads } from '../core/pileTypes';
+import { LoadCase } from '../core/footing';
 import { analyzePile, autoSizePile, findCapDesign, PileResults } from '../core/pile';
 import { barList } from '../core/materials';
 import { FootingColumn, defaultColumn } from '../core/footing';
@@ -9,6 +10,7 @@ import { DARK, LIGHT } from '../draw/svg';
 import { cabezalDiagram } from '../core/pileDiagram';
 import { pileDiagramSvg, pilePlanSvg, pileRebarPlanSvg, pileSectionSvg, pileStmElevationSvg, pileStmPlanSvg, pileProfileSvg, liquefactionChartSvg, settlementChartSvg } from '../draw/pileDraw';
 import { ColumnEditor } from './FootingPage';
+import { pileStm3dSvg, VIEWS_3D, View3d } from '../draw/pile3d';
 import { ReportButtons } from './ReportButtons';
 import { ProjectInfo } from '../state';
 
@@ -36,7 +38,6 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
   const p = data.pile;
   const combo = res?.service.find((s) => s.combo.id === comboId) ?? (res ? res.service.reduce<any>((a, b) => (!a || b.ratioC > a.ratioC ? b : a), null) : null);
   const bars = barList(data.cap.barSystem).map((b) => ({ id: b.id, label: b.label }));
-  const pseudoCol: FootingColumn = { ...defaultColumn('c', 'Columna'), geom: data.column.geom, x: data.column.x, y: data.column.y };
 
   const run = (key: string, fn: () => void) => {
     setBusy(key);
@@ -250,8 +251,8 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
           </div>
         </Acc>
 
-        <Acc title="Columna" icon={<Columns3 size={18} />}>
-          <ColumnEditor col={pseudoCol} setCol={(patch) => set({ column: { geom: patch.geom ?? data.column.geom, x: patch.x ?? data.column.x, y: patch.y ?? data.column.y } })} />
+        <Acc title={`Columnas (${capColumns(data).length})`} icon={<Columns3 size={18} />}>
+          <ColumnsEditor data={data} onChange={onChange} />
         </Acc>
 
         <Acc title="Cargas (envolvente ES / EU)" icon={<Layers size={18} />} open>
@@ -326,6 +327,7 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
               <Network />
               {res.deep ? `Cabezal profundo (a/d = ${res.stm.aOverD.toFixed(2)} < 2): rige el método de puntales y tirantes (ACI 318-19, cap. 23).` : `Cabezal no profundo (a/d = ${res.stm.aOverD.toFixed(2)}): modelo de puntales y tirantes informativo.`}
             </div>
+            <Stm3dViewer data={data} res={res} th={th} />
             <div className="grid3" style={{ gap: 12 }}>
               <Kpi label="Brazo interno z" value={fmt.u('len', res.stm.z, 2)} sub={`nodo superior ${fmt.n('len', res.stm.ay, 2)} m`} />
               <Kpi label="Tirantes Tx / Ty" value={`${fmt.n('force', res.stm.tieX.T, 0)} / ${fmt.n('force', res.stm.tieY.T, 0)}`} sub={fmt.l('force')} />
@@ -336,16 +338,26 @@ export function PilePage({ data, onChange, theme, info }: { data: PileInput; onC
             <div className="draw"><div dangerouslySetInnerHTML={{ __html: pileStmPlanSvg(data, res, { W: 820, H: 560, theme: th, fmt }) }} /></div>
             <Card title="Puntales" icon={<Network size={18} />}>
               <Tbl
-                head={['Pilote', `R (${fmt.l('force')})`, 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación']}
-                align={['c', 'r', 'r', 'r', 'r', 'r', 'r', 'r']}
-                rows={res.stm.struts.map((q) => [String(q.i + 1), fmt.n('force', q.R, 0), ((q.theta * 180) / Math.PI).toFixed(1), fmt.n('force', q.C, 0), q.AcsCol.toFixed(3), q.AcsPile.toFixed(3), fmt.n('force', q.phiFns, 0), q.ratio.toFixed(2)])}
+                head={['Columna → pilote', `R (${fmt.l('force')})`, 'θ (°)', `C (${fmt.l('force')})`, 'Acs col (m²)', 'Acs pilote (m²)', `φFns (${fmt.l('force')})`, 'Relación']}
+                align={['l', 'r', 'r', 'r', 'r', 'r', 'r', 'r']}
+                rows={res.stm.struts.map((q) => [`${res.stm!.cols[q.k].name} → P${q.i + 1}`, fmt.n('force', q.R, 0), ((q.theta * 180) / Math.PI).toFixed(1), fmt.n('force', q.C, 0), q.AcsCol.toFixed(3), q.AcsPile.toFixed(3), fmt.n('force', q.phiFns, 0), q.ratio.toFixed(2)])}
               />
+              {res.stm.cols.length > 1 && <div className="hint" style={{ marginTop: 6 }}>R = parte de la reacción del pilote que llega a cada columna (reparto de mínima trayectoria de carga con equilibrio de cada nudo de columna{res.stm.balanced ? '' : '; algún nudo requiere cordones superiores'}).</div>}
             </Card>
+            {res.stm.topChords.length > 0 && (
+              <Card title="Cordones superiores entre columnas" icon={<Network size={18} />}>
+                <Tbl
+                  head={['Cordón', 'Trabajo', `F (${fmt.l('force')})`, 'Ancho (m)', `Capacidad (${fmt.l('force')})`, 'Relación']}
+                  align={['l', 'l', 'r', 'r', 'r', 'r']}
+                  rows={res.stm.topChords.map((t) => [`${res.stm!.cols[t.a].name} – ${res.stm!.cols[t.b].name}`, t.F > 0 ? 'Tirante (acero superior)' : 'Puntal', fmt.n('force', Math.abs(t.F), 0), t.width.toFixed(2), fmt.n('force', t.cap, 0), t.ratio.toFixed(2)])}
+                />
+              </Card>
+            )}
             <Card title="Tirantes (bandas de pilotes)" icon={<Grid3x3 size={18} />}>
               <Tbl
                 head={['Tirante', 'Posición (m)', `T (${fmt.l('force')})`, 'Ancho (m)', 'As colocado (cm²)', `φTn (${fmt.l('force')})`, 'Relación']}
                 align={['l', 'r', 'r', 'r', 'r', 'r', 'r']}
-                rows={[res.stm.tieX, res.stm.tieY].flatMap((t) => t.bands.map((b) => [t.axis.toUpperCase(), b.pos.toFixed(2), fmt.n('force', b.T, 0), b.width.toFixed(2), b.asProv.toFixed(1), fmt.n('force', b.phiTn, 0), b.ratio.toFixed(2)]))}
+                rows={[res.stm.tieX, res.stm.tieY].flatMap((t) => t.bands.map((b) => [`${t.axis.toUpperCase()} (P${b.idx.map((i) => i + 1).join(', P')})`, b.pos.toFixed(2), fmt.n('force', b.T, 0), b.width.toFixed(2), b.asProv.toFixed(1), fmt.n('force', b.phiTn, 0), b.ratio.toFixed(2)]))}
               />
             </Card>
           </>
@@ -540,7 +552,7 @@ function PileResultTables({ res, data }: { res: PileResults; data: PileInput }) 
           rows={[
             ...([['X', res.flexX], ['Y', res.flexY]] as const).map(([a, f]) => [`Flexión ${a}: ${f!.det.text}`, `Mu ${fmt.n('moment', f!.Mpos, 0)} ${fmt.l('moment')}`, `As ${f!.AsReq.toFixed(1)} → ${f!.asProv.toFixed(1)} cm²`, f!.ratio.toFixed(2)]),
             ...([['X', res.shearX], ['Y', res.shearY]] as const).map(([a, s]) => [`Cortante ${a}`, `Vu ${fmt.n('force', s!.Vu, 0)} ${fmt.l('force')}`, `φVc ${fmt.n('force', s!.phiVc, 0)}`, s!.ratio.toFixed(2)]),
-            ...(res.punch ? [['Punzonamiento columna', `vu ${res.punch.vu.toFixed(2)} MPa`, `φvc ${res.punch.phivc.toFixed(2)} MPa`, res.punch.ratio.toFixed(2)]] : []),
+            ...res.punches.map((q) => [`Punzonamiento de ${q.label}`, `vu ${q.vu.toFixed(2)} MPa`, `φvc ${q.phivc.toFixed(2)} MPa`, q.ratio.toFixed(2)]),
           ]}
         />
       </Card>
@@ -550,45 +562,151 @@ function PileResultTables({ res, data }: { res: PileResults; data: PileInput }) 
 
 function CombosEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInput) => void }) {
   const { fmt } = useUnits();
+  const cols = capColumns(data);
+  const [sel, setSel] = useState(0);
+  const k = Math.min(sel, cols.length - 1);
+  const colId = cols[k].id;
   const upd = (id: string, patch: Partial<PileCombo>) => onChange({ ...data, combos: data.combos.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+  const loadOf = (c: PileCombo): LoadCase => comboColumnLoads(data, c)[k];
+  const updLoad = (c: PileCombo, patch: Partial<LoadCase>) => {
+    if (k === 0) upd(c.id, patch);
+    else upd(c.id, { extra: { ...(c.extra ?? {}), [colId]: { ...loadOf(c), ...patch } } });
+  };
   const add = (kind: 'service' | 'ultimate') => onChange({ ...data, combos: [...data.combos, { id: 'C' + Date.now().toString(36), name: kind === 'service' ? 'ES nueva' : 'EU nueva', kind, P: 0, Vx: 0, Vy: 0, Mx: 0, My: 0, qaFactor: 1 }] });
   return (
     <>
-      <div className="hint">Cargas de la columna en la cara superior del cabezal. <b>ES</b> (servicio): capacidad del suelo y deflexión; <b>EU</b> (última): diseño estructural. P positiva hacia abajo; Mx / My aumentan la reacción hacia +y / +x.</div>
+      <div className="hint">Cargas de {cols.length > 1 ? 'cada columna' : 'la columna'} en la cara superior del cabezal. <b>ES</b> (servicio): capacidad del suelo y deflexión; <b>EU</b> (última): diseño estructural. P positiva hacia abajo; Mx / My aumentan la reacción hacia +y / +x.</div>
+      {cols.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="hint">Columna:</span>
+          {cols.map((c, j) => <button key={c.id} className={'btn small' + (j === k ? ' primary' : ' ghost')} onClick={() => setSel(j)}>{c.name}</button>)}
+        </div>
+      )}
       <div className="tbl-wrap">
         <table className="tbl">
           <thead>
             <tr><th>Combinación</th><th>Tipo</th><th className="r">P ({fmt.l('force')})</th><th className="r">Vx</th><th className="r">Vy</th><th className="r">Mx ({fmt.l('moment')})</th><th className="r">My</th><th className="r">Qa×</th><th title="Combinación con sismo (condición licuada)">Sismo</th><th /></tr>
           </thead>
           <tbody>
-            {data.combos.map((c) => (
-              <tr key={c.id}>
-                <td><CellText value={c.name} onChange={(v) => upd(c.id, { name: v })} /></td>
-                <td>
-                  <select value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value as any })} style={{ border: 0, background: 'transparent' }}>
-                    <option value="service">ES</option>
-                    <option value="ultimate">EU</option>
-                  </select>
-                </td>
-                <td><CellNum q="force" value={c.P} onChange={(v) => upd(c.id, { P: v })} decimals={1} /></td>
-                <td><CellNum q="force" value={c.Vx} onChange={(v) => upd(c.id, { Vx: v })} decimals={1} /></td>
-                <td><CellNum q="force" value={c.Vy} onChange={(v) => upd(c.id, { Vy: v })} decimals={1} /></td>
-                <td><CellNum q="moment" value={c.Mx} onChange={(v) => upd(c.id, { Mx: v })} decimals={1} /></td>
-                <td><CellNum q="moment" value={c.My} onChange={(v) => upd(c.id, { My: v })} decimals={1} /></td>
-                <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => upd(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
-                <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!c.eq} onChange={(e) => upd(c.id, { eq: e.target.checked })} /></td>
-                <td><button className="icon-btn danger" onClick={() => onChange({ ...data, combos: data.combos.filter((x) => x.id !== c.id) })}><Trash2 size={14} /></button></td>
-              </tr>
-            ))}
+            {data.combos.map((c) => {
+              const l = loadOf(c);
+              return (
+                <tr key={c.id}>
+                  <td><CellText value={c.name} onChange={(v) => upd(c.id, { name: v })} /></td>
+                  <td>
+                    <select value={c.kind} onChange={(e) => upd(c.id, { kind: e.target.value as any })} style={{ border: 0, background: 'transparent' }}>
+                      <option value="service">ES</option>
+                      <option value="ultimate">EU</option>
+                    </select>
+                  </td>
+                  <td><CellNum q="force" value={l.P} onChange={(v) => updLoad(c, { P: v })} decimals={1} /></td>
+                  <td><CellNum q="force" value={l.Vx} onChange={(v) => updLoad(c, { Vx: v })} decimals={1} /></td>
+                  <td><CellNum q="force" value={l.Vy} onChange={(v) => updLoad(c, { Vy: v })} decimals={1} /></td>
+                  <td><CellNum q="moment" value={l.Mx} onChange={(v) => updLoad(c, { Mx: v })} decimals={1} /></td>
+                  <td><CellNum q="moment" value={l.My} onChange={(v) => updLoad(c, { My: v })} decimals={1} /></td>
+                  <td>{c.kind === 'service' ? <CellNum value={c.qaFactor} onChange={(v) => upd(c.id, { qaFactor: v })} decimals={2} /> : '—'}</td>
+                  <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!c.eq} onChange={(e) => upd(c.id, { eq: e.target.checked })} /></td>
+                  <td><button className="icon-btn danger" onClick={() => onChange({ ...data, combos: data.combos.filter((x) => x.id !== c.id) })}><Trash2 size={14} /></button></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {cols.length > 1 && <div className="hint">Resultante sobre el cabezal (P total): {data.combos.map((c) => `${c.name} ${fmt.n('force', comboColumnLoads(data, c).reduce((acc, q) => acc + q.P, 0), 0)}`).join(' · ')} {fmt.l('force')}</div>}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button className="btn small" onClick={() => add('service')}><Plus size={14} /> ES (servicio)</button>
         <button className="btn small" onClick={() => add('ultimate')}><Plus size={14} /> EU (última)</button>
         <button className="btn small ghost" onClick={() => onChange({ ...data, combos: defaultCombos() })}>Restablecer</button>
       </div>
     </>
+  );
+}
+
+function ColumnsEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInput) => void }) {
+  const cols = capColumns(data);
+  const updCol = (k: number, patch: Partial<FootingColumn>) => {
+    if (k === 0) onChange({ ...data, column: { name: patch.name ?? cols[0].name, geom: patch.geom ?? data.column.geom, x: patch.x ?? data.column.x, y: patch.y ?? data.column.y } });
+    else onChange({ ...data, moreColumns: data.moreColumns.map((c, j) => (j === k - 1 ? { ...c, ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.geom ? { geom: patch.geom } : {}), ...(patch.x !== undefined ? { x: patch.x } : {}), ...(patch.y !== undefined ? { y: patch.y } : {}) } : c)) });
+  };
+  const addCol = () => {
+    const last = cols[cols.length - 1];
+    const xs = cols.map((c) => c.x);
+    const nc: PileColumn = { id: 'c' + Date.now().toString(36), name: `C${cols.length + 1}`, geom: { ...last.geom }, x: +(Math.max(...xs) + 1.5).toFixed(2), y: last.y };
+    onChange({ ...data, moreColumns: [...data.moreColumns, nc] });
+  };
+  const delCol = (id: string) => onChange({
+    ...data,
+    moreColumns: data.moreColumns.filter((c) => c.id !== id),
+    combos: data.combos.map((c) => {
+      if (!c.extra?.[id]) return c;
+      const { [id]: _drop, ...rest } = c.extra;
+      void _drop;
+      return { ...c, extra: rest };
+    }),
+  });
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      {cols.map((c, k) => (
+        <div key={c.id} className="card" style={{ padding: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <b style={{ flex: 1 }}>{k === 0 ? `${c.name} (principal)` : c.name}</b>
+            {k > 0 && <button className="icon-btn danger" title="Quitar columna" onClick={() => delCol(c.id)}><Trash2 size={14} /></button>}
+          </div>
+          <ColumnEditor col={{ ...defaultColumn(c.id, c.name), name: c.name, geom: c.geom, x: c.x, y: c.y }} setCol={(patch) => updCol(k, patch)} />
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button className="btn small" onClick={addCol}><Plus size={14} /> Columna</button>
+        <span className="hint">Puede apoyar dos o más columnas en el mismo cabezal; sus cargas se ingresan en «Cargas», columna por columna.</span>
+      </div>
+    </div>
+  );
+}
+
+/** Visor 3D del modelo de puntales y tirantes: arrastre para girar, rueda para acercar. */
+function Stm3dViewer({ data, res, th }: { data: PileInput; res: PileResults; th: typeof LIGHT }) {
+  const { fmt } = useUnits();
+  const [view, setView] = useState<View3d>({ ...VIEWS_3D[0].view, zoom: 1 });
+  const [labels, setLabels] = useState(true);
+  const [conc, setConc] = useState(true);
+  const drag = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  const svg = useMemo(() => pileStm3dSvg(data, res, { W: 820, H: 600, theme: th, fmt, view, labels, concrete: conc }), [data, res, th, fmt, view, labels, conc]);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      setView((v) => ({ ...v, zoom: Math.min(4, Math.max(0.4, (v.zoom ?? 1) * (e.deltaY < 0 ? 1.1 : 1 / 1.1))) }));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+  return (
+    <div className="draw">
+      <div className="draw-tools" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        {VIEWS_3D.map((q) => <button key={q.id} className="btn small ghost" onClick={() => setView({ ...q.view, zoom: 1 })}>{q.label}</button>)}
+        <span className="spacer" />
+        <label className="hint" style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={labels} onChange={(e) => setLabels(e.target.checked)} /> Fuerzas</label>
+        <label className="hint" style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={conc} onChange={(e) => setConc(e.target.checked)} /> Concreto</label>
+      </div>
+      <div
+        ref={box}
+        style={{ cursor: drag.current ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' }}
+        title="Arrastre para girar · rueda para acercar"
+        onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch }; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          setView((v) => ({ ...v, yaw: d.yaw - (e.clientX - d.x) * 0.45, pitch: Math.max(-10, Math.min(89.5, d.pitch + (e.clientY - d.y) * 0.35)) }));
+        }}
+        onPointerUp={() => { drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; }}
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      <div className="hint" style={{ padding: '4px 8px' }}>Arrastre para girar · rueda para acercar · azul = puntal (compresión), rojo = tirante (tracción), naranja = sobreesforzado; el grosor es proporcional a la fuerza.</div>
+    </div>
   );
 }
 
