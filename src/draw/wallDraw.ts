@@ -26,7 +26,8 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
   const showPress = o.showPressure !== false;
   const caseRes = o.seismic && res.seismicCase ? res.seismicCase : res.staticCase;
 
-  const xL = -Math.max(0.9, 0.25 * g.B);
+  // con apoyos laterales se deja espacio al frente para los símbolos y las cotas de los apoyos
+  const xL = -Math.max(res.design.brace ? 2.0 : 0.9, 0.25 * g.B);
   const backExt = Math.max(1.6, 0.55 * inp.H);
   const xR = g.B + backExt;
   const yTopW = g.surfaceY(xR);
@@ -121,9 +122,9 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
       const xr = xa - w - 5;
       for (const k of [-0.3, 0.3]) s += `<circle cx="${xr.toFixed(1)}" cy="${(ya + k * h).toFixed(1)}" r="3.6" fill="${th.bg}" stroke="${th.ink}" stroke-width="1.2"/>`;
       s += line(xr - 5, ya - h / 2 - 2, xr - 5, ya + h / 2 + 2, th.ink, 1.4);
-      s += text(xr - 10, ya + 4, `A${i + 1} (y = ${fx(yl)})`, { size: 10.5, fill: th.ink, weight: 700, anchor: 'end', halo: th.bg });
+      s += text(xr - 9, ya + 4, `A${i + 1}`, { size: 10.5, fill: th.ink, weight: 700, anchor: 'end', halo: th.bg });
     });
-    if (br.floor) s += text(X(Math.max(xL, -2.5)) + 8, Y(Math.max(inp.Df, g.hb)) - 6, 'Losa de piso (toma el deslizamiento)', { size: 10, fill: th.muted, weight: 600, halo: th.bg });
+    if (br.floor) s += text(14, 38, 'Losa de piso contra el muro: toma la reacción horizontal de la base', { size: 10.5, fill: th.muted });
   }
 
   // Vigas corona
@@ -298,7 +299,26 @@ export function wallSectionSvg(res: WallResults, o: WallDrawOpts): string {
     if (g.hb > 0 && !o.showRebar) s += dimLine(X(0), ybd + 20, X(g.B), ybd + 20, `B = ${fx(g.B)}`, th.dim, 0, 11.5);
     // Altura de la pantalla
     const xh = g.xFt - 0.0;
-    if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
+    const brd = res.design.brace;
+    if (brd && !o.showRebar) {
+      // Cadena de cotas: zapata | base de la pantalla → A1 → A2 … → corona; y cota total de alto
+      const hsym = Math.min(Math.max(0.09 * inp.H, 0.22), 0.4) * sc;
+      const xFront = Math.min(g.xFb, g.xFt);
+      const xc = X(xFront) - hsym * 0.75 - 46;
+      const xt = xc - 30;
+      const marks = [0, ...(g.hb > 0 ? [g.hb] : []), ...brd.y.map((yl) => g.hb + yl)];
+      if (inp.H - brd.y[brd.y.length - 1] > 1e-3) marks.push(g.yTop);
+      for (let k = 0; k + 1 < marks.length; k++) {
+        const a = marks[k], b = marks[k + 1];
+        s += dimLine(xc, Y(a), xc, Y(b), fx(b - a), th.dim, 0, 10.5);
+      }
+      // líneas de referencia de cada nivel hasta la pantalla
+      for (const m of marks) {
+        const xs = m <= g.hb + 1e-9 ? X(0) : X(g.stemFrontX(m - g.hb)) - hsym * 0.75 - 18;
+        if (xs > xc + 3) s += line(xt - 4, Y(m), xs, Y(m), th.dim, 0.6, '2 2');
+      }
+      s += dimLine(xt, Y(0), xt, Y(g.yTop), `H total = ${fx(g.yTop)}`, th.dim, 0, 11.5);
+    } else if (!o.showRebar && inp.type !== 'gabion') s += dimLine(X(xh) - 22, Y(g.hb), X(xh) - 22, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
     if (g.hb > 0) s += dimLine(X(g.B) + 14, Y(0), X(g.B) + 14, Y(g.hb), fx(g.hb), th.dim, 0, 10.5);
     if (inp.type !== 'gabion') s += dimLine(X(g.xFt), Y(g.yTop) - 12, X(g.xBt), Y(g.yTop) - 12, fx(inp.tTop), th.dim, 0, 10.5);
     else s += dimLine(X(0) - 26, Y(0), X(0) - 26, Y(g.yTop), `H = ${fx(inp.H)}`, th.dim, 0, 11.5);
