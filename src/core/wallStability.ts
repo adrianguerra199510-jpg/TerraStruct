@@ -2,8 +2,9 @@
 // Referencia de momentos: punta del pie (x = 0) en la cara inferior de la zapata (y = 0). Valores por metro de muro.
 
 import { WallGeom, soilWeight } from './wallGeom';
-import { FaceThrust, faceThrust, kaCoulomb, kaRankine, kaeMononobe, kpRankine, passiveForce, rad, GAMMA_W, Thrust } from './earth';
-import { isGravity, canPool, cfInternal, cfExternal, isMasonryStem, poolClosed } from './wallTypes';
+import { FaceThrust, faceThrust, kaCoulomb, kaRankine, kaeMononobe, kpRankine, k0Coef, passiveForce, rad, GAMMA_W, Thrust } from './earth';
+import { isGravity, canPool, cfInternal, cfExternal, isMasonryStem, poolClosed, isBraced } from './wallTypes';
+import { stemBrace } from './wallDesign';
 import { clipHalfPlane, polyProps } from './geometry';
 
 export interface Factors {
@@ -55,13 +56,17 @@ export function earthModel(g: WallGeom, seismic: boolean): EarthModel {
   const kh = seismic ? inp.seismic.kh : 0;
   const kv = seismic ? inp.seismic.kv : 0;
   if (!faceMode) {
-    const Ka = kaRankine(phi, beta);
+    // muro arriostrado por losas (no se desplaza): empuje en reposo K0 si se indica
+    const atRest = isBraced(inp) && inp.brace.k0;
+    const KaR = kaRankine(phi, beta);
+    const Ka = atRest ? k0Coef(phi, beta) : KaR;
     const delta = beta;
-    const Kae = seismic ? kaeMononobe(phi, delta, 90, beta, kh, kv) : null;
+    // con K0 el incremento sísmico es el de Mononobe–Okabe (Kae − Ka) sumado al empuje en reposo
+    const Kae = seismic ? kaeMononobe(phi, delta, 90, beta, kh, kv) + (Ka - KaR) : null;
     const Hv = g.yPlane;
     const zw = inp.hw > 0 ? Math.max(g.yPlane - inp.hw, 0) : Infinity;
     const face = faceThrust({ Ka, deltaDeg: delta, psiDeg: 0, Hv, q: inp.fill.q, gamma: inp.fill.gamma, gammaSat: inp.fill.gammaSat, zw, kae: Kae ?? undefined, kv });
-    return { mode: 'virtual', theoryLabel: 'Rankine (plano vertical virtual en el extremo del talón)', Ka, Kae, deltaDeg: delta, psiDeg: 0, Hv, y0: 0, zw, face, band: null, kpFront: kpRankine(inp.found.phi) };
+    return { mode: 'virtual', theoryLabel: atRest ? 'En reposo K0 = (1 − sen φ)·(1 + sen β) (muro arriostrado; plano vertical virtual en el extremo del talón)' : 'Rankine (plano vertical virtual en el extremo del talón)', Ka, Kae, deltaDeg: delta, psiDeg: 0, Hv, y0: 0, zw, face, band: null, kpFront: kpRankine(inp.found.phi) };
   }
   const psi = g.psiDeg;
   const alpha = 90 - psi;
@@ -240,7 +245,7 @@ export function evalCase(
       addV(`${name} (componente vertical)`, t.Pv * factor, xv);
     }
   };
-  mk('Empuje activo del suelo', f.soil, fac.soilH, 'soil');
+  mk(isBraced(inp) && inp.brace.k0 && em.mode === 'virtual' ? 'Empuje en reposo del suelo' : 'Empuje activo del suelo', f.soil, fac.soilH, 'soil');
   if (inp.fill.q > 0) mk('Empuje por sobrecarga', f.surcharge, fac.liveH, 'sur');
   if (f.water.Ph > 1e-9) mk('Empuje hidrostático', f.water, fac.water, 'water');
   if (seismic && f.seismic.Ph > 1e-9) mk('Incremento sísmico ΔPae', f.seismic, fac.eq, 'soil');
@@ -251,6 +256,16 @@ export function evalCase(
   if (seismic) {
     const inertia = kh * Wwall;
     addH('Inercia sísmica del muro', inertia * fac.eq, Wwall > 0 ? WwallY / Wwall : 0);
+  }
+  // Losas que arriostran la pantalla: reacciones de la viga continua (fuerzas externas hacia el relleno)
+  if (isBraced(inp) && !selfBalanced) {
+    const br = stemBrace(g);
+    if (br) {
+      br.y.forEach((yl, i) => {
+        const R = fac.soilH * br.R.soil[i] + fac.liveH * br.R.sur[i] + fac.water * br.R.water[i] + (seismic ? fac.eq * (br.R.seis[i] + br.R.inertia[i]) : 0);
+        addH(`Reacción del apoyo A${i + 1} (y = ${yl.toFixed(2)} m)`, -R, g.hb + yl);
+      });
+    }
   }
 
   // Subpresión

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Settings2, Wand2, Mountain, Waves, Activity, Layers, Ruler, ListChecks, CheckCircle2, XCircle, Eye, Grid3x3, FileText, BrickWall, Boxes, Scale, Hammer, Plus, Trash2,
 } from 'lucide-react';
-import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, canPool, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal, defaultCrownBeam, CrownBeam } from '../core/wallTypes';
+import { BLOCKS, gabionWidths, WallInput, WALL_TYPES, WallType, defaultWall, hasHeelSlab, canPool, canBrace, isBraced, isCounterfort, isGravity, isMasonry, isMasonryStem, cfInternal, defaultCrownBeam, CrownBeam } from '../core/wallTypes';
 import { analyzeWall, WallResults } from '../core/wall';
 import { barList } from '../core/materials';
 import { Acc, Alert, Card, Check, CheckCard, Kpi, Num, Sel, StatusChip, Tabs, Tbl, Txt, useUnits } from './common';
@@ -38,6 +38,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
   const setMesh = (p: Partial<WallInput['mat']['mesh']>) => set({ mat: { ...data.mat, mesh: { ...data.mat.mesh, ...p } } });
   const setRb = (p: Partial<WallInput['cf']['rb']>) => set({ cf: { ...data.cf, rb: { ...data.cf.rb, ...p } } });
   const setGab = (p: Partial<WallInput['gab']>) => set({ gab: { ...data.gab, ...p } });
+  const setBrace = (p: Partial<WallInput['brace']>) => set({ brace: { ...data.brace, ...p } });
 
   return (
     <div className="split">
@@ -169,7 +170,7 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
           )}
           <Check label="Ignorar el peso de la sobrecarga en volcamiento y deslizamiento" value={data.ignoreSurchargeWeight} onChange={(v) => set({ ignoreSurchargeWeight: v })} hint="Criterio conservador usual" />
           <Check label="Incluir el suelo sobre el pie" value={data.includeToeSoil} onChange={(v) => set({ includeToeSoil: v })} />
-          {canPool(t) && (
+          {canPool(t) && !isBraced(data) && (
             <>
               <Check label="Piscina: agua en el lado interior (frente del muro)" value={data.pool.on} onChange={(v) => set({ pool: { ...data.pool, on: v } })} hint="Se evalúan tres condiciones: piscina vacía (relleno + flotación), piscina llena (agua + relleno, con presión hidrodinámica si hay sismo) y piscina llena sin relleno (caso más desfavorable para la cara frontal)" />
               {data.pool.on && (
@@ -184,6 +185,50 @@ export function WallPage({ data, onChange, theme, info }: { data: WallInput; onC
             </>
           )}
         </Acc>
+
+        {canBrace(t) && (
+          <Acc title="Apoyos laterales tipo rodillo (sótano)" icon={<Layers size={18} />} open={data.brace.on}>
+            <Check
+              label="Asignar apoyos laterales tipo rodillo a la pantalla"
+              value={data.brace.on}
+              onChange={(v) => setBrace({ on: v, levels: v && data.brace.levels.length === 0 ? [data.H] : data.brace.levels })}
+              hint="Cada apoyo (p. ej. una losa de entrepiso) impide el desplazamiento horizontal de la pantalla en esa altura y deja libre el giro. La pantalla se analiza como viga continua y las reacciones de los apoyos se consideran en la estabilidad"
+            />
+            {data.brace.on && (
+              <>
+                {data.pool.on && <Alert>Con el arriostre activo se ignora la piscina.</Alert>}
+                <div className="hint"><b>Apoyos tipo rodillo (altura sobre la cara superior de la zapata)</b></div>
+                {data.brace.levels.map((yl, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <Num label={`Apoyo A${i + 1}`} q="len" value={yl} onChange={(v) => setBrace({ levels: data.brace.levels.map((x, j) => (j === i ? Math.min(Math.max(v, 0.1), data.H) : x)) })} min={0.1} hint={i === data.brace.levels.length - 1 ? `Máximo H = ${data.H.toFixed(2)} m (losa en la corona)` : undefined} />
+                    </div>
+                    <button className="icon-btn danger" title="Quitar apoyo" onClick={() => setBrace({ levels: data.brace.levels.filter((_, j) => j !== i) })}><Trash2 size={14} /></button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="btn small"
+                    onClick={() => {
+                      const lv = [...data.brace.levels].sort((a, b) => a - b);
+                      const lo = lv.length ? lv[0] : data.H;
+                      setBrace({ levels: [...data.brace.levels, +Math.max(lo / 2, 0.3).toFixed(2)] });
+                    }}
+                  >
+                    <Plus size={14} /> Agregar apoyo
+                  </button>
+                </div>
+                {data.brace.levels.length === 0 && <Alert>Agregue al menos un apoyo.</Alert>}
+                <div className="grid2">
+                  <Sel label="Pantalla en la zapata" value={data.brace.base} onChange={(v) => setBrace({ base: v })} options={[{ id: 'fixed', label: 'Empotrada' }, { id: 'pinned', label: 'Articulada' }]} hint="Empotrada: la zapata restringe el giro (usual). Articulada: apoyo simple, más momento entre losas" />
+                </div>
+                <Check label="Empuje en reposo K0 = (1 − sen φ)·(1 + sen β)" value={data.brace.k0} onChange={(v) => setBrace({ k0: v })} hint="Recomendado: un muro restringido por apoyos no se desplaza lo suficiente para el estado activo" />
+                <Check label="Losa de piso contra el muro (toma el deslizamiento de la base)" value={data.brace.floor} onChange={(v) => setBrace({ floor: v })} hint="Contrapiso vaciado contra el muro: la reacción horizontal de la base la toma la losa y el deslizamiento queda como informativo" />
+                <div className="hint">La pantalla se analiza como viga continua apoyada en los rodillos y en la zapata. Si se rellena antes de construir las losas que dan los apoyos, el muro trabaja en voladizo en esa etapa: verifíquela desactivando el arriostre o apuntale provisionalmente.</div>
+              </>
+            )}
+          </Acc>
+        )}
 
         <Acc title="Sismo (Mononobe–Okabe)" icon={<Activity size={18} />}>
           <Check label="Verificar con sismo" value={data.seismic.on} onChange={(v) => set({ seismic: { ...data.seismic, on: v } })} />
@@ -428,8 +473,8 @@ function Summary({ res }: { res: WallResults }) {
       )}
       {res.warnings.length > 0 && <div className="stack" style={{ gap: 8 }}>{res.warnings.map((w, i) => <Alert key={i}>{w}</Alert>)}</div>}
       <div className="kpis">
-        <Kpi label="FS volcamiento" value={isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} sub={`mín. ${c.fsOTreq}`} />
-        <Kpi label="FS deslizamiento" value={isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'} sub={`mín. ${c.fsSLreq}`} />
+        <Kpi label="FS volcamiento" value={isFinite(c.FSot) ? c.FSot.toFixed(2) : '∞'} sub={isBraced(res.inp) ? 'informativo (muro con apoyos)' : `mín. ${c.fsOTreq}`} />
+        <Kpi label="FS deslizamiento" value={isFinite(c.FSsl) ? c.FSsl.toFixed(2) : '∞'} sub={isBraced(res.inp) && res.inp.brace.floor ? 'lo toma la losa de piso' : `mín. ${c.fsSLreq}`} />
         <Kpi label="Presión máxima" value={isFinite(c.qmax) ? fmt.u('press', c.qmax, 1) : '—'} sub={`adm. ${fmt.u('press', c.qaAllow, 1)}`} />
         <Kpi label="Base B" value={fmt.u('len', res.geom.B, 2)} sub={`e = ${c.e.toFixed(2)} m`} />
         <Kpi label={res.inp.type === 'gabion' ? 'Gavión (piedra + malla)' : 'Concreto'} value={`${(res.inp.type === 'gabion' ? res.geom.parts[0].area : res.concreteVolume).toFixed(2)} m³/m`} sub={`Peso ${fmt.u('lforce', res.weightWall, 1)}`} />
@@ -502,8 +547,8 @@ function WallStability({ res }: { res: WallResults }) {
       <Summary res={res} />
       <Card title="Coeficientes de empuje" icon={<Mountain size={18} />}>
         <div className="kpis">
-          <Kpi label="Teoría" value={res.earth.mode === 'virtual' ? 'Rankine' : 'Coulomb'} sub={res.earth.theoryLabel} />
-          <Kpi label="Ka" value={res.earth.Ka.toFixed(4)} />
+          <Kpi label="Teoría" value={res.earth.mode === 'virtual' ? (isBraced(res.inp) && res.inp.brace.k0 ? 'En reposo' : 'Rankine') : 'Coulomb'} sub={res.earth.theoryLabel} />
+          <Kpi label={isBraced(res.inp) && res.inp.brace.k0 ? 'K0' : 'Ka'} value={res.earth.Ka.toFixed(4)} />
           {res.earth.Kae !== null && res.earthSeismic && <Kpi label="Kae (M–O)" value={(res.earthSeismic.Kae ?? NaN).toFixed(4)} />}
           <Kpi label="Kp (frente)" value={res.earth.kpFront.toFixed(3)} />
           <Kpi label="Altura del plano de empuje" value={fmt.u('len', res.earth.Hv, 2)} />
@@ -543,8 +588,9 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
   return (
     <>
       <Summary res={res} />
+      {d.brace && <BraceCard res={res} />}
       {d.stem && (
-        <Card title={d.stem.masonry ? 'Pantalla de mampostería reforzada' : 'Pantalla'} icon={<Layers size={18} />}>
+        <Card title={d.stem.masonry ? 'Pantalla de mampostería reforzada' : d.stem.braced ? 'Pantalla arriostrada (viga continua)' : 'Pantalla'} icon={<Layers size={18} />}>
           <div className="stack">
             <div className="kpis">
               <Kpi label={d.stem.centered ? 'Armado vertical (al centro)' : d.stem.layers === 2 ? 'Armado vertical (cada cara)' : 'Armado vertical (cara del relleno)'} value={d.stem.base.text} sub={`As = ${d.stem.base.asProv.toFixed(2)} cm²/m${d.stem.vertAuto ? ' · automático' : ' · elegido'}`} />
@@ -554,16 +600,17 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
             </div>
             <div className="hint">{d.stem.cutNote}</div>
             <Tbl
-              head={['y (m)', 't (m)', 'd (m)', `Mu (${fmt.l('lmoment')})`, `Vu (${fmt.l('lforce')})`, 'As req (cm²/m)', 'As mín', 'As diseño', `φMn (${fmt.l('lmoment')})`]}
-              align={['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r']}
-              rows={d.stem.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.t.toFixed(3), s.d.toFixed(3), fmt.n('lmoment', s.Mu, 1), fmt.n('lforce', s.Vu, 1), s.AsReq.toFixed(2), s.AsMin.toFixed(2), s.AsDes.toFixed(2), fmt.n('lmoment', s.phiMn, 1)])}
+              head={['y (m)', 't (m)', 'd (m)', d.stem.braced ? `Mu relleno (${fmt.l('lmoment')})` : `Mu (${fmt.l('lmoment')})`, ...(d.stem.braced ? [`Mu interior (${fmt.l('lmoment')})`] : []), `Vu (${fmt.l('lforce')})`, 'As req (cm²/m)', 'As mín', 'As diseño', `φMn (${fmt.l('lmoment')})`]}
+              align={['r', 'r', 'r', 'r', ...(d.stem.braced ? ['r' as const] : []), 'r', 'r', 'r', 'r', 'r']}
+              rows={d.stem.sections.filter((_, i) => i % 2 === 0).map((s) => [s.y.toFixed(2), s.t.toFixed(3), s.d.toFixed(3), fmt.n('lmoment', s.Mu, 1), ...(d.stem!.braced ? [fmt.n('lmoment', s.MuFront, 1)] : []), fmt.n('lforce', s.Vu, 1), s.AsReq.toFixed(2), s.AsMin.toFixed(2), s.AsDes.toFixed(2), fmt.n('lmoment', s.phiMn, 1)])}
             />
             <div className="draw">
               <div dangerouslySetInnerHTML={{
                 __html: lineChart({
-                  w: 640, h: 260, theme: th, xLabel: 'Altura sobre la base de la pantalla y (m)', yLabel: `Momento (${fmt.l('lmoment')})`, title: 'Momento último vs. capacidad con el armado de la base',
+                  w: 640, h: 260, theme: th, xLabel: 'Altura sobre la base de la pantalla y (m)', yLabel: `Momento (${fmt.l('lmoment')})`, title: d.stem.braced ? 'Momento último (cara del relleno) vs. capacidad del armado vertical' : 'Momento último vs. capacidad con el armado de la base',
                   series: [
-                    { name: 'Mu', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.Mu)), color: th.accent },
+                    { name: d.stem.braced ? 'Mu relleno' : 'Mu', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.Mu)), color: th.accent },
+                    ...(d.stem.braced ? [{ name: 'Mu interior', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.MuFront)), color: th.bad }] : []),
                     { name: 'φMn', xs: d.stem.sections.map((s) => s.y), ys: d.stem.sections.map((s) => conv(s.phiMn)), color: th.ok, dash: '6 4' },
                   ],
                 }),
@@ -612,6 +659,30 @@ function WallDesignView({ res, theme }: { res: WallResults; theme: typeof LIGHT 
       {d.counterfort && <CounterfortView res={res} />}
       {d.notes.map((n, i) => <div className="hint" key={i}>{n}</div>)}
     </>
+  );
+}
+
+function BraceCard({ res }: { res: WallResults }) {
+  const { fmt } = useUnits();
+  const b = res.design.brace!;
+  return (
+    <Card title="Apoyos laterales (rodillos) de la pantalla" icon={<Layers size={18} />}>
+      <div className="stack">
+        <Tbl
+          head={['Apoyo', 'y sobre la zapata (m)', `R servicio (${fmt.l('lforce')})`, ...(b.Rse ? [`R servicio con sismo (${fmt.l('lforce')})`] : []), `Ru mayorada (${fmt.l('lforce')})`]}
+          align={['l', 'r', 'r', ...(b.Rse ? ['r' as const] : []), 'r']}
+          rows={[
+            ...b.y.map((yl, i) => [`A${i + 1}`, yl.toFixed(2), fmt.n('lforce', b.Rs[i], 1), ...(b.Rse ? [fmt.n('lforce', b.Rse[i], 1)] : []), fmt.n('lforce', b.Ru[i], 1)]),
+            ['Base de la pantalla', '0.00', fmt.n('lforce', b.V0s, 1), ...(b.Rse ? ['—'] : []), fmt.n('lforce', b.V0u, 1)],
+          ]}
+        />
+        <div className="hint">
+          Reacciones por metro de muro (positivas hacia el relleno: el apoyo empuja la pantalla contra el relleno). Pantalla {b.base === 'fixed' ? 'empotrada' : 'articulada'} en la zapata
+          {b.base === 'fixed' ? `; momento mayorado en la base ${fmt.u('lmoment', b.M0u, 1)}` : ''}. {b.k0 ? 'Empuje en reposo K0.' : 'Empuje activo Ka.'} Use Ru para diseñar el elemento que da el apoyo (losa como diafragma) y su unión con el muro.
+          {b.floor ? ' La reacción de la base la toma la losa de piso.' : ''}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -691,8 +762,8 @@ function WallDiagramTab({ res, theme }: { res: WallResults; theme: typeof LIGHT 
       <div className="grid2" style={{ gap: 12 }}>
         {res.design.diagrams?.stem && (
           <>
-            <Kpi label="Momento máx. de la pantalla" value={fmt.u('lmoment', Math.max(...res.design.diagrams.stem.Mst, ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Mse : [0])), 1)} sub="en la base de la pantalla" />
-            <Kpi label="Cortante máx. de la pantalla" value={fmt.u('lforce', Math.max(...res.design.diagrams.stem.Vst, ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Vse : [0])), 1)} sub="en la base de la pantalla" />
+            <Kpi label="Momento máx. de la pantalla" value={fmt.u('lmoment', Math.max(...res.design.diagrams.stem.Mst.map(Math.abs), ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Mse.map(Math.abs) : [0])), 1)} sub={res.design.diagrams.stem.levels.length ? 'valor absoluto, envolvente de la pantalla' : 'en la base de la pantalla'} />
+            <Kpi label="Cortante máx. de la pantalla" value={fmt.u('lforce', Math.max(...res.design.diagrams.stem.Vst.map(Math.abs), ...(res.design.diagrams.stem.seismic ? res.design.diagrams.stem.Vse.map(Math.abs) : [0])), 1)} sub={res.design.diagrams.stem.levels.length ? 'valor absoluto, envolvente de la pantalla' : 'en la base de la pantalla'} />
           </>
         )}
       </div>

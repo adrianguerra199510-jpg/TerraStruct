@@ -6,7 +6,8 @@ import { GAMMA_W, rad, sigmaV, passiveForce, kpRankine, faceThrust } from './ear
 import { flexureAs, flexureCapacity, oneWayVc, PHI_FLEX, PHI_SHEAR, PHI_PLAIN, beta1 } from './concrete';
 import { Bar, Detailing, chooseSpacing, findBar, developmentLength, hookDevelopment } from './materials';
 import { polyProps, clipHalfPlane } from './geometry';
-import { isCounterfort, isGravity, isMasonry, cfInternal, cfExternal, isMasonryStem } from './wallTypes';
+import { isCounterfort, isGravity, isMasonry, cfInternal, cfExternal, isMasonryStem, isBraced, braceLevels } from './wallTypes';
+import { braceReactions } from './wallBrace';
 
 // ---------------------------------------------------------------------------
 // Utilidades numéricas
@@ -36,9 +37,44 @@ export interface StemLateral {
   deltaPlusPsi: number;
   /** resultante sísmica horizontal sobre la pantalla */
   dPh: number;
+  /** pantalla arriostrada por losas: reacciones de servicio por componente de carga */
+  brace: StemBrace | null;
 }
 
-export function stemLateral(g: WallGeom): StemLateral {
+type BraceComp = 'soil' | 'sur' | 'water' | 'seis' | 'inertia';
+export interface StemBrace {
+  /** alturas de las losas sobre la base de la pantalla */
+  y: number[];
+  base: 'fixed' | 'pinned';
+  /** reacción de cada losa (kN/m, positiva hacia el relleno) por componente de carga de servicio */
+  R: Record<BraceComp, number[]>;
+}
+
+const braceCache = new WeakMap<WallGeom, StemBrace | null>();
+/** Reacciones de las losas por componente de carga (viga continua), o null si el muro no está arriostrado. */
+export function stemBrace(g: WallGeom): StemBrace | null {
+  if (braceCache.has(g)) return braceCache.get(g)!;
+  const inp = g.inp;
+  let out: StemBrace | null = null;
+  if (isBraced(inp)) {
+    const lat = stemLateral(g, false);
+    const H = inp.H;
+    const kh = inp.seismic.on ? inp.seismic.kh : 0;
+    const gammaStem = g.parts.find((p) => p.id === 'stem')!.gamma;
+    const levels = braceLevels(inp);
+    const at = (fn: (z: number) => number) => (y: number) => fn(H - y);
+    const comps: BraceComp[] = ['soil', 'sur', 'water', 'seis', 'inertia'];
+    const fns = [at(lat.soil), at(lat.sur), at(lat.water), at(lat.seis), (y: number) => kh * gammaStem * g.stemT(y)];
+    const rs = braceReactions(H, (y) => g.stemT(y), { levels, base: inp.brace.base }, fns);
+    const R = {} as Record<BraceComp, number[]>;
+    comps.forEach((c, i) => (R[c] = rs[i].R));
+    out = { y: levels, base: inp.brace.base, R };
+  }
+  braceCache.set(g, out);
+  return out;
+}
+
+export function stemLateral(g: WallGeom, withBrace = true): StemLateral {
   const inp = g.inp;
   const em = earthModel(g, inp.seismic.on);
   const H = inp.H;
@@ -62,6 +98,7 @@ export function stemLateral(g: WallGeom): StemLateral {
     water: (z) => (isFinite(zw) && z > zw ? GAMMA_W * (z - zw) : 0),
     seis: (z) => (dPh > 0 ? Math.max(0, ((2 * dPh) / H) * (1 - z / H)) : 0),
     Ka, Kae: em.Kae, kaH, deltaPlusPsi: em.deltaDeg + em.psiDeg, dPh,
+    brace: withBrace ? stemBrace(g) : null,
   };
 }
 
@@ -95,11 +132,57 @@ export function sectionLoad(g: WallGeom, lat: StemLateral, y: number): SectionLo
   const cW = hwi > 0 ? (7 / 8) * kh * GAMMA_W * Math.sqrt(hwi) : 0;
   const dynV = cW * (2 / 3) * Math.pow(dw, 1.5);
   const dynM = cW * (4 / 15) * Math.pow(dw, 2.5);
+  // Losas por encima de la sección: sus reacciones (hacia el relleno) se descuentan del cortante y del momento
+  if (lat.brace) {
+    const br = lat.brace;
+    br.y.forEach((yl, i) => {
+      if (yl <= y + 1e-9) return;
+      const arm = yl - y;
+      s.V -= br.R.soil[i]; s.M -= br.R.soil[i] * arm;
+      q.V -= br.R.sur[i]; q.M -= br.R.sur[i] * arm;
+      w.V -= br.R.water[i]; w.M -= br.R.water[i] * arm;
+      e.V -= br.R.seis[i]; e.M -= br.R.seis[i] * arm;
+      inertia.V -= br.R.inertia[i]; inertia.M -= br.R.inertia[i] * arm;
+    });
+  }
   return {
     y, zs,
     V: { soil: s.V, sur: q.V, water: w.V, seis: e.V, inertia: inertia.V, pool: poolV, poolDyn: dynV },
     M: { soil: s.M, sur: q.M, water: w.M, seis: e.M, inertia: inertia.M, pool: poolM, poolDyn: dynM },
   };
+}
+
+/**
+ * Envolvente de la pantalla arriostrada en una sección: la sobrecarga se toma con su factor o con cero, lo que
+ * resulte más desfavorable para cada cara (en una viga continua su momento cambia de signo).
+ * back = tracción en la cara del relleno; front = tracción en la cara frontal (interior del sótano).
+ */
+export function bracedEnvelope(L: SectionLoad, f: { lateral: number; live: number; eq: number }, seismic: boolean, q: 'M' | 'V' = 'M') {
+  const X = L[q];
+  const A = f.lateral * (X.soil + X.water);
+  const S = f.live * X.sur;
+  const st = { pos: A + Math.max(S, 0), neg: A + Math.min(S, 0) };
+  const AE = A + f.eq * (X.seis + X.inertia);
+  const se = seismic ? { pos: AE + Math.max(X.sur, 0), neg: AE + Math.min(X.sur, 0) } : { pos: 0, neg: 0 };
+  return { st, se, back: Math.max(st.pos, se.pos, 0), front: Math.max(-st.neg, -se.neg, 0), abs: Math.max(Math.abs(st.pos), Math.abs(st.neg), Math.abs(se.pos), Math.abs(se.neg)) };
+}
+
+/** Cortante crítico de la pantalla arriostrada: a d de la base y a d a cada lado de cada losa. */
+function bracedShear(g: WallGeom, lat: StemLateral, dAt: (y: number) => number): { y: number; Vu: number } {
+  const inp = g.inp;
+  const H = inp.H;
+  const ys = [Math.min(dAt(0), H)];
+  for (const yl of lat.brace?.y ?? []) {
+    const d = dAt(yl);
+    if (yl - d > 0) ys.push(yl - d);
+    if (yl + d < H) ys.push(yl + d);
+  }
+  let best = { y: ys[0], Vu: 0 };
+  for (const y of ys) {
+    const Vu = bracedEnvelope(sectionLoad(g, lat, y), inp.factors, inp.seismic.on, 'V').abs;
+    if (Vu > best.Vu) best = { y, Vu };
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +236,10 @@ export interface StemDesign {
   governing: 'estático' | 'sísmico';
   /** acero de la cara frontal (piscina llena): requerido máximo, colocado y relación */
   front: { req: number; prov: number; ratio: number; ok: boolean; maxMu: number } | null;
+  /** pantalla arriostrada por losas (viga continua) */
+  braced: boolean;
+  /** índice de la sección que gobierna el acero vertical de la cara del relleno (0 = base) */
+  gov: number;
   sectionOk: boolean;
 }
 
@@ -325,9 +412,26 @@ export interface KeyDesign {
   PpUsed: number;
 }
 
+export interface BraceSummary {
+  y: number[];
+  base: 'fixed' | 'pinned';
+  k0: boolean;
+  floor: boolean;
+  /** servicio estático y con sismo */
+  Rs: number[];
+  Rse: number[] | null;
+  /** mayorada (envolvente de combinaciones últimas) */
+  Ru: number[];
+  /** cortante y momento mayorados en la base de la pantalla (momento positivo = tracción en la cara del relleno) */
+  V0u: number;
+  M0u: number;
+  /** cortante de servicio en la base de la pantalla (estático) */
+  V0s: number;
+}
+
 export interface WallDiagrams {
   /** pantalla en voladizo (por metro): momento y cortante mayorados, estático y sísmico, según la altura sobre la zapata */
-  stem: { y: number[]; Mst: number[]; Mse: number[]; Vst: number[]; Vse: number[]; /** momento de la cara frontal (piscina llena), negativo */ Mfront: number[]; seismic: boolean } | null;
+  stem: { y: number[]; Mst: number[]; Mse: number[]; Vst: number[]; Vse: number[]; /** momento de la cara frontal (piscina llena), negativo */ Mfront: number[]; seismic: boolean; /** alturas de las losas que arriostran la pantalla */ levels: number[] } | null;
   /** muros de gravedad / gaviones: esfuerzos de servicio por metro en las secciones */
   gravity: { y: number[]; M: number[]; V: number[]; N: number[] } | null;
   /** contrafuerte (por contrafuerte) */
@@ -349,6 +453,8 @@ export interface WallDesign {
   gravityMaterial: 'concreto' | 'mamposteria' | 'gaviones' | null;
   baseCheck: { name: string; ratio: number; detail: string }[] | null;
   counterfort: CounterfortDesign | null;
+  /** pantalla arriostrada por losas: reacciones por losa (kN/m de muro, positivas hacia el relleno) */
+  brace: BraceSummary | null;
   diagrams: WallDiagrams | null;
   mesh: MeshSummary | null;
   suggest: WallSuggest | null;
@@ -539,6 +645,7 @@ function slabCheck(
 // ---------------------------------------------------------------------------
 function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): StemDesign {
   const inp = g.inp;
+  const braced = isBraced(inp);
   const m = inp.mat;
   const f = inp.factors;
   const lat = stemLateral(g);
@@ -561,27 +668,36 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + 1 * L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
     const Mu = Math.max(Mst, Mse, 0);
     if (Mse > Mst && k === 0) seismicGov = true;
-    const Vu = Math.max(Vst, Vse, VuFront);
-    const fr = flexureAs(Mu, 1, d, m.fc, m.fy);
+    let Vu = Math.max(Vst, Vse, VuFront);
+    let MuS = Mst, MuE = Mse, MuB = Mu, MuF = MuFront;
+    if (braced) {
+      const em = bracedEnvelope(L, f, inp.seismic.on);
+      MuS = em.st.pos; MuE = em.se.pos; MuB = em.back; MuF = em.front;
+      Vu = bracedEnvelope(L, f, inp.seismic.on, 'V').abs;
+    }
+    const fr = flexureAs(MuB, 1, d, m.fc, m.fy);
     const asReq = isFinite(fr.As) ? fr.As : 1e6;
     const asMinF = asMinFlex(d, m.fc, m.fy);
     const asMinW = rhoVertMin(bar.db, m.fy) * t * 1e4;
     const asDes = asDesign(asReq, asMinF, asMinW);
-    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, MuFront, Vu, AsReq: asReq, AsMin: Math.max(asMinF, asMinW), AsDes: asDes, phiMn: 0, ok: fr.ok });
+    secs.push({ y, t, d, MuStatic: MuS, MuSeismic: MuE, Mu: MuB, MuFront: MuF, Vu, AsReq: asReq, AsMin: Math.max(asMinF, asMinW), AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
+  // sección que gobierna la cara del relleno: la base en voladizo; la de mayor acero si está arriostrada
+  const gov = braced ? secs.reduce((k, q, i) => (q.AsDes > secs[k].AsDes ? i : k), 0) : 0;
+  if (braced) seismicGov = secs[gov].MuSeismic > secs[gov].MuStatic;
   const layers = m.stemLayers;
   const vertAuto = !(m.stemVertS > 0);
   const base: Detailing = vertAuto
-    ? chooseSpacing(secs[0].AsDes, bar, Math.min(3 * secs[0].t, 0.45))
+    ? chooseSpacing(secs[gov].AsDes, bar, Math.min(3 * secs[gov].t, 0.45))
     : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(1).replace(/\.0$/, '')} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
-  const vertRatio = secs[0].AsDes / Math.max(base.asProv, 1e-9);
+  const vertRatio = secs[gov].AsDes / Math.max(base.asProv, 1e-9);
   for (const s of secs) {
     s.phiMn = flexureCapacity(base.asProv, 1, s.d, m.fc, m.fy);
   }
   // Corte de la mitad de las barras
   let yCut: number | null = null;
-  let cutNote = 'Se prolongan todas las barras hasta la corona.';
-  for (const s of secs) {
+  let cutNote = braced ? 'Pantalla arriostrada: el acero vertical se prolonga en toda la altura (los momentos cambian de signo entre losas).' : 'Se prolongan todas las barras hasta la corona.';
+  for (const s of braced ? [] : secs) {
     if (2 * s.AsDes <= base.asProv) {
       const ext = Math.max(s.d, 12 * bar.db / 1000);
       const yc = s.y + ext;
@@ -592,14 +708,16 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
       break;
     }
   }
-  // Cortante crítico a d de la base
+  // Cortante crítico a d de la base (y, si está arriostrada, a d de cada losa)
   const d0 = secs[0].d;
-  const yCrit = Math.min(d0, inp.H);
+  const dAt = (y: number) => g.stemT(y) - m.cover - bar.db / 2000;
+  const bsh = braced ? bracedShear(g, lat, dAt) : null;
+  const yCrit = bsh ? bsh.y : Math.min(d0, inp.H);
   const Lc = sectionLoad(g, lat, yCrit);
   const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
   const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
   const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool + f.eq * Lc.V.poolDyn - f.deadMin * Lc.V.soil) : 0;
-  const Vu = Math.max(Vst, Vse, VuFr);
+  const Vu = bsh ? bsh.Vu : Math.max(Vst, Vse, VuFr);
   const dC = g.stemT(yCrit) - m.cover - bar.db / 2000;
   const cap = oneWayVc(1, dC, m.fc, (base.asProv * 1e-4) / dC, m.code, m.lambda);
   const phiVc = PHI_SHEAR * cap.Vc;
@@ -642,6 +760,7 @@ function stemDesignRC(g: WallGeom, uls: { label: string; res: CaseResult }[]): S
     anchorage: { ldh, ld, available: avail, ok: avail >= ldh },
     governing: seismicGov ? 'sísmico' : 'estático',
     front: frontInfo,
+    braced, gov,
     sectionOk: secs.every((s) => s.ok) && Vu <= phiVc && (frontInfo ? frontInfo.ok : true),
   };
 }
@@ -689,6 +808,7 @@ function masonryVn(b: number, d: number, Mu: number, Vu: number, fm: number): nu
 
 function stemDesignMasonry(g: WallGeom): StemDesign {
   const inp = g.inp;
+  const braced = isBraced(inp);
   const m = inp.mat;
   const f = inp.factors;
   const lat = stemLateral(g);
@@ -711,22 +831,31 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     const Vse = inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0;
     const Mu = Math.max(Mst, Mse, 0);
     if (Mse > Mst && k === 0) seismicGov = true;
-    const fr = masonryFlexure(Mu, d, m.fm, m.fy);
+    let Vu = Math.max(Vst, Vse, VuFront);
+    let MuS = Mst, MuE = Mse, MuB = Mu, MuF = MuFront;
+    if (braced) {
+      const em = bracedEnvelope(L, f, inp.seismic.on);
+      MuS = em.st.pos; MuE = em.se.pos; MuB = em.back; MuF = em.front;
+      Vu = bracedEnvelope(L, f, inp.seismic.on, 'V').abs;
+    }
+    const fr = masonryFlexure(MuB, d, m.fm, m.fy);
     const asReq = isFinite(fr.As) ? fr.As : 1e6;
     const asMinW = 0.0007 * t * 1e4;
     const asDes = Math.max(asReq, asMinW);
-    secs.push({ y, t, d, MuStatic: Mst, MuSeismic: Mse, Mu, MuFront, Vu: Math.max(Vst, Vse, VuFront), AsReq: asReq, AsMin: asMinW, AsDes: asDes, phiMn: 0, ok: fr.ok });
+    secs.push({ y, t, d, MuStatic: MuS, MuSeismic: MuE, Mu: MuB, MuFront: MuF, Vu, AsReq: asReq, AsMin: asMinW, AsDes: asDes, phiMn: 0, ok: fr.ok });
   }
+  const gov = braced ? secs.reduce((k, q, i) => (q.AsDes > secs[k].AsDes ? i : k), 0) : 0;
+  if (braced) seismicGov = secs[gov].MuSeismic > secs[gov].MuStatic;
   const vertAuto = !(m.stemVertS > 0);
-  const base: Detailing = vertAuto ? chooseSpacingModule(secs[0].AsDes, bar) : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(0)} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
-  const vertRatio = secs[0].AsDes / Math.max(base.asProv, 1e-9);
+  const base: Detailing = vertAuto ? chooseSpacingModule(secs[gov].AsDes, bar) : { text: `${bar.id} @ ${(m.stemVertS * 100).toFixed(0)} cm`, spacing: m.stemVertS, asProv: bar.area / m.stemVertS, ok: true };
+  const vertRatio = secs[gov].AsDes / Math.max(base.asProv, 1e-9);
   for (const s of secs) {
     const a = (base.asProv * 1e-4 * m.fy) / (0.8 * m.fm * 1000);
     s.phiMn = PHI_FLEX * base.asProv * 1e-4 * m.fy * (s.d - a / 2) * 1000;
   }
   let yCut: number | null = null;
-  let cutNote = 'Se prolongan todas las barras hasta la corona.';
-  for (const s of secs) {
+  let cutNote = braced ? 'Pantalla arriostrada: el acero vertical se prolonga en toda la altura (los momentos cambian de signo entre losas).' : 'Se prolongan todas las barras hasta la corona.';
+  for (const s of braced ? [] : secs) {
     if (2 * s.AsDes <= base.asProv) {
       const ext = Math.max(s.d, 40 * bar.db / 1000);
       const yc = s.y + ext;
@@ -740,13 +869,14 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
   // Cortante (TMS 402 SD simplificado, unidades en lb/psi para las constantes)
   const t0 = secs[0].t;
   const d0 = secs[0].d;
-  const yCrit = Math.min(d0, inp.H);
+  const bsh = braced ? bracedShear(g, lat, (y) => (layers === 1 ? g.stemT(y) / 2 : g.stemT(y) - 0.05 - bar.db / 2000)) : null;
+  const yCrit = bsh ? bsh.y : Math.min(d0, inp.H);
   const Lc = sectionLoad(g, lat, yCrit);
   const Vst = f.lateral * (Lc.V.soil + Lc.V.water) + f.live * Lc.V.sur - f.deadMin * Lc.V.pool;
   const Vse = inp.seismic.on ? f.lateral * (Lc.V.soil + Lc.V.water) + Lc.V.sur + f.eq * (Lc.V.seis + Lc.V.inertia) - f.deadMin * Lc.V.pool : 0;
   const VuFr = Lc.V.pool > 0 ? Math.max(0, f.lateral * Lc.V.pool + f.eq * Lc.V.poolDyn - f.deadMin * Lc.V.soil) : 0;
-  const Vu = Math.max(Vst, Vse, VuFr);
-  const Mcrit = Math.max(secs[0].Mu, 1e-6);
+  const Vu = bsh ? bsh.Vu : Math.max(Vst, Vse, VuFr);
+  const Mcrit = Math.max(braced ? Math.max(...secs.map((q) => Math.max(q.Mu, q.MuFront))) : secs[0].Mu, 1e-6);
   const mvd = Math.min(1, Mcrit / Math.max(Vu * d0, 1e-6));
   const fmPsi = m.fm * 145.038;
   const AnIn2 = t0 * 1550.0031; // in² por metro de muro (b = 1 m)
@@ -777,6 +907,7 @@ function stemDesignMasonry(g: WallGeom): StemDesign {
     anchorage: { ldh, ld, available: g.hb - m.coverFound, ok: g.hb - m.coverFound >= ldh },
     masonry: true, governing: seismicGov ? 'sísmico' : 'estático',
     front: mFront,
+    braced, gov,
     sectionOk: secs.every((s) => s.ok) && Vu <= phiVn && (mFront ? mFront.ok : true),
   };
 }
@@ -1228,8 +1359,10 @@ function wallDiagrams(g: WallGeom, uls: { label: string; res: CaseResult }[], d:
     const lat = stemLateral(g);
     const N = 40;
     const y: number[] = [], Mst: number[] = [], Mse: number[] = [], Vst: number[] = [], Vse: number[] = [], Mfr: number[] = [];
-    for (let k = 0; k <= N; k++) {
-      const yy = (H * k) / N;
+    const levels = lat.brace?.y ?? [];
+    // con losas se agregan puntos justo debajo de cada apoyo para mostrar el salto del cortante
+    const samples = [...new Set([...Array.from({ length: N + 1 }, (_, k) => (H * k) / N), ...levels.flatMap((yl) => [Math.max(yl - 1e-4, 0), yl])])].sort((a, b) => a - b);
+    for (const yy of samples) {
       const L = sectionLoad(g, lat, yy);
       y.push(yy);
       Mst.push(f.lateral * (L.M.soil + L.M.water) + f.live * L.M.sur - f.deadMin * L.M.pool);
@@ -1238,7 +1371,7 @@ function wallDiagrams(g: WallGeom, uls: { label: string; res: CaseResult }[], d:
       Vse.push(inp.seismic.on ? f.lateral * (L.V.soil + L.V.water) + L.V.sur + f.eq * (L.V.seis + L.V.inertia) - f.deadMin * L.V.pool : 0);
       Mfr.push(L.M.pool > 0 ? -Math.max(0, f.lateral * L.M.pool - f.deadMin * L.M.soil) : 0);
     }
-    out.stem = { y, Mst, Mse, Vst, Vse, Mfront: Mfr, seismic: inp.seismic.on };
+    out.stem = { y, Mst, Mse, Vst, Vse, Mfront: Mfr, seismic: inp.seismic.on, levels };
   }
   // zapata: pie y talón como voladizos (muros sin contrafuertes en la zapata)
   if (!isGravity(inp.type) && g.hb > 1e-6 && !isCounterfort(inp.type)) {
@@ -1288,7 +1421,7 @@ export function designWall(g: WallGeom): WallDesign {
   for (const u of uls) {
     if (u.res.SumV <= 0 || u.res.xbar <= 0) warnings.push(`Combinación ${u.label}: la resultante cae fuera de la base (vuelco).`);
   }
-  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, diagrams: null, mesh: null, suggest: null, warnings, notes };
+  const out: WallDesign = { uls, stem: null, toe: null, heel: null, key: null, gravity: null, gravityMaterial: null, baseCheck: null, counterfort: null, brace: null, diagrams: null, mesh: null, suggest: null, warnings, notes };
 
   if (isGravity(inp.type)) {
     out.gravity = gravitySections(g);
@@ -1370,6 +1503,33 @@ export function designWall(g: WallGeom): WallDesign {
     if (isCounterfort(inp.type)) {
       notes.push('En muros con contrafuertes la pantalla (y la zapata del lado de los contrafuertes) se diseñan como losas apoyadas en los contrafuertes; los valores del voladizo de la pantalla solo se usan como acero vertical de referencia.');
     }
+  }
+  if (out.stem?.braced) {
+    const br = stemBrace(g)!;
+    const f = inp.factors;
+    const se = inp.seismic.on;
+    const Rs = br.y.map((_, i) => br.R.soil[i] + br.R.sur[i] + br.R.water[i]);
+    const Rse = se ? br.y.map((_, i) => Rs[i] + br.R.seis[i] + br.R.inertia[i]) : null;
+    const Ru = br.y.map((_, i) => {
+      const a = f.lateral * (br.R.soil[i] + br.R.water[i]);
+      const st = a + Math.max(f.live * br.R.sur[i], 0);
+      const sei = se ? a + Math.max(br.R.sur[i], 0) + f.eq * (br.R.seis[i] + br.R.inertia[i]) : -Infinity;
+      return Math.max(st, sei);
+    });
+    const lat = stemLateral(g);
+    const L0 = sectionLoad(g, lat, 0);
+    const v0 = bracedEnvelope(L0, f, se, 'V');
+    const m0 = bracedEnvelope(L0, f, se, 'M');
+    out.brace = {
+      y: br.y, base: br.base, k0: inp.brace.k0, floor: inp.brace.floor, Rs, Rse, Ru,
+      V0u: v0.abs, M0u: m0.back >= m0.front ? m0.back : -m0.front, V0s: L0.V.soil + L0.V.sur + L0.V.water,
+    };
+    notes.push(`Pantalla con ${br.y.length} apoyo${br.y.length > 1 ? 's' : ''} lateral${br.y.length > 1 ? 'es' : ''} tipo rodillo y ${br.base === 'fixed' ? 'empotrada' : 'articulada'} en la zapata: se analiza como viga continua (rigidez según el espesor). Los elementos que dan los apoyos (losas como diafragmas) y su unión con el muro se diseñan para la reacción mayorada indicada.`);
+    if (!inp.brace.k0) notes.push('Se usa el empuje activo con la pantalla apoyada lateralmente; un muro restringido no desarrolla el desplazamiento del estado activo, por lo que suele recomendarse el empuje en reposo K0 (opción disponible).');
+    if (out.stem.layers === 1 && !out.stem.centered) warnings.push('Pantalla con apoyos laterales y una sola capa de acero vertical: entre apoyos hay tracción en la cara interior; active dos capas.');
+    const yTop = br.y[br.y.length - 1];
+    if (inp.H - yTop > 0.5) notes.push(`Por encima del apoyo superior (y = ${yTop.toFixed(2)} m) la pantalla trabaja en voladizo en ${(inp.H - yTop).toFixed(2)} m.`);
+    notes.push('Etapa constructiva: mientras no se construyan las losas (o si se rellena antes de colocarlas) el muro trabaja en voladizo; analice esa condición desactivando el arriostre o apuntale provisionalmente.');
   }
   if (out.stem) notes.push(`Las barras verticales de la pantalla terminan en gancho estándar dentro de la zapata, orientado hacia el ${stemHookSide(g) === -1 ? 'pie' : 'talón'}${stemHookSide(g) === 1 ? ' (no hay pie, o no cabe el gancho)' : ''}.`);
   out.key = keyDesign(g);

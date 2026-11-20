@@ -14,6 +14,14 @@ export function kaRankine(phiDeg: number, betaDeg = 0): number {
   return (cb * (cb - root)) / (cb + root);
 }
 
+/**
+ * Coeficiente de empuje en reposo K0 (Jáky para relleno normalmente consolidado), con la corrección por talud
+ * de Kézdi / Mayne y Kulhawy: K0 = (1 − sen φ)·(1 + sen β). Presión paralela al talud, como en Rankine.
+ */
+export function k0Coef(phiDeg: number, betaDeg = 0): number {
+  return (1 - Math.sin(rad(phiDeg))) * (1 + Math.sin(rad(Math.max(betaDeg, 0))));
+}
+
 export function kpRankine(phiDeg: number): number {
   return Math.tan(rad(45 + phiDeg / 2)) ** 2;
 }

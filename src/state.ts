@@ -338,8 +338,21 @@ export function exampleWalls(): { type: WallType; title?: string; desc?: string;
       return w;
     },
   });
+  const basement = {
+    type: 'cantilever' as WallType,
+    title: 'Muro de sótano de dos niveles',
+    desc: 'Pantalla arriostrada por dos losas (viga continua), empuje en reposo K0 y losa de piso.',
+    make: () => {
+      const w = defaultWall('cantilever');
+      Object.assign(w, { name: 'Muro de sótano', H: 6.0, tTop: 0.25, tBot: 0.25, Lt: 0.6, Lh: 0.6, hb: 0.5, hbTip: 0.5, Df: 0.6 });
+      w.brace = { on: true, levels: [3.0, 6.0], base: 'pinned', k0: true, floor: true };
+      w.passive = { ...w.passive, use: false };
+      return w;
+    },
+  };
   return [
     ...base,
+    basement,
     pool('Muro de piscina de concreto', 'Voladizo con agua en el lado interior: se evalúan piscina vacía y llena.', 'cantilever', 2.4),
     pool('Muro de piscina de bloque', 'Mampostería reforzada con agua interior: vacía y llena.', 'masonryReinforced', 2.0),
   ];

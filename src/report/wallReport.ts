@@ -1,5 +1,5 @@
 import { WallResults } from '../core/wall';
-import { WALL_TYPES, WallInput, gabionGamma, gabionWidths, isCounterfort, isGravity, isMasonry, isMasonryStem } from '../core/wallTypes';
+import { WALL_TYPES, WallInput, gabionGamma, gabionWidths, isBraced, isCounterfort, isGravity, isMasonry, isMasonryStem } from '../core/wallTypes';
 import { Fmt } from '../core/units';
 import { PHI_FLEX, PHI_SHEAR, PHI_PLAIN } from '../core/concrete';
 import { ProjectInfo } from '../state';
@@ -20,13 +20,15 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   const typeLabel = WALL_TYPES.find((t) => t.id === inp.type)!.label;
   const des = res.design;
   const cm = (v: number) => `${f(v * 100, 1)} cm`;
+  const braced = isBraced(inp);
+  const atRest = braced && inp.brace.k0;
 
   // ------------------------------------------------------------------ 1
   d.h1('Generalidades');
   d.h2('Objeto y alcance');
   d.p(
     `Esta memoria presenta el análisis de estabilidad y el diseño estructural del muro de retención «${inp.name}», tipología: ${typeLabel.toLowerCase()}. ` +
-      `Se determinan los empujes de tierra (${res.earth.mode === 'virtual' ? 'Rankine' : 'Coulomb'}${inp.seismic.on ? ' y Mononobe–Okabe para sismo' : ''}), se verifican el volcamiento, el deslizamiento y las presiones sobre el suelo, y se dimensiona el refuerzo o se verifican los esfuerzos de cada elemento. ` +
+      `Se determinan los empujes de tierra (${res.earth.mode === 'virtual' ? (atRest ? 'en reposo' : 'Rankine') : 'Coulomb'}${inp.seismic.on ? ' y Mononobe–Okabe para sismo' : ''}), se verifican el volcamiento, el deslizamiento y las presiones sobre el suelo, y se dimensiona el refuerzo o se verifican los esfuerzos de cada elemento. ` +
       'Todos los valores son por metro lineal de muro.',
     { align: 'justify' },
   );
@@ -39,7 +41,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   const hyp = [
     'Problema plano por metro de muro. Los momentos se toman respecto a la punta del pie en la cara inferior de la zapata.',
     res.earth.mode === 'virtual'
-      ? 'Empuje activo de Rankine sobre un plano vertical virtual que pasa por el extremo del talón; el peso del suelo sobre el talón se suma a las cargas verticales.'
+      ? `${atRest ? 'Empuje en reposo (K0)' : 'Empuje activo de Rankine'} sobre un plano vertical virtual que pasa por el extremo del talón; el peso del suelo sobre el talón se suma a las cargas verticales.`
       : 'Empuje activo de Coulomb sobre la cara posterior real del muro con fricción muro–suelo δ; su componente vertical colabora a la estabilidad.',
     'El empuje pasivo frontal se usa únicamente en el deslizamiento (reducido por un factor) y no en el volcamiento ni en las presiones de contacto.',
     'Presión de contacto lineal; si la resultante cae fuera del tercio medio se supone contacto parcial sin tracción.',
@@ -47,6 +49,12 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     'No se verifica la estabilidad global (talud, deslizamiento profundo) ni asentamientos.',
   ];
   if (inp.hw > 0) hyp.push('Se considera un nivel freático en el relleno: empuje hidrostático, pesos saturados y subpresión lineal bajo la base.');
+  if (braced && des.brace) {
+    hyp.push(`La pantalla tiene ${des.brace.y.length} apoyo${des.brace.y.length > 1 ? 's' : ''} lateral${des.brace.y.length > 1 ? 'es' : ''} tipo rodillo (restringen el desplazamiento horizontal y dejan libre el giro; p. ej. losas de entrepiso de un sótano) y ${inp.brace.base === 'fixed' ? 'empotrada' : 'articulada'} en la zapata. Se analiza como viga continua vertical por el método de rigidez (elementos de viga con EI ∝ t³).`);
+    hyp.push(atRest ? 'Al no poder desplazarse, el relleno se considera en reposo: K0 = (1 − sen φ)·(1 + sen β) (Jáky; corrección por talud de Mayne y Kulhawy).' : 'Se usa el empuje activo aun con el muro arriostrado (criterio del usuario; normalmente se recomienda K0).');
+    hyp.push('Las reacciones de los apoyos se aplican al muro como fuerzas horizontales externas en las verificaciones de volcamiento, deslizamiento y presión sobre el suelo; a la base solo llega el resto del empuje.' + (inp.brace.floor ? ' La reacción horizontal de la base la toma la losa de piso, por lo que el deslizamiento se informa sin exigir el factor de seguridad.' : ''));
+    hyp.push('Se supone que los apoyos (losas) existen antes de colocar el relleno; la etapa constructiva en voladizo debe verificarse por separado o apuntalarse.');
+  }
   if (inp.key.enabled) hyp.push('La llave de corte se calcula con empuje pasivo reducido y, si se indica, con fricción suelo–suelo (tan φ) en la interfaz de deslizamiento.');
   d.bullets(hyp);
   d.p(`Unidades: ${fmt.sys === 'SI' ? 'kN, m, kPa, MPa' : 'tonf, m, tonf/m², kgf/cm²'}. Las fórmulas del ACI se evalúan internamente en MPa.`, { small: true });
@@ -93,6 +101,14 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
       ['Fricción base μ / adhesión', `${f(inp.found.mu, 2)} / ${u('press', inp.found.ca, 1)}`],
       ['Empuje pasivo', inp.passive.use ? `Sí (factor ${f(inp.passive.factor, 2)}, ignora ${u('len', inp.passive.ignoreTop, 2)})` : 'No'],
       ['Sismo', inp.seismic.on ? `kh = ${f(inp.seismic.kh, 3)}; kv = ${f(inp.seismic.kv, 3)}` : 'No considerado'],
+      ...(braced && des.brace
+        ? ([
+            ['Apoyos laterales tipo rodillo (y sobre la zapata)', des.brace.y.map((y, i) => `A${i + 1}: ${u('len', y, 2)}`).join('; ')],
+            ['Pantalla en la zapata', inp.brace.base === 'fixed' ? 'Empotrada' : 'Articulada'],
+            ['Empuje del relleno', atRest ? 'En reposo (K0)' : 'Activo (Ka)'],
+            ['Losa de piso contra el muro', inp.brace.floor ? 'Sí (toma el deslizamiento)' : 'No'],
+          ] as [string, string][])
+        : []),
     ],
     2,
   );
@@ -139,7 +155,11 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   const em = res.earth;
   const phi = inp.fill.phi;
   const eqs: string[] = [];
-  if (em.mode === 'virtual') {
+  if (em.mode === 'virtual' && atRest) {
+    eqs.push('Empuje en reposo (muro arriostrado que no se desplaza), plano vertical virtual, empuje paralelo al talud:');
+    eqs.push('K0 = (1 − sen φ)·(1 + sen β)');
+    eqs.push(`K0 = ${f(em.Ka, 4)}   (φ = ${f(phi, 1)}°, β = ${f(inp.fill.beta, 1)}°); en las fórmulas siguientes Ka se reemplaza por K0`);
+  } else if (em.mode === 'virtual') {
     eqs.push('Rankine (plano vertical virtual, empuje paralelo al talud):');
     eqs.push('Ka = cosβ·(cosβ − √(cos²β − cos²φ)) / (cosβ + √(cos²β − cos²φ))');
     eqs.push(`Ka = ${f(em.Ka, 4)}   (φ = ${f(phi, 1)}°, β = ${f(inp.fill.beta, 1)}°)`);
@@ -152,6 +172,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
   if (res.earthSeismic && res.earthSeismic.Kae !== null) {
     const psiE = (Math.atan2(inp.seismic.kh, 1 - inp.seismic.kv) * 180) / Math.PI;
     eqs.push(`Mononobe–Okabe: ψE = atan(kh/(1 − kv)) = ${f(psiE, 2)}° ;  Kae = ${f(res.earthSeismic.Kae, 4)} ;  ΔPae = ½·γ·(1 − kv)·(Kae − Ka)·H² , aplicado a 0.6·H`);
+    if (atRest) eqs.push('Con empuje en reposo: Kae = K0 + (KaeMO − KaRankine), es decir, el incremento sísmico de Mononobe–Okabe se suma al empuje en reposo.');
   }
   d.eq(eqs, 'Fórmulas');
   d.table(
@@ -159,7 +180,7 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
     [
       ['Teoría adoptada', em.theoryLabel],
       ['Altura del plano de empuje', u('len', em.Hv, 3)],
-      ['Ka', f(em.Ka, 4)],
+      [atRest ? 'K0' : 'Ka', f(em.Ka, 4)],
       ...(res.earthSeismic?.Kae !== null && res.earthSeismic ? ([['Kae (sismo)', f(res.earthSeismic.Kae ?? NaN, 4)]] as string[][]) : []),
       ['Kp frontal', f(em.kpFront, 3)],
     ],
@@ -190,8 +211,8 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
       { align: ['l', 'r', 'r', 'r'], boldLast: true, caption: `Tabla. Fuerzas horizontales — ${c.label}` },
     );
     const lines = [
-      `Volcamiento: FS = ΣMr / ΣMo = ${n('lmoment', c.Mres, 2)} / ${n('lmoment', c.Mot, 2)} = ${isFinite(c.FSot) ? f(c.FSot, 2) : '∞'}  ${c.ok.ot ? '≥' : '<'}  ${f(c.fsOTreq, 2)}`,
-      `Deslizamiento: FS = (μ·ΣV + c·B + Pp) / ΣH = (${f(c.mu, 3)} × ${n('lforce', c.SumV, 2)} + ${n('lforce', c.Rcoh, 2)} + ${n('lforce', c.Rpass, 2)}) / ${n('lforce', c.SumH, 2)} = ${isFinite(c.FSsl) ? f(c.FSsl, 2) : '∞'}  ${c.ok.sl ? '≥' : '<'}  ${f(c.fsSLreq, 2)}`,
+      `Volcamiento: FS = ΣMr / ΣMo = ${n('lmoment', c.Mres, 2)} / ${n('lmoment', c.Mot, 2)} = ${isFinite(c.FSot) ? f(c.FSot, 2) : '∞'}${braced ? '  (informativo: los apoyos laterales impiden el vuelco del conjunto)' : `  ${c.ok.ot ? '≥' : '<'}  ${f(c.fsOTreq, 2)}`}`,
+      `Deslizamiento: FS = (μ·ΣV + c·B + Pp) / ΣH = (${f(c.mu, 3)} × ${n('lforce', c.SumV, 2)} + ${n('lforce', c.Rcoh, 2)} + ${n('lforce', c.Rpass, 2)}) / ${n('lforce', c.SumH, 2)} = ${isFinite(c.FSsl) ? f(c.FSsl, 2) : '∞'}${braced && inp.brace.floor ? '  (informativo: la losa de piso toma la reacción horizontal de la base)' : `  ${c.ok.sl ? '≥' : '<'}  ${f(c.fsSLreq, 2)}`}`,
     ];
     if (c.passive) lines.push(`Pp = ∫ (Kp·γ·z + 2c√Kp) dz  entre z = ${f(c.passive.z1, 2)} y ${f(c.passive.z2, 2)} m = ${u('lforce', c.passive.Fall, 2)};  Pp usado = ${f(inp.passive.factor, 2)} × Pp = ${u('lforce', c.passive.F, 2)}`);
     lines.push(`Posición de la resultante: x̄ = (ΣMr − ΣMo)/ΣV = ${f(c.xbar, 3)} m ;  excentricidad e = B/2 − x̄ = ${f(c.e, 3)} m  (B/6 = ${f(c.B / 6, 3)} m)`);
@@ -230,42 +251,68 @@ export function wallBlocks(res: WallResults, fmt: Fmt, d: DocBuilder) {
 
   if (des.stem) {
     const st = des.stem;
-    d.h2(st.masonry ? 'Pantalla de mampostería reforzada' : 'Pantalla en voladizo');
+    const br = des.brace;
+    if (st.braced && br) {
+      d.h2('Apoyos laterales tipo rodillo');
+      d.eq(
+        [
+          'La pantalla se modela como viga continua vertical: apoyo tipo rodillo en cada nivel (y = yi) y ' + (br.base === 'fixed' ? 'empotramiento' : 'articulación') + ' en la zapata (y = 0).',
+          'Método de rigidez: elementos de viga de Euler–Bernoulli con EI ∝ t(y)³ y cargas nodales consistentes de la presión p(y); las reacciones Ri se obtienen para cada componente de carga (suelo, sobrecarga, agua, sismo) y se combinan con sus factores.',
+          'V(y) = ∫ p dz − Σ Ri (apoyos sobre la sección) ;  M(y) = ∫ p·(zs − z) dz − Σ Ri·(yi − y)',
+          'Ru = máx[ ' + `${f(inp.factors.lateral, 2)}·(Rsuelo + Ragua) + ${f(inp.factors.live, 2)}·Rsobrecarga` + (inp.seismic.on ? ` ;  ${f(inp.factors.lateral, 2)}·(Rsuelo + Ragua) + Rsobrecarga + ${f(inp.factors.eq, 2)}·(Rsismo + Rinercia)` : '') + ' ]',
+        ],
+        'Método',
+      );
+      d.table(
+        ['Apoyo', 'y (m)', `R servicio (${fmt.l('lforce')})`, ...(br.Rse ? [`R servicio con sismo (${fmt.l('lforce')})`] : []), `Ru (${fmt.l('lforce')})`],
+        [
+          ...br.y.map((y, i) => [`A${i + 1}`, f(y, 2), n('lforce', br.Rs[i], 1), ...(br.Rse ? [n('lforce', br.Rse[i], 1)] : []), n('lforce', br.Ru[i], 1)]),
+          ['Base de la pantalla', f(0, 2), n('lforce', br.V0s, 1), ...(br.Rse ? ['—'] : []), n('lforce', br.V0u, 1)],
+        ],
+        { align: ['l', 'r', 'r', ...(br.Rse ? ['r' as const] : []), 'r'], caption: 'Tabla. Reacciones de los apoyos por metro de muro (positivas hacia el relleno)' },
+      );
+      d.p(`Los elementos que dan los apoyos (losas como diafragmas) deben transmitir Ru a los elementos que equilibran el empuje (muro opuesto, núcleos o pórticos), y su unión con el muro (barras de anclaje, llaves o conectores) para Ru por metro de muro.${br.base === 'fixed' ? ` Momento mayorado en la base de la pantalla: ${u('lmoment', br.M0u, 2)} (positivo = tracción en la cara del relleno).` : ''}`, { align: 'justify' });
+    }
+    d.h2(st.masonry ? (st.braced ? 'Pantalla de mampostería reforzada arriostrada' : 'Pantalla de mampostería reforzada') : st.braced ? 'Pantalla arriostrada (viga continua)' : 'Pantalla en voladizo');
     d.eq(
       [
-        'Mu(y) = ∫ pu(z)·(zs − z) dz  con zs = H − y  (presión horizontal mayorada del suelo, sobrecarga' + (inp.hw > 0 ? ', agua' : '') + (inp.seismic.on ? ', incremento sísmico e inercia del muro' : '') + ')',
-        'pu(z) = H_factor·Ka·cos(δ + ψ)·σ′v(z) + factor_sobrecarga·Ka·q',
+        (st.braced ? 'Mu(y) = ∫ pu(z)·(zs − z) dz − Σ Ru,i·(yi − y)  con zs = H − y; envolvente de ambos signos (la sobrecarga con su factor o con cero, lo más desfavorable)  (' : 'Mu(y) = ∫ pu(z)·(zs − z) dz  con zs = H − y  (') + 'presión horizontal mayorada del suelo, sobrecarga' + (inp.hw > 0 ? ', agua' : '') + (inp.seismic.on ? ', incremento sísmico e inercia del muro' : '') + ')',
+        `pu(z) = H_factor·${atRest ? 'K0' : 'Ka'}·cos(δ + ψ)·σ′v(z) + factor_sobrecarga·${atRest ? 'K0' : 'Ka'}·q`,
         st.masonry
           ? 'Mampostería (TMS 402, resistencia): a = d − √(d² − 2·Mu/(φ·0.80·f′m·b)) ;  As = 0.80·f′m·b·a/fy ;  φ = 0.90'
           : 'Concreto: Rn = Mu/(φ·b·d²) ;  ρ = (0.85·f′c/fy)·[1 − √(1 − 2Rn/(0.85·f′c))] ;  As = ρ·b·d ;  As,diseño = máx(As ; mín(4/3·As ; As,mín))',
       ],
       'Método',
     );
-    const s0 = st.sections[0];
+    const s0 = st.sections[st.gov];
     d.eq(
       [
-        `Sección crítica en la base de la pantalla (${st.governing}): t = ${f(s0.t * 1000, 0)} mm, d = ${f(s0.d * 1000, 1)} mm`,
+        st.braced
+          ? `Sección que gobierna la cara del relleno (${st.governing}): y = ${f(s0.y, 2)} m, t = ${f(s0.t * 1000, 0)} mm, d = ${f(s0.d * 1000, 1)} mm`
+          : `Sección crítica en la base de la pantalla (${st.governing}): t = ${f(s0.t * 1000, 0)} mm, d = ${f(s0.d * 1000, 1)} mm`,
         `Mu = ${u('lmoment', s0.Mu, 2)} ;  b = 1.00 m`,
         `As,req = ${f(s0.AsReq, 2)} cm²/m ;  As,mín = ${f(s0.AsMin, 2)} cm²/m ;  As,diseño = ${f(s0.AsDes, 2)} cm²/m`,
         `Armado vertical: ${st.base.text} → As = ${f(st.base.asProv, 2)} cm²/m ;  φMn = ${u('lmoment', s0.phiMn, 2)}`,
-        `Cortante a d de la base: Vu = ${u('lforce', st.critical.Vu, 2)} ;  φVc = ${u('lforce', st.critical.phiVc, 2)}  (relación ${f(st.critical.ratio, 2)})`,
+        `${st.braced ? `Cortante crítico (a d de la base o de un apoyo, y = ${f(st.critical.y, 2)} m)` : 'Cortante a d de la base'}: Vu = ${u('lforce', st.critical.Vu, 2)} ;  φVc = ${u('lforce', st.critical.phiVc, 2)}  (relación ${f(st.critical.ratio, 2)})`,
+        ...(st.braced && st.front ? [`Cara interior (momento entre apoyos): Mu,máx = ${u('lmoment', st.front.maxMu, 2)} ;  As,req = ${f(st.front.req, 2)} cm²/m ;  colocado ${f(st.front.prov, 2)} cm²/m (${st.masonry ? 'misma barra' : st.frontVertDet.text})`] : []),
         `Capas de acero vertical: ${st.layers}${st.centered ? ' (barra centrada en la celda, d = t/2)' : st.layers === 2 && st.masonry ? ' (d medido a la barra del lado del relleno; la capa frontal se desprecia en flexión)' : ''}; separación ${st.vertAuto ? 'calculada' : 'elegida'}`,
         st.horizOn ? `Armado horizontal: ρh,mín = ${st.rhoH.toFixed(4)} → As = ${f(st.AsH, 2)} cm²/m → ${st.horizontalDet.text}${st.horizLayers === 2 ? ' en cada cara' : ''} (${st.horizAuto ? 'separación calculada' : 'separación elegida'})${st.layers === 2 && !st.masonry ? '; vertical en la cara frontal: ' + st.frontVertDet.text : ''}` : 'Sin barras horizontales (no se cubre el acero mínimo de retracción y temperatura).',
         `Anclaje en la zapata: ldh = ${f(st.anchorage.ldh, 2)} m  ${st.anchorage.ok ? '≤' : '>'}  disponible ${f(st.anchorage.available, 2)} m (espesor de la zapata − recubrimiento; espesor mínimo = ldh + recubrimiento = ${f(st.anchorage.ldh + res.inp.mat.coverFound, 2)} m)`,
       ],
-      'Cálculo en la base',
+      st.braced ? 'Cálculo de la pantalla' : 'Cálculo en la base',
     );
     d.p(st.cutNote);
     d.table(
-      ['y (m)', 't (m)', 'd (m)', `Mu (${fmt.l('lmoment')})`, `Vu (${fmt.l('lforce')})`, 'As req (cm²/m)', 'As mín', 'As diseño', `φMn (${fmt.l('lmoment')})`],
-      st.sections.filter((_, i) => i % 2 === 0).map((s) => [f(s.y, 2), f(s.t, 3), f(s.d, 3), n('lmoment', s.Mu, 1), n('lforce', s.Vu, 1), f(s.AsReq, 2), f(s.AsMin, 2), f(s.AsDes, 2), n('lmoment', s.phiMn, 1)]),
-      { align: ['r', 'r', 'r', 'r', 'r', 'r', 'r', 'r', 'r'], caption: 'Tabla. Diseño a flexión a lo largo de la pantalla' },
+      ['y (m)', 't (m)', 'd (m)', st.braced ? `Mu relleno (${fmt.l('lmoment')})` : `Mu (${fmt.l('lmoment')})`, ...(st.braced ? [`Mu interior (${fmt.l('lmoment')})`] : []), `Vu (${fmt.l('lforce')})`, 'As req (cm²/m)', 'As mín', 'As diseño', `φMn (${fmt.l('lmoment')})`],
+      st.sections.filter((_, i) => i % 2 === 0).map((s) => [f(s.y, 2), f(s.t, 3), f(s.d, 3), n('lmoment', s.Mu, 1), ...(st.braced ? [n('lmoment', s.MuFront, 1)] : []), n('lforce', s.Vu, 1), f(s.AsReq, 2), f(s.AsMin, 2), f(s.AsDes, 2), n('lmoment', s.phiMn, 1)]),
+      { align: ['r', 'r', 'r', 'r', ...(st.braced ? ['r' as const] : []), 'r', 'r', 'r', 'r', 'r'], caption: st.braced ? 'Tabla. Diseño a flexión a lo largo de la pantalla (As para la cara del relleno)' : 'Tabla. Diseño a flexión a lo largo de la pantalla' },
     );
     d.img(
       lineChart({
         w: 760, h: 270, theme: th, xLabel: 'Altura sobre la base de la pantalla y (m)', yLabel: `Momento (${fmt.l('lmoment')})`, title: 'Mu frente a φMn (con el armado de la base)',
         series: [
-          { name: 'Mu', xs: st.sections.map((s) => s.y), ys: st.sections.map((s) => (fmt.sys === 'SI' ? s.Mu : s.Mu / 9.80665)), color: th.accent },
+          { name: st.braced ? 'Mu relleno' : 'Mu', xs: st.sections.map((s) => s.y), ys: st.sections.map((s) => (fmt.sys === 'SI' ? s.Mu : s.Mu / 9.80665)), color: th.accent },
+          ...(st.braced ? [{ name: 'Mu interior', xs: st.sections.map((s) => s.y), ys: st.sections.map((s) => (fmt.sys === 'SI' ? s.MuFront : s.MuFront / 9.80665)), color: th.bad }] : []),
           { name: 'φMn', xs: st.sections.map((s) => s.y), ys: st.sections.map((s) => (fmt.sys === 'SI' ? s.phiMn : s.phiMn / 9.80665)), color: th.ok, dash: '6 4' },
         ],
       }),
