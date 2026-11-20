@@ -142,9 +142,10 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     d.h2('Socket en roca');
     d.eq(
       [
-        `Fricción lateral:  fs = C·pa·√(qu/pa)·ηm  ≤ fs,máx    (C = ${f(rk.C, 2)} ${rk.C > 0.6 ? 'socket rugoso, Horvath–Kenney' : 'socket liso, Rowe–Armitage'};  pa = 101.3 kPa;  ηm = ${f(rk.etaM, 2)} por RQD = ${f(rk.rqd, 0)} %)`,
+        `Fricción lateral (AASHTO 10.8.3.5.4b):  fs = C·pa·√(qu/pa)·ηm  ≤ fs,máx  y  ≤ 7.8·pa·√(f′c/pa)    (C = ${f(rk.C, 2)} ${rk.C > 0.6 ? 'socket rugoso, Horvath–Kenney' : 'socket liso, C reducido'};  pa = 101.3 kPa;  ηm = ${f(rk.etaM, 2)} por RQD = ${f(rk.rqd, 0)} %;  qu ≤ f′c)`,
         'Punta (Canadian Foundation Engineering Manual):  qb = 3·Ksp·d·qu·ηm ≤ 0.33·f′c (concreto) ó 0.5·Fy (acero)',
-        'Ksp = (3 + s/D) / [10·√(1 + 300·δ/s)];   d = 1 + 0.4·Ls/D ≤ 3   (s = espaciamiento y δ = abertura de las juntas)',
+        'Ksp = (3 + s/D) / [10·√(1 + 300·δ/s)];   d = 1 + 0.4·Ls/D ≤ 3   (s = espaciamiento y δ = abertura de las juntas; válido para 0.05 ≤ s/D ≤ 2, δ/s ≤ 0.02, s > 0.3 m, δ < 5 mm, D > 0.3 m)',
+        'Verificaciones: Ls ≥ 1·D;  roca continua bajo la punta ≥ 3·D;  esfuerzo de servicio R/Ag ≤ 0.33·f′c',
         `Qa = (Qs + ${f(rk.mob, 2)}·Qb) / FS   (la punta se moviliza parcialmente en servicio por compatibilidad de desplazamientos)`,
         'Asentamiento: w = δe + Q·Iρ/(Em·D),  Iρ = 0.45 (L/D ≥ 2) ó 0.60',
       ],
@@ -153,9 +154,11 @@ export function pileBlocks(inp: PileInput, res: PileResults, fmt: Fmt, d: DocBui
     d.kv(
       [
         ['Longitud del socket Ls', `${u('len', rk.Ls, 2)} (${f(rk.Ls / rk.D, 1)}·D)`],
-        ['qu de la roca', `${f(rk.qu, 1)} MPa; RQD = ${f(rk.rqd, 0)} %`],
-        ['Fricción lateral en el socket fs', u('press', rk.fs, 0)],
-        ['Ksp / factor de profundidad d', `${f(rk.Ksp, 3)} / ${f(rk.dFac, 2)}`],
+        ['qu de la roca', `${f(rk.qu, 1)} MPa; RQD = ${f(rk.rqd, 0)} %${rk.quSide < rk.qu ? ` (en la fricción se usa f′c = ${f(rk.quSide, 1)} MPa)` : ''}`],
+        ['Fricción lateral en el socket fs', `${u('press', rk.fs, 0)}${isFinite(rk.fsConc) ? ` (límite del concreto ${u('press', rk.fsConc, 0)})` : ''}`],
+        ['Ksp / factor de profundidad d', `${f(rk.Ksp, 3)} / ${f(rk.dFac, 2)}  (s/D = ${f(rk.sD, 2)}, δ/s = ${f(rk.dS, 4)})`],
+        ['Validez del método de punta', rk.cfemIssues.length ? `fuera de rango: ${rk.cfemIssues.join('; ')}` : 'dentro del rango de aplicación'],
+        ['Roca continua bajo la punta', `${u('len', rk.below, 2)} (${f(rk.below / rk.D, 1)}·D; mínimo 3·D)`],
         ['qb calculado / límite del material', `${u('press', rk.qbRock, 0)} / ${u('press', rk.qbLimit, 0)}`],
         ['Punta movilizada en servicio', `${u('force', rk.QbEff, 0)} (${f(rk.mob * 100, 0)} % de Qb)`],
       ],

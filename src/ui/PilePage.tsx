@@ -667,7 +667,7 @@ function GeoEditor({ data, onChange }: { data: PileInput; onChange: (f: PileInpu
                   <>
                     <Num label="qu (roca intacta)" q="stress" value={l.qu} onChange={(v) => updL(i, { qu: v })} min={1} />
                     <Num label="RQD" unit="%" value={l.rqd} onChange={(v) => updL(i, { rqd: v })} min={0} max={100} />
-                    <Sel label="Superficie del socket" value={l.rough ? 'r' : 's'} onChange={(v) => updL(i, { rough: v === 'r' })} options={[{ id: 'r', label: 'Rugosa (Horvath–Kenney)' }, { id: 's', label: 'Lisa (Rowe–Armitage)' }]} />
+                    <Sel label="Superficie del socket" value={l.rough ? 'r' : 's'} onChange={(v) => updL(i, { rough: v === 'r' })} options={[{ id: 'r', label: 'Rugosa (Horvath–Kenney, C = 0.65)' }, { id: 's', label: 'Lisa (C = 0.45)' }]} />
                     <Num label="Espaciamiento de juntas" q="len" value={l.jointS} onChange={(v) => updL(i, { jointS: v })} min={0.02} />
                     <Num label="Abertura de juntas" unit="mm" value={l.aperture} onChange={(v) => updL(i, { aperture: v })} min={0} />
                   </>

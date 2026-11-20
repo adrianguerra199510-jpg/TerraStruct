@@ -258,6 +258,44 @@ describe('socket en roca', () => {
     expect(r.checks.some((c) => /socket/.test(c.name))).toBe(true);
     const doc = reportForPile(rockInp(), makeFmt('SI'), newProject().info);
     expect(JSON.stringify(doc.blocks)).toContain('Socket en roca');
+    expect(JSON.stringify(doc.blocks)).toContain('Roca continua bajo la punta');
+  });
+  it('fricción del socket con qu ≤ f′c y adherencia ≤ 7.8·pa·√(f′c/pa)', () => {
+    const i = rockInp();
+    i.geo.layers[1].qu = 120;
+    const r = analyzePile(i);
+    const rk = r.geo.rock!;
+    expect(rk.quSide).toBeCloseTo(i.pile.fc, 9);
+    expect(rk.fs).toBeCloseTo(0.65 * 101.3 * Math.sqrt((i.pile.fc * 1000) / 101.3) * 0.85, 0);
+    expect(rk.fsConc).toBeCloseTo(7.8 * 101.3 * Math.sqrt((i.pile.fc * 1000) / 101.3), 6);
+    expect(r.warnings.some((w) => /f′c del pilote/.test(w))).toBe(true);
+  });
+  it('roca bajo la punta y validez de Ksp', () => {
+    const a = analyzePile(rockInp());
+    expect(a.geo.rock!.below).toBeCloseTo(8, 6);
+    expect(a.checks.find((c) => /bajo la punta/.test(c.name))!.ok).toBe(true);
+    expect(a.checks.find((c) => /CFEM/.test(c.name))!.ok).toBe(true);
+    // estrato débil 1 m bajo la punta
+    const i = rockInp();
+    i.geo.layers[1].thk = 5;
+    i.geo.layers.push({ ...defaultLayers()[0], name: 'Arcilla', thk: 5, su: 50 });
+    const b = analyzePile(i);
+    expect(b.geo.rock!.below).toBeCloseTo(1, 6);
+    const cb = b.checks.find((c) => /bajo la punta/.test(c.name))!;
+    expect(cb.ok).toBe(false);
+    expect(cb.advisory).toBe(true);
+    // juntas fuera de rango: s/D > 2 se limita a 2 y se advierte
+    const j = rockInp();
+    j.geo.layers[1].jointS = 3;
+    const c = analyzePile(j);
+    expect(c.geo.rock!.Ksp).toBeCloseTo((3 + 2) / (10 * Math.sqrt(1 + (300 * 0.001) / 3)), 9);
+    expect(c.checks.find((k) => /CFEM/.test(k.name))!.ok).toBe(false);
+  });
+  it('roca blanda (qu < 5 MPa) genera advertencia de IGM', () => {
+    const i = rockInp();
+    i.geo.layers[1].qu = 3;
+    expect(analyzePile(i).warnings.some((w) => /IGM/.test(w))).toBe(true);
+    expect(analyzePile(rockInp()).warnings.some((w) => /IGM/.test(w))).toBe(false);
   });
 });
 
